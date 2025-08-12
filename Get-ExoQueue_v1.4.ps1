@@ -268,7 +268,7 @@ function global:Get-ExoQueue {
     $endDate = Get-Date
    # $pageSize = 5000
 # $Status = @("Pending")   # ENABLE THIS FOR PRODUCTION USE 
-    $Status = @("Pending", "Delivered", "Failed") 
+    $Status = @("Pending", "Failed") 
     $allResults = @()
 
     # Search for Pending messages
@@ -479,3 +479,4 @@ function global:Get-ExoQueue {
      #   }
     }
 }
+
