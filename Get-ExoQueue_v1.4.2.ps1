@@ -58,6 +58,19 @@
              | 1.2.1 - Removed xml import prompt
      5/31/24 | 1.3   - Removed GettingStatus from search after speaking with PG - Produced too many false positives
     11/14/24 | 1.3.1 - Changed the results logic to only show unique results. This will remove the multiple recipient messages from the results. 
+     4/14/25 | 1.4 -   Major update:
+                        - Replaced Get-MessageTrace with Get-MessageTraceV2 for improved performance and accuracy.
+                        - Removed pagination logic; simplified query execution.
+                        - Changed output directory from Desktop to C:\Temp\ExoQueueResults\<Date>.
+                        - Added confirmation prompts for AgeDays and AgeHours to prevent timeouts in large environments.
+                        - Enhanced connection handling with Yes/No prompt for Exchange Online connection.
+                        - Improved logging and output handling; log files now stored in C:\Temp\ExoQueueResults\<Date>.
+                        - Added auto-import of XML results into global variables for easier analysis.
+                        - General code cleanup and improved error handling.
+    8/14/25 | 1.4.1 - Update changelog for 1.4, cleaned up syntax, and corrected some entries for $allresults to use $uniqueresults. 
+    8/21/25 | 1.4.2 - Added IncludeDelivered parameter to allow testing/demos without having to modify the Delivery Status. Cirrected a few more issues with $allresults to use $uniqueresults.
+                        
+                        
 #>
 
 function global:Get-ExoQueue {
@@ -84,7 +97,9 @@ function global:Get-ExoQueue {
         [int]$AgeHours = 0,
 
         [ValidateRange(0,10)]
-        [int]$AgeDays = 0
+        [int]$AgeDays = 0,
+
+        [switch]$IncludeDelivered
     )
     ########################
     ### Param Validation ###
@@ -113,7 +128,7 @@ function global:Get-ExoQueue {
     if($Output -like $null){
         Write-Host "NOTE: " -ForegroundColor Cyan -NoNewline
         Write-Host "-Output parameter using default: 'GridView' - CSV and XML are also available." 
-        Write " "
+        Write-Host " "
         $Output = "GridView"
     }
     
@@ -161,6 +176,7 @@ function global:Get-ExoQueue {
 
     # $JournalDomain = "contoso.Journal.cloud" - Not currently used. May be removed if JournalSmtp above works
 
+    
     # Validate EXO connection by testing a cmdlet 
     try{
     $test = Get-Mailbox -ResultSize 1 -WarningAction SilentlyContinue -ErrorAction Stop
@@ -200,9 +216,9 @@ function global:Get-ExoQueue {
     #### Begin Output ####
     ######################
 
-    Write-Host "DISCLAIMER: " -foregroundColor Red -noNewline
+    Write-Host "DISCLAIMER: " -foregroundColor Yellow -noNewline
     Write-Host "THIS IS AN APPROXIMATION OF THE QUEUE USING MESSAGE TRACE DATA. IT IS NOT AN EXACT REPRESENTATION OF THE QUEUE." 
-    Write " "
+    Write-Host " "
 
     # Timeout warnings
     if($AgeDays){
@@ -214,6 +230,8 @@ function global:Get-ExoQueue {
             Exit
         }
     }
+    # AgeHours warning disabled due to improved performance of Get-MessageTraceV2
+    <#
     if($AgeHours){
         Write-Warning "Using the -AgeHours parameter MAY timeout in large environments and should only be used for extended delays. Try using -AgeMinutes instead."
         Write-Host "Are you sure you want to continue? (Y/N) - Default is No." -ForegroundColor Yellow
@@ -223,8 +241,9 @@ function global:Get-ExoQueue {
             Exit
         }
     }
+    #>
 
-    # Age entry output to terminal
+    # Age entry output to terminal. Days, Hours, Minutes have multiple outputs to provide pluralization
     if($AgeDays -eq 1) {
         Write-Host "Getting the message queue for the past $AgeDays day. Please wait.." -ForegroundColor Cyan
     }
@@ -235,13 +254,13 @@ function global:Get-ExoQueue {
         Write-Host "Getting the message queue for the past $AgeHours hour. Please wait.." -ForegroundColor Cyan
     }
     elseif($AgeHours -gt 1) {
-        Write-Host "Getting the message queue for the past $AgeHours hours. If the queue is large and there is a timeout, attempt to reduce the -AgeHours setting Please wait.." -ForegroundColor Cyan
+        Write-Host "Getting the message queue for the past $AgeHours hours. If the queue is large and there is a timeout, attempt to reduce the -AgeHours setting. Please wait.." -ForegroundColor Cyan
     }
     if($AgeMinutes -eq 1){
         Write-Host "Getting the message queue for the past $AgeMinutes minute. Please wait.." -ForegroundColor Cyan
     }
     elseif($AgeMinutes -gt 1) {
-        Write-Host "Getting the message queue for the past $AgeMinutes minutes. If the queue is large and there is a timeout, attempt to reduce the -AgeMinutes setting Please wait.." -ForegroundColor Cyan
+        Write-Host "Getting the message queue for the past $AgeMinutes minutes. If the queue is large and there is a timeout, attempt to reduce the -AgeMinutes setting. Please wait.." -ForegroundColor Cyan
     }
     
     # Translate Age into start date
@@ -255,26 +274,23 @@ function global:Get-ExoQueue {
         $startDate = (Get-Date).AddMinutes(-$AgeMinutes)
     }
 
-    # Ensure startDate is set - # This should never fire
-    if (-not $startDate) {
-        Write-Error "Error: Start date not specified. Please provide AgeMinutes, AgeHours, or AgeDays." -Category NotSpecified
-        return
-    }
-
+   # Wait-Debugger
     ######################
     ### Search section ###
     ######################
     
     $endDate = Get-Date
-   # $pageSize = 5000
-# $Status = @("Pending")   # ENABLE THIS FOR PRODUCTION USE 
-    $Status = @("Pending", "Failed") 
+    # $Status = @("Pending")   # ENABLE THIS FOR PRODUCTION USE 
+    if($IncludeDelivered -eq $true) {
+            $Status = @("Pending", "Delivered")
+        }
+    else {
+        $Status = @("Pending")
+    }
     $allResults = @()
 
     # Search for Pending messages
- #   for ($page = 1; $true; $page++) {
-        # Search for JournalOnly
-      #  Wait-Debugger
+
         if($JournalOnly -eq $true) {
             try {
                 $PendingResults = Get-MessageTraceV2 -StartDate $startDate -EndDate $endDate -Status $Status -SenderAddress $JournalSmtp -ErrorAction Stop
@@ -307,7 +323,7 @@ function global:Get-ExoQueue {
         
      
         if ($PendingResults.Count -eq 0) {
-            Write-Verbose "No messages found in the queue."
+            Write-Host "No messages found in the queue."
             break
         }
         $allResults += $PendingResults
@@ -318,7 +334,7 @@ function global:Get-ExoQueue {
     
     # Count the number of messages in the queue
     Write-Host "Number of messages in the queue:" $UniqueResults.Count
-    Write " "
+    Write-Host " "
     
     ######################
     ### Output Section ###
@@ -357,71 +373,71 @@ function global:Get-ExoQueue {
         if($AgeMinutes -ne 0) { $AgeParam += "AgeMinutes=$AgeMinutes" }
         if($AgeHours -ne 0) { $AgeParam += "AgeHours=$AgeHours" }
         if($AgeDays -ne 0) { $AgeParam += "AgeDays=$AgeDays" }
-    $LogEntry = "$(Get-Date -Format "yyyy-MM-dd HH:mm:ss") - $($allResults.Count) messages in the queue | Parameters Used: $AgeParam, JournalOnly=$JournalOnly, Output=$Output" 
+    $LogEntry = "$(Get-Date -Format "yyyy-MM-dd HH:mm:ss") - $($UniqueResults.Count) messages in the queue | Parameters Used: $AgeParam, JournalOnly=$JournalOnly, Output=$Output" 
     Add-Content -Path $logPath -Value $logEntry
     Write-Host "Log File:" -ForegroundColor Cyan
     Write-Host "A log file with the number a messages in queue has saved/updated to: " -NoNewline
     Write-Host "$LogPath" -ForegroundColor Cyan
-    Write " "
+    Write-Host " "
 
     # GridView Output
     if($Output -like "GridView") {    
         # Top Senders and Recipients
         if($TopSenders -ne 0) {
-            $GroupedSenders = $allResults | Group-Object SenderAddress | Select-Object Name, Count
+            $GroupedSenders = $UniqueResults | Group-Object SenderAddress | Select-Object Name, Count
             if($GroupedSenders.Count -ne 0) {
             Write-Host "Top $TopSenders senders:" -ForegroundColor Cyan
             $GroupedSenders | Sort-Object Count -Descending | Select-Object -First $TopSenders | Format-Table -AutoSize
             }
         }
         if($TopRecipients -ne 0) {
-            $GroupedRecipients = $allResults | Group-Object RecipientAddress | Select-Object Name, Count  
+            $GroupedRecipients = $UniqueResults | Group-Object RecipientAddress | Select-Object Name, Count  
             if($GroupedRecipients.Count -ne 0) {
             Write-Host "Top $TopRecipients recipients:" -ForegroundColor Cyan
             $GroupedRecipients | Sort-Object Count -Descending | Select-Object -First $TopRecipients | Format-Table -AutoSize
             }
         }
-
+        #>
         Write-Host "Current Queue: (If Gridview window doesn't appear, check for a hidden PowerShell pop-up window)." -ForegroundColor Cyan
-        $allResults | select * | Out-GridView -Title "Exchange Online Message Queue"
+        $UniqueResults | select * | Out-GridView -Title "Exchange Online Message Queue"
     }
 
     # XML Output
     elseif($Output -like "XML") {
         $filePath = "$OutputFilePath\ExoQueue - $(Get-date -Format dd-MMM-yyyy--HHmm).xml"
-        $allResults | Export-Clixml -Path $filePath
+        $UniqueResults | Export-Clixml -Path $filePath
         if($TopSenders -ne 0) {
             $filePathTS = "$filePath-TopSenders.xml"
-            $GroupedRecipients = $allResults | Group-Object SenderAddress | Select-Object -ExpandProperty Group
+            $GroupedRecipients = $UniqueResults | Group-Object SenderAddress | Select-Object -ExpandProperty Group
             $GroupedRecipients | Sort-Object Count -Descending | Select-Object -First $TopSenders | Export-Clixml -Path $filePathTS
             $TopSendersXml = $true
         }
         if($TopRecipients -ne 0) {
             $filePathTR = "$filePath-TopRecipients.xml"
-            $GroupedRecipients = $allResults | Group-Object RecipientAddress | Select-Object -ExpandProperty Group
+            $GroupedRecipients = $UniqueResults | Group-Object RecipientAddress | Select-Object -ExpandProperty Group
             $GroupedRecipients | Sort-Object Count -Descending | Select-Object -First $TopRecipients | Export-Clixml -Path $filePathTR
             $TopRecipientsXml = $true
         }
         Write-Host "XML File(s):" -ForegroundColor Cyan
         Write-Host "XML file saved to: " -NoNewline
         Write-Host "$filePath" -ForegroundColor Cyan
-        Write " "
+        Write-Host " "
     }
 
     # CSV Output
     elseif($Output -like "CSV"){
         $filePath = "$OutputFilePath\ExoQueue - $(Get-date -Format dd-MMM-yyyy--HHmm).csv"
-        $allResults | Export-Csv -Path $filePath -NoTypeInformation
+        $UniqueResults | Export-Csv -Path $filePath -NoTypeInformation
         if($TopSenders -ne 0) {
             $filePathTS = "$OutputFilePath\ExoQueue - $(Get-date -Format dd-MMM-yyyy--HHmm)-TopSenders.csv"
-            $GroupedRecipients = $allResults | Group-Object SenderAddress | Select-Object -ExpandProperty Group
+            $GroupedRecipients = $UniqueResults | Group-Object SenderAddress | Select-Object -ExpandProperty Group
             $GroupedRecipients | Sort-Object Count -Descending | Select-Object -First $TopSenders | Export-Csv -Path $filePathTS -NoTypeInformation
             Write-Host "CSV file for Top Senders saved to     :  " -NoNewline
             Write-Host "$filePathTS" -ForegroundColor Cyan
         }
         if($TopRecipients -ne 0) {
             $filePathTR = "$OutputFilePath\ExoQueue - $(Get-date -Format dd-MMM-yyyy--HHmm)-TopRecipients.csv"
-            $GroupedRecipients = $allResults | Group-Object RecipientAddress | Select-Object -ExpandProperty Group
+            $GroupedRecipients = $UniqueResults | Group-Object RecipientAddress | Select-Object -ExpandProperty Group
             $GroupedRecipients | Sort-Object Count -Descending | Select-Object -First $TopRecipients | Export-Csv -Path $filePathTR -NoTypeInformation
             Write-Host "CSV file for Top Recipients saved to  :  " -NoNewline
             Write-Host "$filePathTR" -ForegroundColor Cyan
@@ -479,4 +495,3 @@ function global:Get-ExoQueue {
      #   }
     }
 }
-
