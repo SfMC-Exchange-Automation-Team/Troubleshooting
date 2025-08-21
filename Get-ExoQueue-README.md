@@ -1,106 +1,113 @@
-Here’s a **README** you can include for your updated script:
-
----
-
-# **Get-ExoQueue.ps1**
+# **Get-ExoQueue.ps1 – Exchange Online Message Queue Viewer**
 
 ## **Overview**
-`Get-ExoQueue.ps1` is a PowerShell script that approximates the Exchange Online message queue using **message trace data** from the `Get-MessageTraceV2` cmdlet. It helps administrators quickly identify messages in a **Pending**, **Delivered**, or **Failed** state over a specified time range. The script supports multiple output formats and includes options for filtering journal traffic.
-
----
-
-## **Disclaimer**
-This script is provided **“as is”** without warranties or guarantees and is **not officially supported by Microsoft**. Use at your own risk. Test thoroughly in non-production environments before deploying in production.
+`Get-ExoQueue` is a PowerShell function designed to approximate the Exchange Online message queue using **Message Trace data**. It retrieves messages for a specified time range and outputs results in **GridView**, **CSV**, or **XML** format.  
+This tool is intended for **administrative and troubleshooting purposes** and is **not an exact representation of the transport queue**.
 
 ---
 
 ## **Features**
-- Retrieve Exchange Online message queue data for the past **X minutes, hours, or days**.
+- Query Exchange Online message trace data for the past **minutes**, **hours**, or **days**.
 - Filter results by:
-  - **JournalOnly**: Include only messages sent to a specific journal address.
-  - **JournalExclude**: Exclude messages sent to a specific journal address.
-- Output options:
-  - **GridView** (default)
-  - **CSV**
-  - **XML**
+  - **JournalOnly** – Include only messages sent to a journal address.
+  - **JournalExclude** – Exclude messages sent to a journal address.
 - Display **Top Senders** and **Top Recipients**.
-- Logs execution details and parameters for troubleshooting.
-- Auto-import XML results into global variables for quick analysis.
+- Output options:
+  - **GridView** (interactive)
+  - **CSV** (export to file)
+  - **XML** (export and auto-import into variables)
+- Logging of query parameters and message counts.
+- Optional inclusion of **Delivered** messages for testing/demos.
 
 ---
 
 ## **Prerequisites**
 - PowerShell 5.1 or later.
-- Exchange Online PowerShell module (`ExchangeOnlineManagement`).
-- Appropriate permissions to run `Get-MessageTraceV2`.
-- Ability to connect to Exchange Online (MFA supported).
+- Exchange Online Management Module installed:
+  ```powershell
+  Install-Module ExchangeOnlineManagement
+  ```
+- Permissions to run `Get-MessageTraceV2` in Exchange Online.
+- Access to create folders under `C:\Temp` for output.
 
 ---
 
-## **Parameters**
-| Parameter        | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| `-JournalOnly`    | Include only messages sent to a journal address (stored in registry).     |
-| `-JournalExclude` | Exclude messages sent to a journal address (stored in registry).          |
-| `-AgeMinutes`     | Time range in minutes (1–59).                                             |
-| `-AgeHours`       | Time range in hours (1–24).                                               |
-| `-AgeDays`        | Time range in days (1–10). **Warning:** May timeout in large environments.|
-| `-TopSenders`     | Display top N senders (1–25).                                             |
-| `-TopRecipients`  | Display top N recipients (1–25).                                          |
-| `-Output`         | Output format: `CSV`, `XML`, or `GridView` (default).                    |
-
-**Note:** Only one of `AgeMinutes`, `AgeHours`, or `AgeDays` can be used at a time.
+## **Installation**
+1. Download `Get-ExoQueue.ps1` to a local folder (e.g., `C:\Scripts`).
+2. Open **PowerShell** as Administrator (recommended for registry access if using Journal filters).
 
 ---
 
-## **Usage Examples**
+## **How to Load the Function**
+To load the function into your **current PowerShell session** without permanently installing it:
+
 ```powershell
-# Default: Last 30 minutes, GridView output
-Get-ExoQueue
+# Navigate to the folder where the script is saved
+Set-Location C:\Scripts
 
-# Last 2 hours, CSV output
-Get-ExoQueue -AgeHours 2 -Output CSV
+# Dot-source the script
+. .\Get-ExoQueue.ps1
 
-# Last 10 minutes, show top 5 senders and recipients
-Get-ExoQueue -AgeMinutes 10 -TopSenders 5 -TopRecipients 5
+# OR use the call operator (&)
+& "C:\Scripts\Get-ExoQueue.ps1"
+```
 
-# Include only journal traffic
-Get-ExoQueue -AgeMinutes 30 -JournalOnly
-
-# Exclude journal traffic, export to XML
-Get-ExoQueue -AgeHours 1 -JournalExclude -Output XML
+After loading, you can run the function directly:
+```powershell
+Get-ExoQueue -AgeMinutes 30 -Output GridView
 ```
 
 ---
 
-## **Output**
-- **GridView**: Interactive table view.
-- **CSV/XML**: Saved under `C:\Temp\ExoQueueResults\<Date>\`.
-- **Log File**: Tracks execution details and parameters for troubleshooting.
+## **Usage Examples**
+### **1. Default (last 30 minutes, GridView)**
+```powershell
+Get-ExoQueue
+```
+
+### **2. Last 2 hours, CSV output**
+```powershell
+Get-ExoQueue -AgeHours 2 -Output CSV
+```
+
+### **3. Include Delivered messages for testing**
+```powershell
+Get-ExoQueue -AgeMinutes 15 -IncludeDelivered
+```
+
+### **4. Show Top 10 senders and recipients**
+```powershell
+Get-ExoQueue -AgeMinutes 60 -TopSenders 10 -TopRecipients 10
+```
+
+### **5. Journal filtering**
+```powershell
+Get-ExoQueue -AgeHours 1 -JournalOnly
+```
 
 ---
 
-## **Version History**
-- **1.0 (03/08/24)**: Initial release.
-- **1.1 – 1.3.1**: Added CSV/XML output, registry logic for journal filters, parameter validation, and unique result filtering.
-- **1.4 (04/14/25)**:  
-  - Replaced `Get-MessageTrace` with `Get-MessageTraceV2` for improved performance and accuracy.  
-  - Removed pagination logic; simplified query execution.  
-  - Changed output directory from Desktop to `C:\Temp\ExoQueueResults\<Date>`.  
-  - Added confirmation prompts for `-AgeDays` and `-AgeHours` to prevent timeouts in large environments.  
-  - Enhanced connection handling with Yes/No prompt for Exchange Online connection.  
-  - Improved logging and output handling; log files now stored in `C:\Temp\ExoQueueResults\<Date>`.  
-  - Added auto-import of XML results into global variables for easier analysis.  
-  - General code cleanup and improved error handling.  
-- **1.4.1 (08/14/25)**:  
-  - Updated changelog for 1.4.  
-  - Cleaned up syntax and corrected some entries to use `$UniqueResults` instead of `$allResults`.  
+## **Output Details**
+- **GridView**: Interactive table in a separate window.
+- **CSV/XML**: Files saved under:
+  ```
+  C:\Temp\ExoQueueResults\<Date>\
+  ```
+- **Log File**: `ExoQueueLog--<Date>.txt` in the same folder.
 
 ---
 
 ## **Important Notes**
-- This script **approximates** the queue using message trace data. It is **not an exact representation** of the live queue.
-- Large time ranges (especially `-AgeDays`) can cause timeouts in high-volume environments.
-- Ensure Exchange Online connectivity before running.
+- This script uses **Message Trace data**, which is **not real-time** and may lag by several minutes.
+- Large queries (e.g., `-AgeDays`) can cause timeouts in large environments.
+- Journal address is stored in the registry under:
+  ```
+  HKCU:\Software\Microsoft\Exchange\ExoQueue
+  ```
+
+---
+
+## **Disclaimer**
+This script is provided **“as is”** without warranties or guarantees. Use at your own risk. Test thoroughly before using in production.
 
 ---
