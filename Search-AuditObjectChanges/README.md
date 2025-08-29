@@ -1,4 +1,4 @@
-# Search-AuditObjectChanges
+# Search-UnifiedAuditEvent
 
 **Find object-related changes in the Microsoft 365 Unified Audit Log** with smart `RecordType` inference, stable output columns, and mailbox-focused defaults.
 
@@ -13,7 +13,7 @@
 
 ## Why this function?
 
-Admins often need to answer: **“Who changed WHAT, and WHEN?”** across mailboxes, distribution lists, and Entra ID (M365) groups. `Search-AuditObjectChanges` wraps `Search-UnifiedAuditLog` with sensible defaults and sharp filters to dramatically reduce noise, guess the right `RecordType(s)`, and standardize the output so it’s **predictable for humans and scripts**.
+Admins often need to answer: **“Who changed WHAT, and WHEN?”** across mailboxes, distribution lists, and Entra ID (M365) groups. `Search-UnifiedAuditEvent` wraps `Search-UnifiedAuditLog` with sensible defaults and sharp filters to dramatically reduce noise, guess the right `RecordType(s)`, and standardize the output so it’s **predictable for humans and scripts**.
 
 ---
 
@@ -58,7 +58,7 @@ Install-Module ExchangeOnlineManagement -Scope CurrentUser
 Connect-ExchangeOnline
 
 # Dot-source the function or import your module
-. .\Search-AuditObjectChanges.ps1
+. .\Search-UnifiedAuditEvent.ps1
 # or
 Import-Module .\YourModule.psd1
 ```
@@ -69,24 +69,24 @@ Import-Module .\YourModule.psd1
 
 ### 1) Past 24 hours of distribution group changes
 ```powershell
-Search-AuditObjectChanges -DistributionGroup 'notgolfers@contoso.com'
+Search-UnifiedAuditEvent -DistributionGroup 'notgolfers@contoso.com'
 ```
 
 ### 2) Mailbox deletes + common mailbox admin ops (fast defaults)
 ```powershell
-Search-AuditObjectChanges -Mailbox 'wsobchak' `
+Search-UnifiedAuditEvent -Mailbox 'wsobchak' `
   -StartDateLocalTz (Get-Date).AddHours(-12) `
   -EndDateLocalTz (Get-Date)
 ```
 
 ### 3) Broaden mailbox admin coverage (no manual ops list)
 ```powershell
-Search-AuditObjectChanges -Mailbox 'wsobchak' -AdminOpsMode Broad
+Search-UnifiedAuditEvent -Mailbox 'wsobchak' -AdminOpsMode Broad
 ```
 
 ### 4) Max admin coverage for a specific actor
 ```powershell
-Search-AuditObjectChanges -Mailbox 'wsobchak' `
+Search-UnifiedAuditEvent -Mailbox 'wsobchak' `
   -AdminOpsMode All `
   -UserIds 'ch.adm@contoso.com' `
   -StartDate (Get-Date).AddHours(-6).ToUniversalTime() `
@@ -95,14 +95,14 @@ Search-AuditObjectChanges -Mailbox 'wsobchak' `
 
 ### 5) Reduce API calls: single broad pass
 ```powershell
-Search-AuditObjectChanges -Mailbox 'shared@contoso.com' `
+Search-UnifiedAuditEvent -Mailbox 'shared@contoso.com' `
   -RecordTypeStrategy AllTypesSingleCall `
   -ResultSize 5000
 ```
 
 ### 6) CSV export with predictable columns
 ```powershell
-Search-AuditObjectChanges -Mailbox 'wsobchak' |
+Search-UnifiedAuditEvent -Mailbox 'wsobchak' |
   Select LocalTimeZoneId,WhenLocal,WhenUtc,Workload,RecordType,Operation,Actor,Object,Subjects,ClientIP,Member,Modified |
   Export-Csv .\audit.csv -NoTypeInformation
 ```
@@ -209,24 +209,24 @@ Each row is a `[PSCustomObject]` with the following columns:
 $utcStart = (Get-Date).AddHours(-6).ToUniversalTime()
 $utcEnd   = (Get-Date).ToUniversalTime()
 
-Search-AuditObjectChanges -DistributionGroup 'notgolfers@contoso.com' `
+Search-UnifiedAuditEvent -DistributionGroup 'notgolfers@contoso.com' `
   -UserIds 'helpdesk@contoso.com' `
   -StartDate $utcStart -EndDate $utcEnd
 ```
 
 ### Mailbox item deletes filtered by subject contains
 ```powershell
-Search-AuditObjectChanges -Mailbox 'jane.doe@contoso.com' -SubjectLike 'Quarterly Results'
+Search-UnifiedAuditEvent -Mailbox 'jane.doe@contoso.com' -SubjectLike 'Quarterly Results'
 ```
 
 ### Entra ID group configuration changes for a specific GroupId
 ```powershell
-Search-AuditObjectChanges -GroupId '00000000-0000-0000-0000-000000000000'
+Search-UnifiedAuditEvent -GroupId '00000000-0000-0000-0000-000000000000'
 ```
 
 ### Broad admin scan with a safe time window (All admin ops)
 ```powershell
-Search-AuditObjectChanges -Mailbox 'shared@contoso.com' `
+Search-UnifiedAuditEvent -Mailbox 'shared@contoso.com' `
   -AdminOpsMode All `
   -StartDate (Get-Date).AddHours(-2).ToUniversalTime() `
   -EndDate (Get-Date).ToUniversalTime()
@@ -234,7 +234,7 @@ Search-AuditObjectChanges -Mailbox 'shared@contoso.com' `
 
 ### Return raw records for custom parsing
 ```powershell
-Search-AuditObjectChanges -Mailbox 'wsobchak' -ReturnRaw
+Search-UnifiedAuditEvent -Mailbox 'wsobchak' -ReturnRaw
 ```
 
 ---
@@ -280,7 +280,7 @@ Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline
 
 # Load the function
-. .\Search-AuditObjectChanges.ps1
+. .\Search-UnifiedAuditEvent.ps1
 ```
 
 ---
