@@ -4,7 +4,7 @@ Find object-related changes in Microsoft 365 Unified Audit Log with smart Record
 stable output columns, and mailbox-focused defaults.
 
 .DESCRIPTION
-Search-AuditObjectChanges queries Search-UnifiedAuditLog with targeted, high-signal filters to
+Search-UnifiedAuditEvent queries Search-UnifiedAuditLog with targeted, high-signal filters to
 answer “who changed WHAT, and WHEN?” across common object types (mailboxes, distribution lists,
 Entra ID groups). It infers the correct RecordType(s) from your inputs and can run multiple
 server-side passes (fast path) or a single broad call (minimal call count).
@@ -96,22 +96,22 @@ LocalTimeZoneId, WhenLocal, WhenUtc, Workload, RecordType, Operation, Actor, Obj
 
 EXAMPLES
 1) Distribution group membership/config changes (past 24h):
-    Search-AuditObjectChanges -DistributionGroup 'notgolfers@contoso.com'
+    Search-UnifiedAuditEvent -DistributionGroup 'notgolfers@contoso.com'
 
 2) Mailbox deletes + common mailbox admin ops (fast defaults):
-    Search-AuditObjectChanges -Mailbox 'wsobchak' -StartDateLocalTz (Get-Date).AddHours(-12) -EndDateLocalTz (Get-Date)
+    Search-UnifiedAuditEvent -Mailbox 'wsobchak' -StartDateLocalTz (Get-Date).AddHours(-12) -EndDateLocalTz (Get-Date)
 
 3) Wider mailbox admin coverage without specifying ops:
-    Search-AuditObjectChanges -Mailbox 'wsobchak' -AdminOpsMode Broad
+    Search-UnifiedAuditEvent -Mailbox 'wsobchak' -AdminOpsMode Broad
 
 4) Max admin coverage for a specific actor:
-    Search-AuditObjectChanges -Mailbox 'wsobchak' -AdminOpsMode All -UserIds 'ch.adm@contoso.com' -StartDate (Get-Date).AddHours(-6).ToUniversalTime() -EndDate (Get-Date).ToUniversalTime()
+    Search-UnifiedAuditEvent -Mailbox 'wsobchak' -AdminOpsMode All -UserIds 'ch.adm@contoso.com' -StartDate (Get-Date).AddHours(-6).ToUniversalTime() -EndDate (Get-Date).ToUniversalTime()
 
 5) Single broad call (minimize API calls):
-    Search-AuditObjectChanges -Mailbox 'shared@contoso.com' -RecordTypeStrategy AllTypesSingleCall -ResultSize 5000
+    Search-UnifiedAuditEvent -Mailbox 'shared@contoso.com' -RecordTypeStrategy AllTypesSingleCall -ResultSize 5000
 
 6) CSV export with a fixed column order:
-    Search-AuditObjectChanges -Mailbox 'wsobchak' |
+    Search-UnifiedAuditEvent -Mailbox 'wsobchak' |
       Select LocalTimeZoneId,WhenLocal,WhenUtc,Workload,RecordType,Operation,Actor,Object,Subjects,ClientIP,Member,Modified |
       Export-Csv .\audit.csv -NoTypeInformation
 
@@ -126,7 +126,7 @@ VERSION HISTORY
 
 #>
 
-function Search-AuditObjectChanges {
+function Search-UnifiedAuditEvent {
     [CmdletBinding(DefaultParameterSetName='Generic', SupportsShouldProcess=$false)]
     param(
         # ----- Mutually exclusive object selectors -----
