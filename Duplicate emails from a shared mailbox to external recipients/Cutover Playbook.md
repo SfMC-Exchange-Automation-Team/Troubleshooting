@@ -3,6 +3,7 @@
 ### **Issue**
 When sending emails from a shared mailbox, external recipients receive duplicate messages. This occurs because the client-side setting for saving sent items (DelegateSentItemsStyle) interacts with Exchange’s Cross-Server Submission feature, causing a second submission when certain message flags indicate the copy process is incomplete. The customer requires that sent items appear in the shared mailbox’s Sent Items folder for auditing, but current workarounds either break this requirement or introduce duplicates.
 
+<img width="1524" height="895" alt="image" src="https://github.com/user-attachments/assets/4b4d9eab-7168-4f51-8bcb-c55fa3c0f2f7" />
 
 ### **Objective**
 
@@ -96,3 +97,7 @@ Ensure sent items appear in the shared mailbox’s Sent Items folder without cre
 *   **Hybrid caveat:** Server-side copy may fail if shared mailbox remains on-prem and sender is in EXO.
 
 ***
+
+
+
+
