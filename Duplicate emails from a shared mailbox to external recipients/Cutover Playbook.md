@@ -97,6 +97,11 @@ Ensure sent items appear in the shared mailbox’s Sent Items folder without cre
 *   **Hybrid caveat:** Server-side copy may fail if shared mailbox remains on-prem and sender is in EXO.
 
 ***
+### **References**
+
+*  https://learn.microsoft.com/en-us/troubleshoot/exchange/user-and-shared-mailboxes/sent-mail-is-not-saved
+*  MSFT Only - https://o365exchange.visualstudio.com/O365%20Core/_workitems/edit/5402087
+
 
 
 
