@@ -1,4 +1,6 @@
-# **Cutover Playbook: Preventing Duplicates & Meeting Auditing Requirements**
+# **Cutover Playbook: Resolving issues with duplicate emails from a shared mailbox to external recipients**
+
+<img width="1534" height="900" alt="image" src="https://github.com/user-attachments/assets/866c4fa6-bcb3-4131-8070-3eb336819320" />
 
 
 ### **Issue**
