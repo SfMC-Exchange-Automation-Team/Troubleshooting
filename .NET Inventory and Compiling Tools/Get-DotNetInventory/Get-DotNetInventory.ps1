@@ -1,4 +1,10 @@
 # 10/27/2025 BETA BUILD - Author: Cullen Haafke
+<#
+Microsoft does not provide support for this script.
+This script is offered as-is, without any warranties or guarantees, and is intended for informational and diagnostic purposes only.
+Use of this script is at your own risk. Microsoft makes no representations regarding the accuracy, reliability, or completeness of the script.
+For official guidance and supported tools, refer to https://learn.microsoft.com/ or contact Microsoft Support through standard channels.
+#>
 
 function Get-DotNetInventory {
 <#
