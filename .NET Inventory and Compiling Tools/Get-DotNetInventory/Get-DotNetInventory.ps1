@@ -1,4 +1,4 @@
-# 10/27/2025 ALPHA BUILD - Cullen Haafke
+# 10/27/2025 BETA BUILD - Author: Cullen Haafke
 
 function Get-DotNetInventory {
 <#
@@ -7,7 +7,7 @@ function Get-DotNetInventory {
 
 .DESCRIPTION
   - Recurses .NET Framework NDP registry (native & WOW6432Node). No hardcoded version tables.
-  - Enumerates .NET/.NET Core runtimes & SDKs via dotnet CLI; falls back to filesystem if CLI absent.
+  - Enumerates .NET/.NET Core runtimes & SDKs via dotnet CLI; falls back to filesystem if CLI absent or returns no data.
   - Optionally includes:
       * InstalledVersions registry: HKLM:\SOFTWARE\dotnet\Setup\InstalledVersions (sharedfx, hostfxr, host, sdks)
       * ARP (Programs & Features) entries (MSI/MSIX bundles), x64 + WOW6432Node
@@ -110,6 +110,12 @@ function Get-DotNetInventory {
         }
     }
 
+    # Convenience: resolve ProgramFiles(x86) safely once
+    $pf86 = $null
+    if (Test-Path -LiteralPath 'Env:\ProgramFiles(x86)') {
+        try { $pf86 = (Get-Item -LiteralPath 'Env:\ProgramFiles(x86)').Value } catch {}
+    }
+
     $rows = New-Object System.Collections.Generic.List[object]
 
     # ---------------------------------
@@ -164,11 +170,10 @@ function Get-DotNetInventory {
             }
 
             $date = Get-BestEffortInstallDate -RegPath $k.PSPath -FallbackDir $fwDir
-
             $row = New-Row -Type 'Framework' -Family $family -Product $product `
                 -Version ($p.Version -as [string]) -Architecture $arch -Source 'Registry' `
                 -Location $k.PSPath -InstallDate $date -Release $p.Release -SP $p.SP -Install $p.Install `
-                -IsLanguagePack:$isLang -IsWow6432:([bool]($root -like '*WOW6432Node*'))
+                -IsLanguagePack:$isLang -IsWow6432:($root -like '*WOW6432Node*')
 
             $rows.Add($row) | Out-Null
             $includedCount++
@@ -180,46 +185,16 @@ function Get-DotNetInventory {
     # .NET / .NET Core (runtimes & SDKs via CLI / FS)
     # ----------------------------------------------------
     $runtimeCount = 0
-    $sdkCount = 0
-    $dotnetCmd = $null
-    try { $dotnetCmd = Get-Command dotnet -ErrorAction Stop } catch {}
+    $sdkCount     = 0
 
-    if ($dotnetCmd) {
-        Write-Verbose ("Using dotnet CLI at: {0}" -f $dotnetCmd.Source)
-        try {
-            & $dotnetCmd.Source --list-runtimes 2>$null | ForEach-Object {
-                if ($_ -match '^(?<prod>[^ ]+)\s+(?<ver>[^ ]+)\s+\[(?<path>[^\]]+)\]') {
-                    $prod = $Matches.prod; $ver = $Matches.ver; $loc = $Matches.path
-                    $arch = if ($loc -match 'Program Files \(x86\)') { 'x86' } else { 'x64' }
-                    $row = New-Row -Type 'Runtime' -Family '.NET' -Product $prod `
-                        -Version $ver -Architecture $arch -Source 'DotNetCLI' -Location $loc `
-                        -InstallDate (Get-BestEffortInstallDate -RegPath $null -FallbackDir $loc) `
-                        -Release $null -SP $null -Install $null -IsLanguagePack:$false -IsWow6432:($arch -eq 'x86')
-                    $rows.Add($row) | Out-Null
-                    $runtimeCount++
-                }
-            }
-        } catch {}
-        try {
-            & $dotnetCmd.Source --list-sdks 2>$null | ForEach-Object {
-                if ($_ -match '^(?<ver>[^ ]+)\s+\[(?<path>[^\]]+)\]') {
-                    $ver = $Matches.ver; $loc = $Matches.path
-                    $arch = if ($loc -match 'Program Files \(x86\)') { 'x86' } else { 'x64' }
-                    $row = New-Row -Type 'SDK' -Family '.NET' -Product 'SDK' `
-                        -Version $ver -Architecture $arch -Source 'DotNetCLI' -Location $loc `
-                        -InstallDate (Get-BestEffortInstallDate -RegPath $null -FallbackDir $loc) `
-                        -Release $null -SP $null -Install $null -IsLanguagePack:$false -IsWow6432:($arch -eq 'x86')
-                    $rows.Add($row) | Out-Null
-                    $sdkCount++
-                }
-            }
-        } catch {}
-    } else {
-        Write-Verbose "dotnet CLI not found; falling back to filesystem discovery."
-        $sharedRoots = @(
-            Join-Path ${env:ProgramFiles} 'dotnet\shared',
-            Join-Path ${env:ProgramFiles(x86)} 'dotnet\shared'
-        ) | Where-Object { $_ -and (Test-Path $_) }
+    function Invoke-FallbackDotNetFSScan {
+        Write-Verbose "dotnet CLI not available or returned no data; using filesystem discovery."
+
+        # Build shared roots list safely
+        $sharedRoots = @()
+        if ($env:ProgramFiles) { $sharedRoots += (Join-Path $env:ProgramFiles 'dotnet\shared') }
+        if ($pf86)            { $sharedRoots += (Join-Path $pf86            'dotnet\shared') }
+        $sharedRoots = $sharedRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 
         foreach ($shared in $sharedRoots) {
             $arch = if ($shared -like '*Program Files (x86)*') { 'x86' } else { 'x64' }
@@ -236,10 +211,11 @@ function Get-DotNetInventory {
             }
         }
 
-        $sdkRoots = @(
-            Join-Path ${env:ProgramFiles} 'dotnet\sdk',
-            Join-Path ${env:ProgramFiles(x86)} 'dotnet\sdk'
-        ) | Where-Object { $_ -and (Test-Path $_) }
+        # Build sdk roots list safely
+        $sdkRoots = @()
+        if ($env:ProgramFiles) { $sdkRoots += (Join-Path $env:ProgramFiles 'dotnet\sdk') }
+        if ($pf86)            { $sdkRoots += (Join-Path $pf86            'dotnet\sdk') }
+        $sdkRoots = $sdkRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 
         foreach ($sdk in $sdkRoots) {
             $arch = if ($sdk -like '*Program Files (x86)*') { 'x86' } else { 'x64' }
@@ -253,6 +229,66 @@ function Get-DotNetInventory {
             }
         }
     }
+
+    function Invoke-DotNetCLIScan {
+        param([Parameter(Mandatory)][string]$CliPath)
+
+        Write-Verbose "Attempting to use dotnet CLI to list runtimes and SDKs... ($CliPath)"
+        try {
+            & $CliPath --list-runtimes 2>$null | ForEach-Object {
+                if ($_ -match '^(?<prod>[^ ]+)\s+(?<ver>[^ ]+)\s+\[(?<path>[^\]]+)\]') {
+                    $prod = $Matches.prod; $ver = $Matches.ver; $loc = $Matches.path
+                    $arch = if ($loc -match 'Program Files \(x86\)') { 'x86' } else { 'x64' }
+                    $row = New-Row -Type 'Runtime' -Family '.NET' -Product $prod `
+                        -Version $ver -Architecture $arch -Source 'DotNetCLI' -Location $loc `
+                        -InstallDate (Get-BestEffortInstallDate -RegPath $null -FallbackDir $loc) `
+                        -Release $null -SP $null -Install $null -IsLanguagePack:$false -IsWow6432:($arch -eq 'x86')
+                    $rows.Add($row) | Out-Null
+                    $runtimeCount++
+                }
+            }
+        } catch {}
+
+        try {
+            & $CliPath --list-sdks 2>$null | ForEach-Object {
+                if ($_ -match '^(?<ver>[^ ]+)\s+\[(?<path>[^\]]+)\]') {
+                    $ver = $Matches.ver; $loc = $Matches.path
+                    $arch = if ($loc -match 'Program Files \(x86\)') { 'x86' } else { 'x64' }
+                    $row = New-Row -Type 'SDK' -Family '.NET' -Product 'SDK' `
+                        -Version $ver -Architecture $arch -Source 'DotNetCLI' -Location $loc `
+                        -InstallDate (Get-BestEffortInstallDate -RegPath $null -FallbackDir $loc) `
+                        -Release $null -SP $null -Install $null -IsLanguagePack:$false -IsWow6432:($arch -eq 'x86')
+                    $rows.Add($row) | Out-Null
+                    $sdkCount++
+                }
+            }
+        } catch {}
+    }
+
+    # Resolve CLI candidates: PATH + explicit x86
+    $cliCandidates = New-Object System.Collections.Generic.List[string]
+    $primaryCli = $null
+    try { $primaryCli = (Get-Command dotnet -ErrorAction Stop).Source } catch {}
+    if ($primaryCli) { $cliCandidates.Add($primaryCli) | Out-Null }
+
+    if ($pf86) {
+        $dotnetX86 = Join-Path $pf86 'dotnet\dotnet.exe'
+        if (Test-Path -LiteralPath $dotnetX86 -PathType Leaf) {
+            Write-Verbose "Found 32-bit dotnet CLI at: $dotnetX86"
+            if (-not ($cliCandidates -contains $dotnetX86)) { $cliCandidates.Add($dotnetX86) | Out-Null }
+        }
+    }
+
+    if ($cliCandidates.Count -gt 0) {
+        foreach ($cli in $cliCandidates) { Invoke-DotNetCLIScan -CliPath $cli }
+        if ($runtimeCount -eq 0 -and $sdkCount -eq 0) {
+            Write-Verbose "dotnet CLI executed but returned no runtimes or SDKs. Falling back to filesystem."
+            Invoke-FallbackDotNetFSScan
+        }
+    } else {
+        Invoke-FallbackDotNetFSScan
+    }
+
     Write-Verbose ("dotnet runtimes parsed: {0}" -f $runtimeCount)
     Write-Verbose ("dotnet SDKs parsed:     {0}" -f $sdkCount)
 
@@ -388,6 +424,9 @@ function Get-DotNetInventory {
         ($rows | Where-Object { $_.Type -eq 'SDK' }).Count, `
         ($rows | Where-Object { $_.Type -eq 'ARP' }).Count)
 
-    # Default view: InstallDate instead of Location
-    $rows | Select-Object Type, Family, Product, Version, Architecture, Source, InstallDate, Release, SP, Install, IsLanguagePack, IsWow6432
+    # -------------------------
+    # Default output (refined)
+    # -------------------------
+    $rows | Select-Object Type, Product, Version, Architecture, Source, InstallDate
+    # Optional (for human viewing): | Format-Table -AutoSize
 }
