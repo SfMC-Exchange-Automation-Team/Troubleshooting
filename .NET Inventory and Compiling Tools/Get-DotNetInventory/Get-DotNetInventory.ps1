@@ -436,3 +436,5 @@ function Get-DotNetInventory {
     $rows | Select-Object Type, Product, Version, Architecture, Source, InstallDate
     # Optional (for human viewing): | Format-Table -AutoSize
 }
+
+Write-Host "Function load complete. New cmdlet(s) available: Get-DotNetInventory -ForegroundColor Yellow
