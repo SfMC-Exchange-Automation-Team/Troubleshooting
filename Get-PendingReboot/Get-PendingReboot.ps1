@@ -55,10 +55,11 @@ Interactive mode with status output and optional reboot prompt.
 Author: Cullen Haafke
 Organization: Microsoft (SfMC)
 Compatibility: Windows PowerShell 5.1
-Version: 1.0.0
+Version: 1.0.2
 History:
 01/28/2026 - 1.0.0 - Initial release (PendingFileRenameOperations + pending.xml)
 01/29/2026 - 1.0.1 - Single remote hop + fallback option + tri-state propagation fixes
+01/29/2026 - 1.0.2 - Treat Test-Path access denied as Unknown (terminating) + do not hard-fail DNS precheck + gate Write-Host behind -ShowStatus
 
 .LINK
 Test-WSMan documentation (WinRM preflight)
@@ -208,7 +209,7 @@ Restart-Computer documentation (reboot behavior)
                 [Nullable[bool]]$PendingXmlPresent
             )
 
-            # Rule (5):
+            # Rule:
             # - If any known signal is True => True
             # - Else if all signals are known and False => False
             # - Else => Unknown
@@ -233,34 +234,33 @@ Restart-Computer documentation (reboot behavior)
                 [bool]$SuppressStatus,
 
                 [Parameter(Mandatory = $true)]
-                [bool]$EnableFallbackInner
+                [bool]$EnableFallbackInner,
+
+                [Parameter(Mandatory = $true)]
+                [bool]$ShowStatusInner
             )
 
             $result = [ordered]@{
-                Server                     = $Target
-                RebootRequired             = 'Unknown'
-                RegistryPending            = 'Unknown'
-                PendingXmlPresent          = 'Unknown'
-                RemoteConnectionDenied     = $false
-                RemoteConnectionDeniedClass  = $null
-                RemoteConnectionDeniedReason = $null
+                Server                      = $Target
+                RebootRequired              = 'Unknown'
+                RegistryPending             = 'Unknown'
+                PendingXmlPresent           = 'Unknown'
+                RemoteConnectionDenied      = $false
+                RemoteConnectionDeniedClass = $null
+                RemoteConnectionDeniedReason= $null
             }
 
             $isLocal = ($Target -ieq $env:COMPUTERNAME)
 
-            # DNS precheck for remote targets (kept, but does not force False states)
+            # DNS precheck for remote targets
+            # Do NOT hard fail on DNS, because WSMan may still succeed via NetBIOS/WINS or alternate resolution paths.
             if (-not $isLocal) {
                 try {
                     [void][System.Net.Dns]::GetHostEntry($Target)
                     Write-Verbose ("Name resolution succeeded: {0}" -f $Target)
                 }
                 catch {
-                    $fi = Get-RemotingFailureInfo -ErrorRecord $_
-                    $result.RemoteConnectionDenied      = $true
-                    $result.RemoteConnectionDeniedClass = $fi.Class
-                    $result.RemoteConnectionDeniedReason= $fi.Reason
-                    Set-RemoteDeniedState -ServerName $Target -FailureInfo $fi -SuppressStatus:$SuppressStatus
-                    return [pscustomobject]$result
+                    Write-Verbose ("Name resolution precheck failed for {0}. Continuing to attempt WinRM/fallback. Error: {1}" -f $Target, $_.Exception.Message)
                 }
             }
 
@@ -282,7 +282,7 @@ Restart-Computer documentation (reboot behavior)
 
                 try {
                     $xmlPath = Join-Path -Path $env:windir -ChildPath 'WinSxS\pending.xml'
-                    $xmlPending = [bool](Test-Path -LiteralPath $xmlPath)
+                    $xmlPending = [bool](Test-Path -LiteralPath $xmlPath -PathType Leaf -ErrorAction Stop)
                 }
                 catch {
                     Write-Verbose ("Local pending.xml check failed: {0}" -f $_.Exception.Message)
@@ -297,7 +297,8 @@ Restart-Computer documentation (reboot behavior)
 
                 if ($rebootReq -eq $true) {
                     $script:anyRebootRequired = $true
-                    if (-not $SuppressStatus) {
+
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         Write-Host ("Pending reboot detected on {0} (Registry: {1}, pending.xml: {2})" -f $Target.ToUpper(), $result.RegistryPending, $result.PendingXmlPresent) -ForegroundColor Yellow
                     }
 
@@ -309,7 +310,7 @@ Restart-Computer documentation (reboot behavior)
                     }
                 }
                 else {
-                    if (-not $SuppressStatus) {
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         if ($rebootReq -eq $false) {
                             Write-Host ("No pending reboot detected on {0}" -f $Target.ToUpper()) -ForegroundColor Green
                         }
@@ -345,7 +346,7 @@ Restart-Computer documentation (reboot behavior)
 
                     try {
                         $p = Join-Path -Path $env:windir -ChildPath 'WinSxS\pending.xml'
-                        $out.PendingXmlExists = [bool](Test-Path -LiteralPath $p)
+                        $out.PendingXmlExists = [bool](Test-Path -LiteralPath $p -PathType Leaf -ErrorAction Stop)
                     }
                     catch {
                         $out.XmlError = $_.Exception.Message
@@ -382,7 +383,7 @@ Restart-Computer documentation (reboot behavior)
                 if ($rebootReq -eq $true) {
                     $script:anyRebootRequired = $true
 
-                    if (-not $SuppressStatus) {
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         Write-Host ("Pending reboot detected on {0} (Registry: {1}, pending.xml: {2})" -f $Target.ToUpper(), $result.RegistryPending, $result.PendingXmlPresent) -ForegroundColor Yellow
                     }
 
@@ -394,7 +395,7 @@ Restart-Computer documentation (reboot behavior)
                     }
                 }
                 else {
-                    if (-not $SuppressStatus) {
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         if ($rebootReq -eq $false) {
                             Write-Host ("No pending reboot detected on {0}" -f $Target.ToUpper()) -ForegroundColor Green
                         }
@@ -407,7 +408,7 @@ Restart-Computer documentation (reboot behavior)
                 return [pscustomobject]$result
             }
             catch {
-                # WinRM failed. (4) Optional fallback path
+                # WinRM failed. Optional fallback path
                 $winrmError = $_
                 $fi = Get-RemotingFailureInfo -ErrorRecord $winrmError
 
@@ -415,7 +416,9 @@ Restart-Computer documentation (reboot behavior)
                     $result.RemoteConnectionDenied       = $true
                     $result.RemoteConnectionDeniedClass  = $fi.Class
                     $result.RemoteConnectionDeniedReason = $fi.Reason
-                    Set-RemoteDeniedState -ServerName $Target -FailureInfo $fi -SuppressStatus:$SuppressStatus
+                    if ($ShowStatusInner) {
+                        Set-RemoteDeniedState -ServerName $Target -FailureInfo $fi -SuppressStatus:$SuppressStatus
+                    }
                     return [pscustomobject]$result
                 }
 
@@ -447,9 +450,11 @@ Restart-Computer documentation (reboot behavior)
                 }
 
                 # Fallback 2: ADMIN$ share for pending.xml (uses remote windir)
+                # IMPORTANT: Test-Path emits non-terminating errors by default.
+                # Use -ErrorAction Stop so access denied is caught and tri-state becomes Unknown.
                 try {
                     $adminXml = "\\{0}\admin$\WinSxS\pending.xml" -f $Target
-                    $fallbackXmlPending = [bool](Test-Path -LiteralPath $adminXml)
+                    $fallbackXmlPending = [Nullable[bool]](Test-Path -LiteralPath $adminXml -PathType Leaf -ErrorAction Stop)
                 }
                 catch {
                     $fallbackXmlPending = $null
@@ -476,7 +481,10 @@ Restart-Computer documentation (reboot behavior)
                         Raw    = $fi.Raw
                     }
 
-                    Set-RemoteDeniedState -ServerName $Target -FailureInfo $fi2 -SuppressStatus:$SuppressStatus
+                    if ($ShowStatusInner) {
+                        Set-RemoteDeniedState -ServerName $Target -FailureInfo $fi2 -SuppressStatus:$SuppressStatus
+                    }
+
                     return [pscustomobject]$result
                 }
 
@@ -486,7 +494,7 @@ Restart-Computer documentation (reboot behavior)
                 if ($rebootReq -eq $true) {
                     $script:anyRebootRequired = $true
 
-                    if (-not $SuppressStatus) {
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         Write-Host ("Pending reboot detected on {0} (Fallback) (Registry: {1}, pending.xml: {2})" -f $Target.ToUpper(), $result.RegistryPending, $result.PendingXmlPresent) -ForegroundColor Yellow
                     }
 
@@ -498,7 +506,7 @@ Restart-Computer documentation (reboot behavior)
                     }
                 }
                 else {
-                    if (-not $SuppressStatus) {
+                    if ($ShowStatusInner -and -not $SuppressStatus) {
                         if ($rebootReq -eq $false) {
                             Write-Host ("No pending reboot detected on {0} (Fallback)" -f $Target.ToUpper()) -ForegroundColor Green
                         }
@@ -527,7 +535,12 @@ Restart-Computer documentation (reboot behavior)
         foreach ($s in $Server) {
             if ([string]::IsNullOrWhiteSpace($s)) { continue }
 
-            $obj = Invoke-PendingRebootCheckSingle -Target $s -PromptInner:$Prompt -SuppressStatus:$suppressStatus -EnableFallbackInner:$EnableFallback
+            $obj = Invoke-PendingRebootCheckSingle `
+                -Target $s `
+                -PromptInner:$Prompt `
+                -SuppressStatus:$suppressStatus `
+                -EnableFallbackInner:$EnableFallback `
+                -ShowStatusInner:$ShowStatus
 
             if ($obj.RebootRequired -eq 'True') {
                 $script:anyRebootRequired = $true
