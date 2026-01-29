@@ -12,9 +12,9 @@ management and maintenance window processes before using in production.
 Core indicators checked by this function (minimum set):
 - Registry: HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations
 - File: %windir%\WinSxS\pending.xml
-Remote checks rely on PowerShell Remoting (WinRM). The function may preflight WinRM using Test-WSMan. [1](https://outlook.office365.com/owa/?ItemID=AAMkADk1ZWQ1YmFmLTljY2YtNDYzZi04ZWU4LTVlNTRkMjNkYmE4YwBGAAAAAACJOpVJYHRHTqxSVSelJO4pBwCxOcFTdMnZR7wkBxs9MQihAAAAAAEJAACxOcFTdMnZR7wkBxs9MQihAAEAkmZLAAA%3d&exvsurl=1&viewmodel=ReadMessageItem)
+Remote checks rely on PowerShell Remoting (WinRM). The function may preflight WinRM using Test-WSMan.
 
-If -Prompt is used and a reboot is detected, the function can optionally initiate a reboot (Restart-Computer). [2](https://teams.microsoft.com/l/message/19:meeting_MTIyYzYwZmQtZmE1Yy00NGUyLWEyZmQtMDE1NGIzMWM4NGM1@thread.v2/1749738364781?context=%7B%22contextType%22:%22chat%22%7D)
+If -Prompt is used and a reboot is detected, the function can optionally initiate a reboot (Restart-Computer).
 
 .PARAMETER Server
 One or more target computer names.
@@ -58,7 +58,7 @@ Compatibility: Windows PowerShell 5.1
 Version: 1.0.0
 
 Version History:
-- 1.0.0  Initial internal version (basic checks: PendingFileRenameOperations + pending.xml). [1](https://outlook.office365.com/owa/?ItemID=AAMkADk1ZWQ1YmFmLTljY2YtNDYzZi04ZWU4LTVlNTRkMjNkYmE4YwBGAAAAAACJOpVJYHRHTqxSVSelJO4pBwCxOcFTdMnZR7wkBxs9MQihAAAAAAEJAACxOcFTdMnZR7wkBxs9MQihAAEAkmZLAAA%3d&exvsurl=1&viewmodel=ReadMessageItem)
+  •  01/28/2026 - 1.0.0  |  Initial release (basic checks: PendingFileRenameOperations + pending.xml).
 
 .LINK
 Test-WSMan documentation (WinRM preflight). 
