@@ -3,11 +3,11 @@
 Discovery Replay utilities for importing, loading, and managing Exchange discovery results.
 
 .DESCRIPTION
-This script provides a lightweight framework for working with XML/Clixml output 
+This script provides a lightweight framework for working with XML/Clixml output
 from Exchange discovery cmdlets (e.g., Get-ExchangeServer, Get-SendConnector).
-It allows you to register discovery datasets by customer, automatically load 
-them as Get-* functions (shims), filter them using familiar Exchange/AD-style 
-parameters (Identity, Name, UserPrincipalName, etc.), and remove them when 
+It allows you to register discovery datasets by customer, automatically load
+them as Get-* functions (shims), filter them using familiar Exchange/AD-style
+parameters (Identity, Name, UserPrincipalName, etc.), and remove them when
 no longer needed.
 
 State is tracked in two internal registries:
@@ -23,7 +23,7 @@ Functions included:
  - Get-Customer                  : List registered customers and their dataset info
 
 .PARAMETER CustomerName
-Specifies the logical name for a customer dataset (e.g. "Contoso"). Used when 
+Specifies the logical name for a customer dataset (e.g. "Contoso"). Used when
 importing, loading, unloading, or listing shims.
 
 .PARAMETER Path
@@ -36,7 +36,7 @@ Indicates that the dataset represents Exchange Online output.
 Indicates that the dataset represents Exchange On-Premises output.
 
 .PARAMETER NoLoad
-Optional switch for Import-DiscoveryScriptResults. When present, prevents 
+Optional switch for Import-DiscoveryScriptResults. When present, prevents
 automatic loading of shims after import.
 
 .EXAMPLE
@@ -72,18 +72,23 @@ Author   : Cullen Haafke
 Requires : PowerShell 5.1+ (for compatibility with Import-Clixml and modern hashtables)
 Version  : 1.0    Date     : 25 Aug 2025
            1.2    Date     : 09 Sep 2025
-           - Added logic to handle dynamic filename prefixes and org name detection        
+            - Added logic to handle dynamic filename prefixes and org name detection
+           1.3    Date     : 06 Mar 2026
+            - Fixed hyphenated org prefixes breaking noun detection
+            - Fixed Exchange Management Shell scope issue by making helpers global
 
 .LINK
 <optional: GitHub repo or internal documentation link>
 #>
 
-
-
-
 # --- State ---
-if (-not ($global:CustomerRegistry  -is [hashtable])) { $global:CustomerRegistry  = @{} }
-if (-not ($global:FunctionRegistry -is [hashtable])) { $global:FunctionRegistry = @{} }
+# Initialize in script scope (interactive/global if dot-sourced) and mirror to global for visibility
+if (-not ($script:CustomerRegistry  -is [hashtable])) { $script:CustomerRegistry  = @{} }
+if (-not ($script:FunctionRegistry -is [hashtable])) { $script:FunctionRegistry = @{} }
+
+# Optional mirrors (do not change the backing object)
+$global:CustomerRegistry  = $script:CustomerRegistry
+$global:FunctionRegistry  = $script:FunctionRegistry
 
 
 function global:Import-DiscoveryScriptResults {
@@ -100,18 +105,19 @@ function global:Import-DiscoveryScriptResults {
         [Parameter(Mandatory)]
         [ValidateScript({ Test-Path $_ -PathType Container })]
         [string]$Path,
+
         [string]$Year,
+
         [Parameter(ParameterSetName='EXO')]    [switch]$EXO,
         [Parameter(ParameterSetName='OnPrem')] [switch]$OnPrem,
-        
 
         # Opt-out: prevents the automatic Load-Customer step
         [switch]$NoLoad
     )
 
-    $resolvedPath = (Resolve-Path $Path).Path
+    $resolvedPath     = (Resolve-Path $Path).Path
     $resolvedFilename = Split-Path $resolvedPath -Leaf
-    $tag = if ($EXO) { 'EXO' } elseif ($OnPrem) { 'OnPrem' } else { 'Unspecified' }
+    $tag              = if ($EXO) { 'EXO' } elseif ($OnPrem) { 'OnPrem' } else { 'Unspecified' }
 
     $script:CustomerRegistry[$CustomerName] = @{
         Path = $resolvedPath
@@ -120,7 +126,7 @@ function global:Import-DiscoveryScriptResults {
         Year = $Year
     }
 
-    Write-Host "Imported $CustomerName [$tag] from $resolvedfilename"
+    Write-Host "Imported $CustomerName [$tag] from $resolvedFilename"
 
     if (-not $NoLoad) {
         try {
@@ -132,11 +138,13 @@ function global:Import-DiscoveryScriptResults {
             Write-Warning "Customer is registered; run Load-Customer manually when ready."
         }
     } else {
-        Write-Host "Skipped auto-load for $CustomerName (NoLoad). Use: Load-Customer -CustomerName '$CustomerName' $(if($tag -ne 'Unspecified'){"-$tag"})"
+        Write-Host ("Skipped auto-load for {0} (NoLoad). Use: Load-Customer -CustomerName '{0}' {1}" -f `
+            $CustomerName, $(if($tag -ne 'Unspecified'){"-$tag"}else{""}))
     }
 }
 
-function Convert-ToOrgToken {
+
+function global:Convert-ToOrgToken {
     <#
       Normalizes an organization identifier for filename prefix matching.
       - Keeps hyphens and dots (e.g., contoso-banking, contoso.onmicrosoft.com)
@@ -157,10 +165,40 @@ function Convert-ToOrgToken {
 }
 
 
+function global:Get-DiscoveryNounFromFileName {
+    <#
+      Derives the cmdlet noun from a discovery export filename after prefixes are stripped.
+      Example:
+        Contoso-Bank-ExchangeServer -> ExchangeServer
+        Get-Mailbox                   -> Mailbox
+      Behavior:
+        - Split on hyphen/underscore/dot
+        - Prefer the last token containing letters
+        - Remove non-alphanumeric characters
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$BaseName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaseName)) { return $null }
+
+    $tokens = $BaseName -split '[-_.]' | Where-Object { $_ -and $_.Trim().Length -gt 0 }
+    if ($tokens.Count -eq 0) { return $null }
+
+    $candidate = ($tokens | Where-Object { $_ -match '[A-Za-z]' } | Select-Object -Last 1)
+    if (-not $candidate) { $candidate = $tokens | Select-Object -Last 1 }
+
+    $noun = ($candidate -replace '[^A-Za-z0-9]', '')
+    if ([string]::IsNullOrWhiteSpace($noun)) { return $null }
+    return $noun
+}
+
+
 <# ONLY NEEDED FOR UNLOAD-CUSTOMER - Which may eventually be removed.
-    When a customer dataset is loaded with Load-Customer, discovery functions (shims) 
+    When a customer dataset is loaded with Load-Customer, discovery functions (shims)
     are created in the global function scope (e.g., Get-ExchangeServer, Get-SiteMailbox).
-    These are backed by the customer's exported XML files and are tracked in the 
+    These are backed by the customer's exported XML files and are tracked in the
     $script:FunctionRegistry hashtable.
 
     Remove-DiscoveryFunctions cleans up those functions by:
@@ -169,13 +207,16 @@ function Convert-ToOrgToken {
       - Removing the corresponding entries from $script:FunctionRegistry
 
     The customer record in $script:CustomerRegistry is NOT removed; only the functions. #>
-function Remove-DiscoveryFunctions {
+function global:Remove-DiscoveryFunctions {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$CustomerName)
 
     $items = $script:FunctionRegistry.GetEnumerator() |
              Where-Object { $_.Value.Customer -eq $CustomerName } |
              ForEach-Object { $_ }   # materialize
+
+    $removed = 0
+    $missing = 0
 
     foreach ($kv in $items) {
         $fn = $kv.Key
@@ -185,13 +226,27 @@ function Remove-DiscoveryFunctions {
             Remove-Item -Path ("alias:\{0}" -f $fn) -Force -ErrorAction SilentlyContinue
         }
 
+        $foundAny = $false
+
         # Remove the function (both generic and explicit global path just in case)
         foreach ($path in @("function:\$fn","function:\global:\$fn")) {
-            if (Test-Path $path) { Remove-Item -Path $path -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $path) {
+                Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+                $foundAny = $true
+            }
         }
+
+        if ($foundAny) { $removed++ } else { $missing++ }
 
         # Drop from the registry
         $null = $script:FunctionRegistry.Remove($fn)
+    }
+
+    [pscustomobject]@{
+        Customer    = $CustomerName
+        Removed     = $removed
+        Missing     = $missing
+        KeysCleared = ($removed + $missing)
     }
 }
 
@@ -252,7 +307,7 @@ function global:Get-DiscoveryOrgName {
     }
 
     # 3) Fallback: parse filename before "-OrganizationConfig"
-    $m = [regex]::Match($orgFile.BaseName, '^(?<org>.+?)-OrganizationConfig$', 'IgnoreCase')
+    $m = [regex]::Match($orgFile.BaseName, '^(?<org>.+?)-OrganizationConfig$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if ($m.Success) {
         $tok = (Convert-ToOrgToken -InputString $m.Groups['org'].Value)
         if ($tok) {
@@ -264,6 +319,7 @@ function global:Get-DiscoveryOrgName {
     Write-Verbose "No org token could be derived."
     return $null
 }
+
 
 function global:Load-Customer {
     [CmdletBinding()]
@@ -278,7 +334,7 @@ function global:Load-Customer {
     }
 
     $entry = $script:CustomerRegistry[$CustomerName]
-    $tag = if ($EXO) { 'EXO' } elseif ($OnPrem) { 'OnPrem' } else { $entry.Tag }
+    $tag   = if ($EXO) { 'EXO' } elseif ($OnPrem) { 'OnPrem' } else { $entry.Tag }
 
     if ($entry.Tag -ne 'Unspecified' -and $tag -ne $entry.Tag) {
         throw "$CustomerName is tagged as $($entry.Tag), not $tag."
@@ -299,24 +355,35 @@ function global:Load-Customer {
         return
     }
 
-    # Dynamic prefix detection from first file
-    $firstFile = $xmlFiles | Select-Object -First 1
+    # Dynamic prefix detection from first file.
+    # Prefer capturing everything before the last hyphen (works for Contoso-Bank-ExchangeServer)
+    $firstFile     = $xmlFiles | Select-Object -First 1
     $dynamicPrefix = $null
-    if ($firstFile.BaseName -match '-') {
+    if ($firstFile.BaseName -match '^(?<pref>.+)-(?<noun>[A-Za-z][A-Za-z0-9]*)$') {
+        $dynamicPrefix = $Matches['pref']
+    } elseif ($firstFile.BaseName -match '-') {
         $dynamicPrefix = ($firstFile.BaseName -split '[-_.]')[0]
     }
 
-    # Build regex for stripping prefixes
+    # Build regex for stripping prefixes (remove only the leading "prefix-")
     $prefixes = @('Exchange','Get')
-    if ($dynamicPrefix) { $prefixes += [regex]::Escape($dynamicPrefix) }
-    if ($orgName) { $prefixes += [regex]::Escape($orgName) }
+    if ($dynamicPrefix) { $prefixes += $dynamicPrefix }
+    if ($orgName)       { $prefixes += $orgName }
+
+    # Escape and sort longest-first so hyphenated org names win over partial tokens
+    $prefixes = $prefixes |
+        Where-Object { $_ -and $_.ToString().Trim().Length -gt 0 } |
+        ForEach-Object { $_.ToString() } |
+        Sort-Object Length -Descending -Unique |
+        ForEach-Object { [regex]::Escape($_) }
+
     $prefixRegex = '^(?i:(?:' + ($prefixes -join '|') + '))-'
 
     foreach ($file in $xmlFiles) {
-        # Derive clean noun using dynamic prefix
-        $base    = $file.BaseName -replace $prefixRegex, ''
-        $primary = ($base -split '[-_.]')[0]
-        $noun    = ($primary -replace '[^A-Za-z0-9]', '')
+        # Strip leading prefixes and derive noun from the remaining base name
+        $base = $file.BaseName -replace $prefixRegex, ''
+
+        $noun = Get-DiscoveryNounFromFileName -BaseName $base
         if ([string]::IsNullOrWhiteSpace($noun)) { continue }
 
         $funcName = "Get-$noun"
@@ -458,7 +525,7 @@ function global:Load-Customer {
             $data = Invoke-Import -Path $filePath
             if ($data -is [xml]) {
                 if ($PSBoundParameters.Keys.Count -gt 0) {
-                    throw "Filtering (-Name/-Identity/etc.) and pagination (-First/-Skip/-SortBy) aren’t available for raw XML files. Pipe to Select-Xml or re-export as CliXML."
+                    throw "Filtering (-Name/-Identity/etc.) and pagination (-First/-Skip/-SortBy) are not available for raw XML files. Pipe to Select-Xml or re-export as CliXML."
                 }
                 return $data
             }
@@ -467,7 +534,7 @@ function global:Load-Customer {
             if ($items.Count -eq 0) { return $items }
 
             $propNames = $items[0].PSObject.Properties.Name
-            $propSet   = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            $propSet   = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($p in $propNames) { [void]$propSet.Add($p) }
 
             $aliasMap = @{
@@ -496,7 +563,7 @@ function global:Load-Customer {
 
                 if (-not $propSet.Contains($prop)) {
                     $sample = ($propNames | Sort-Object | Select-Object -First 25) -join ', '
-                    throw "You passed -$paramName but the objects don’t have a '$prop' property. Available properties include: $sample"
+                    throw "You passed -$paramName but the objects do not have a '$prop' property. Available properties include: $sample"
                 }
 
                 $items = $items | Where-Object {
@@ -517,7 +584,7 @@ function global:Load-Customer {
             if ($PSBoundParameters.ContainsKey('SortBy')) {
                 if (-not $propSet.Contains($SortBy)) {
                     $sample = ($propNames | Sort-Object | Select-Object -First 25) -join ', '
-                    throw "You passed -SortBy '$SortBy' but that property doesn’t exist. Available properties include: $sample"
+                    throw "You passed -SortBy '$SortBy' but that property does not exist. Available properties include: $sample"
                 }
                 $items = $items | Sort-Object -Property $SortBy
             }
@@ -540,10 +607,8 @@ function global:Load-Customer {
     }
 
     Write-Host "Loaded   $CustomerName [$tag]" -NoNewline
-    Write-Host ": $($xmlFiles.Count) functions created" `
-        $(if($orgName){"(org prefix: $orgName)"}else{""})
+    Write-Host (": {0} functions created {1}" -f $xmlFiles.Count, $(if($orgName){"(org prefix: $orgName)"}else{""}))
 }
-
 
 
 function Get-DiscoveryIndex {
@@ -579,6 +644,7 @@ function Get-DiscoveryIndex {
     }
 }
 
+
 function global:Unload-Customer {
     [CmdletBinding()]
     param(
@@ -594,6 +660,7 @@ function global:Unload-Customer {
             $summary.Customer, $summary.Removed, $summary.Missing) -ForegroundColor Green
     }
 }
+
 
 function Get-Customer {
     <#
