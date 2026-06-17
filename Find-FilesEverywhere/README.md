@@ -10,7 +10,6 @@
 
 `Find-FileEverywhere` searches for files by name across ALL common Windows storage locations. By default, it searches the current user's profile folder on the system drive and then adds sync folders and other mapped or physical drives when those paths are not already covered.
 
-The Scout fork preserves the original user-visible progress messages and pauses, while adding safer path handling, configurable parallelism, quiet output, better runspace cleanup, error counting, and cleaner singular/plural match text.
 
 ## Script location
 
