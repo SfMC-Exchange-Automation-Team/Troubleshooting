@@ -1,4 +1,4 @@
-# Find-FileEverywhere Scout Fork
+# Find-FileEverywhere
 
 ## Applies to
 
@@ -8,7 +8,7 @@
 
 ## Summary
 
-`Find-FileEverywhere` searches for files by name across common Windows storage locations. By default, it searches the current user's profile folder on the system drive and then adds sync folders and other mapped or physical drives when those paths are not already covered.
+`Find-FileEverywhere` searches for files by name across ALL common Windows storage locations. By default, it searches the current user's profile folder on the system drive and then adds sync folders and other mapped or physical drives when those paths are not already covered.
 
 The Scout fork preserves the original user-visible progress messages and pauses, while adding safer path handling, configurable parallelism, quiet output, better runspace cleanup, error counting, and cleaner singular/plural match text.
 
@@ -41,6 +41,9 @@ Find-FileEverywhere
 `Find-FileEverywhere` builds a list of search roots and scans each root in parallel by using a runspace pool. If the search string does not contain `*` or `?`, the function automatically wraps it in wildcards so that a search for `budget` behaves like `*budget*`.
 
 The function returns structured objects to the pipeline. It also writes progress-style status messages to the host unless `-Quiet` is specified.
+
+<img width="576" height="384" alt="image" src="https://github.com/user-attachments/assets/c7a0bac1-8d05-46c9-a124-8f4aa7360fdb" />
+
 
 ## Search roots
 
