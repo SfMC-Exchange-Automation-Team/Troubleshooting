@@ -1,4 +1,4 @@
-# **Get-ExoQueue.ps1 – Exchange Online Message Queue Viewer**
+# **Get-ExoQueue - CURRENTLY BEING REBUILT DUE TO GET-MESSAGETRACEV2 changes**
 
 ## **Overview**
 `Get-ExoQueue` is a PowerShell function designed to approximate the Exchange Online message queue using **Message Trace data**. It retrieves messages for a specified time range and outputs results in **GridView**, **CSV**, or **XML** format.  
