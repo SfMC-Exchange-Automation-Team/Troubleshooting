@@ -62,4 +62,13 @@
         IncludeHotFixInventory = $true
         IncludeSetupLogEvidence = $true
     }
+
+    Preflight = @{
+        TargetServers = @()
+        PendingRebootScriptPath = '.\Scripts\Get-PendingReboot.ps1'
+        EnablePendingRebootFallback = $true
+        IncludeSccmRebootState = $false
+        BlockOnPendingReboot = $true
+        BlockOnUnknownRebootState = $true
+    }
 }

@@ -28,11 +28,14 @@ PowerShell 7 can be used later for non-Exchange helper utilities only when a scr
 | `EPO-Toolbox.ps1` | Stage-aware entry point. Resolves `-Stage Auto` from configuration and dispatches implemented stages. |
 | `Invoke-ExchangeCuStage1SopAnalysis.ps1` | Runs Stage 1 SOP analysis. This stage makes no Exchange server changes. |
 | `Invoke-EpoUpdateInventory.ps1` | Collects read-only Exchange CU, HU, and SU installation evidence. |
+| `Invoke-EpoPreflightCheck.ps1` | Runs read-only preflight checks, including pending reboot detection. |
 | `Config\ExchangeCuPatch.config.psd1` | Configuration file for customer/environment metadata, stage awareness, package metadata, Splunk, CrowdStrike, and load balancer settings. |
 | `Modules\Epo.Logging.psm1` | Initializes run folders and writes `Run.json`, `Events.jsonl`, evidence JSON, and `Summary.csv`. |
 | `Modules\Epo.Stage1.SopAnalysis.psm1` | Produces dynamic SOP gap/risk findings and next-stage input requirements. |
 | `Modules\Epo.UpdateInventory.psm1` | Builds the reusable update inventory object for Exchange CU, HU, and SU state. |
+| `Modules\Epo.Preflight.psm1` | Wraps packaged preflight checks and returns structured pass/warn/block results. |
 | `Modules\Epo.Gui.psm1` | Provides the optional Windows Forms dashboard and wizard. GUI values map to unattended PowerShell parameters and config values. |
+| `Scripts\Get-PendingReboot.ps1` | Packaged pending reboot detection function used by the PreCheck stage. |
 
 ## Article set
 
@@ -40,6 +43,7 @@ PowerShell 7 can be used later for non-Exchange helper utilities only when a scr
 | --- | --- |
 | [Run Stage 1 SOP analysis](stage-1-sop-analysis.md) | Explains how to run Stage 1 and interpret the output. |
 | [Collect Exchange update inventory](update-inventory.md) | Explains how to discover installed Exchange CU, HU, and SU evidence. |
+| [Run preflight checks](preflight-checks.md) | Explains pending reboot preflight checks and blocking behavior. |
 | [Use the GUI dashboard and wizard](gui-dashboard.md) | Explains the optional GUI mode, prerequisite dashboard, wizard steps, and unattended mapping. |
 | [Configure the EPO Toolbox](configuration.md) | Documents `ExchangeCuPatch.config.psd1` settings. |
 | [Output and evidence reference](output-reference.md) | Describes generated run folders and output artifacts. |
@@ -59,7 +63,7 @@ The toolbox tracks these stages in `Config\ExchangeCuPatch.config.psd1`:
 9. `Rollback`
 10. `Report`
 
-`SopAnalysis` and `UpdateInventory` are implemented today. Later stages should follow the same pattern: no silent state changes, structured events, evidence output, and clear next-stage requirements.
+`SopAnalysis`, `UpdateInventory`, and `PreCheck` are implemented today. Later stages should follow the same pattern: no silent state changes, structured events, evidence output, and clear next-stage requirements.
 
 ## Documentation maintenance
 

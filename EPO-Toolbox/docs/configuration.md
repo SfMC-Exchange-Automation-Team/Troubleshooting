@@ -105,6 +105,19 @@ Stage 1 reports `LoadBalancer.Mode = None` as a warning because load balancer re
 | `IncludeHotFixInventory` | Reserved switch for hotfix inventory collection behavior. |
 | `IncludeSetupLogEvidence` | Reserved switch for setup log evidence collection behavior. |
 
+## Preflight
+
+`Preflight` defines the pending reboot check used by the `PreCheck` stage.
+
+| Setting | Description |
+| --- | --- |
+| `TargetServers` | Default servers to check when `-TargetServers` is not supplied. |
+| `PendingRebootScriptPath` | Path to the packaged `Get-PendingReboot.ps1` script. Relative paths resolve from the toolbox root. |
+| `EnablePendingRebootFallback` | Enables fallback checks in `Get-PendingReboot` when WinRM fails. |
+| `IncludeSccmRebootState` | Includes SCCM client reboot state when available. |
+| `BlockOnPendingReboot` | Blocks the stage when `RebootRequired` is `True`. |
+| `BlockOnUnknownRebootState` | Blocks the stage when reboot state is `Unknown`. |
+
 ## GUI-generated configuration
 
 The optional GUI wizard can generate a runtime configuration file under:

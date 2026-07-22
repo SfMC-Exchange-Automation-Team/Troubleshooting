@@ -80,6 +80,15 @@ switch ($ResolvedStage) {
             -ValidationOnly:$ValidationOnly
         break
     }
+    'PreCheck' {
+        & (Join-Path $PSScriptRoot 'Invoke-EpoPreflightCheck.ps1') `
+            -ConfigPath $ConfigPath `
+            -OutputRoot $OutputRoot `
+            -TargetServers $TargetServers `
+            -CorrelationId $CorrelationId `
+            -ValidationOnly:$ValidationOnly
+        break
+    }
     default {
         throw "Stage '$ResolvedStage' is defined in the toolbox sequence but has not been implemented yet."
     }

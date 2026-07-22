@@ -98,6 +98,26 @@ The shell equivalent is:
 .\EPO-Toolbox.ps1 -Stage UpdateInventory -TargetServers EXCH01,EXCH02 -ValidationOnly
 ```
 
+## Preflight pending reboot panel
+
+The dashboard includes a **Preflight pending reboot request** panel. This panel makes the pending reboot preflight request visible in the GUI.
+
+The **Refresh preflight** button calls the packaged `Scripts\Get-PendingReboot.ps1` function through `Invoke-EpoPreflightCheck` and displays:
+
+- Server
+- Status
+- Severity
+- Reboot required
+- Connection method
+- Blocked state
+- Failure reason, when available
+
+The shell equivalent is:
+
+```powershell
+.\EPO-Toolbox.ps1 -Stage PreCheck -TargetServers EXCH01,EXCH02 -ValidationOnly
+```
+
 ## Generated GUI config
 
 When the wizard runs the toolbox, it writes a generated config file under:

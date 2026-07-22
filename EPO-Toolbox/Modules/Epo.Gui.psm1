@@ -68,8 +68,11 @@ function Test-EpoGuiPrerequisites {
     $RequiredFiles = @(
         'EPO-Toolbox.ps1',
         'Invoke-ExchangeCuStage1SopAnalysis.ps1',
+        'Invoke-EpoPreflightCheck.ps1',
+        'Scripts\Get-PendingReboot.ps1',
         'Modules\Epo.Logging.psm1',
-        'Modules\Epo.Stage1.SopAnalysis.psm1'
+        'Modules\Epo.Stage1.SopAnalysis.psm1',
+        'Modules\Epo.Preflight.psm1'
     )
     $MissingFiles = @($RequiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ToolboxRoot $_)) })
     if ($MissingFiles.Count -eq 0) {
@@ -131,7 +134,7 @@ function New-EpoGuiRuntimeModel {
         Stage = $ResolvedStage
         StageOrder = $StageOrder
         ValidationOnly = [bool] $ValidationOnly
-        TargetServers = if ($TargetServers -and $TargetServers.Count) { ($TargetServers -join ',') } elseif ($Config.ContainsKey('Inventory')) { (@($Config.Inventory.TargetServers) -join ',') } else { '' }
+        TargetServers = if ($TargetServers -and $TargetServers.Count) { ($TargetServers -join ',') } elseif ($Config.ContainsKey('Preflight') -and $Config.Preflight.TargetServers) { (@($Config.Preflight.TargetServers) -join ',') } elseif ($Config.ContainsKey('Inventory')) { (@($Config.Inventory.TargetServers) -join ',') } else { '' }
         CustomerName = if ($Config.ContainsKey('CustomerName')) { [string] $Config.CustomerName } else { '' }
         Environment = if ($Config.ContainsKey('Environment')) { [string] $Config.Environment } else { '' }
         CuIsoPath = if ($Config.ContainsKey('Package')) { [string] $Config.Package.CuIsoPath } else { '' }
@@ -221,6 +224,14 @@ function Export-EpoGuiConfigDataFile {
         TargetServers = @($(($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { ConvertTo-EpoSingleQuotedString -Value $_ }) -join ', '))
         IncludeHotFixInventory = `$true
         IncludeSetupLogEvidence = `$true
+    }
+    Preflight = @{
+        TargetServers = @($(($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { ConvertTo-EpoSingleQuotedString -Value $_ }) -join ', '))
+        PendingRebootScriptPath = '.\Scripts\Get-PendingReboot.ps1'
+        EnablePendingRebootFallback = `$true
+        IncludeSccmRebootState = `$false
+        BlockOnPendingReboot = `$true
+        BlockOnUnknownRebootState = `$true
     }
 }
 "@
@@ -454,7 +465,7 @@ function Show-EpoToolboxDashboard {
 
     $Form = New-Object System.Windows.Forms.Form
     $Form.Text = 'EPO Toolbox'
-    $Form.Size = New-Object System.Drawing.Size(860, 610)
+    $Form.Size = New-Object System.Drawing.Size(860, 720)
     $Form.StartPosition = 'CenterScreen'
 
     $Title = New-Object System.Windows.Forms.Label
@@ -518,7 +529,7 @@ function Show-EpoToolboxDashboard {
 
     $InventoryList = New-Object System.Windows.Forms.ListView
     $InventoryList.Location = New-Object System.Drawing.Point(20, 382)
-    $InventoryList.Size = New-Object System.Drawing.Size(800, 115)
+    $InventoryList.Size = New-Object System.Drawing.Size(800, 80)
     $InventoryList.View = 'Details'
     $InventoryList.FullRowSelect = $true
     [void] $InventoryList.Columns.Add('Server', 120)
@@ -552,6 +563,58 @@ function Show-EpoToolboxDashboard {
                 [void] $Item.SubItems.Add([string] $Su)
                 [void] $InventoryList.Items.Add($Item)
             }
+
+            $PreflightLabel = New-Object System.Windows.Forms.Label
+            $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Model.TargetServers)"
+            $PreflightLabel.Location = New-Object System.Drawing.Point(20, 470)
+            $PreflightLabel.Size = New-Object System.Drawing.Size(800, 20)
+
+            $PreflightList = New-Object System.Windows.Forms.ListView
+            $PreflightList.Location = New-Object System.Drawing.Point(20, 496)
+            $PreflightList.Size = New-Object System.Drawing.Size(800, 90)
+            $PreflightList.View = 'Details'
+            $PreflightList.FullRowSelect = $true
+            [void] $PreflightList.Columns.Add('Server', 120)
+            [void] $PreflightList.Columns.Add('Status', 90)
+            [void] $PreflightList.Columns.Add('Severity', 90)
+            [void] $PreflightList.Columns.Add('RebootRequired', 120)
+            [void] $PreflightList.Columns.Add('Connection', 120)
+            [void] $PreflightList.Columns.Add('Blocked', 90)
+            [void] $PreflightList.Columns.Add('Reason', 260)
+
+            function Refresh-GuiPreflight {
+                try {
+                    Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.Preflight.psm1') -Force
+                    $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                    if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
+                    $ScriptPath = Join-Path $ToolboxRoot 'Scripts\Get-PendingReboot.ps1'
+                    $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Targets -join ', ')"
+                    $PreflightList.Items.Clear()
+                    $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true
+                    foreach ($ServerPreflight in $Preflight.Servers) {
+                        $Item = New-Object System.Windows.Forms.ListViewItem($ServerPreflight.Server)
+                        [void] $Item.SubItems.Add($ServerPreflight.Status)
+                        [void] $Item.SubItems.Add($ServerPreflight.Severity)
+                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RebootRequired)
+                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.ConnectionMethod)
+                        [void] $Item.SubItems.Add([string] $ServerPreflight.Blocked)
+                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RemoteConnectionFailureReason)
+                        if ($ServerPreflight.Blocked) {
+                            $Item.ForeColor = [System.Drawing.Color]::DarkRed
+                        }
+                        elseif ($ServerPreflight.Status -eq 'Warning') {
+                            $Item.ForeColor = [System.Drawing.Color]::DarkOrange
+                        }
+                        else {
+                            $Item.ForeColor = [System.Drawing.Color]::DarkGreen
+                        }
+                        [void] $PreflightList.Items.Add($Item)
+                    }
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Preflight check failed', 'OK', 'Error') | Out-Null
+                }
+            }
         }
         catch {
             [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update inventory failed', 'OK', 'Error') | Out-Null
@@ -560,14 +623,14 @@ function Show-EpoToolboxDashboard {
 
     $WizardButton = New-Object System.Windows.Forms.Button
     $WizardButton.Text = 'Open wizard'
-    $WizardButton.Location = New-Object System.Drawing.Point(425, 510)
+    $WizardButton.Location = New-Object System.Drawing.Point(425, 610)
     $WizardButton.Size = New-Object System.Drawing.Size(105, 30)
     $WizardButton.Enabled = $Blocked.Count -eq 0
     $WizardButton.Add_Click({ Show-EpoToolboxWizard -Model $Model })
 
     $CopyButton = New-Object System.Windows.Forms.Button
     $CopyButton.Text = 'Copy command'
-    $CopyButton.Location = New-Object System.Drawing.Point(540, 510)
+    $CopyButton.Location = New-Object System.Drawing.Point(540, 610)
     $CopyButton.Size = New-Object System.Drawing.Size(105, 30)
     $CopyButton.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($CommandPreview.Text) })
 
@@ -575,15 +638,21 @@ function Show-EpoToolboxDashboard {
     $CloseButton.Text = 'Close'
     $InventoryButton = New-Object System.Windows.Forms.Button
     $InventoryButton.Text = 'Refresh inventory'
-    $InventoryButton.Location = New-Object System.Drawing.Point(285, 510)
+    $InventoryButton.Location = New-Object System.Drawing.Point(145, 610)
     $InventoryButton.Size = New-Object System.Drawing.Size(125, 30)
     $InventoryButton.Add_Click({ Refresh-GuiInventory })
 
-    $CloseButton.Location = New-Object System.Drawing.Point(655, 510)
+    $PreflightButton = New-Object System.Windows.Forms.Button
+    $PreflightButton.Text = 'Refresh preflight'
+    $PreflightButton.Location = New-Object System.Drawing.Point(285, 610)
+    $PreflightButton.Size = New-Object System.Drawing.Size(125, 30)
+    $PreflightButton.Add_Click({ Refresh-GuiPreflight })
+
+    $CloseButton.Location = New-Object System.Drawing.Point(655, 610)
     $CloseButton.Size = New-Object System.Drawing.Size(80, 30)
     $CloseButton.Add_Click({ $Form.Close() })
 
-    $Form.Controls.AddRange(@($Title, $Status, $List, $CommandPreview, $InventoryLabel, $InventoryList, $InventoryButton, $WizardButton, $CopyButton, $CloseButton))
+    $Form.Controls.AddRange(@($Title, $Status, $List, $CommandPreview, $InventoryLabel, $InventoryList, $PreflightLabel, $PreflightList, $InventoryButton, $PreflightButton, $WizardButton, $CopyButton, $CloseButton))
     [void] $Form.ShowDialog()
 }
 
