@@ -32,6 +32,7 @@ StageAwareness = @{
     CurrentStage = 'SopAnalysis'
     StageOrder = @(
         'SopAnalysis'
+        'UpdateInventory'
         'DagDiscovery'
         'PreCheck'
         'Maintenance'
@@ -93,6 +94,16 @@ Future stages should record original service startup type and status before chan
 | `AdapterScriptPath` | Path to a future load balancer adapter script when `Mode` is `Script`. |
 
 Stage 1 reports `LoadBalancer.Mode = None` as a warning because load balancer requirements are still open.
+
+## Inventory
+
+`Inventory` defines default target servers and evidence behavior for the `UpdateInventory` stage.
+
+| Setting | Description |
+| --- | --- |
+| `TargetServers` | Default Exchange servers to query when `-TargetServers` is not supplied. |
+| `IncludeHotFixInventory` | Reserved switch for hotfix inventory collection behavior. |
+| `IncludeSetupLogEvidence` | Reserved switch for setup log evidence collection behavior. |
 
 ## GUI-generated configuration
 

@@ -67,6 +67,7 @@ The GUI builds a runtime model with `New-EpoGuiRuntimeModel`. The model maps UI 
 | Validation only | `-ValidationOnly` |
 | Output root | `-OutputRoot` |
 | Correlation ID | `-CorrelationId` |
+| Target servers | `-TargetServers` |
 | Config path | `-ConfigPath` |
 | Customer name | `CustomerName` in the generated config file |
 | Environment | `Environment` in the generated config file |
@@ -77,6 +78,25 @@ The GUI builds a runtime model with `New-EpoGuiRuntimeModel`. The model maps UI 
 | CrowdStrike services | `Services.CrowdStrikeServiceNames` |
 | Load balancer mode | `LoadBalancer.Mode` |
 | Load balancer adapter script | `LoadBalancer.AdapterScriptPath` |
+
+## Update inventory panel
+
+The dashboard includes an **Update inventory request** panel. This panel makes update inventory requests visible in the GUI and shows the same server-level summary emitted by shell mode.
+
+The **Refresh inventory** button calls `Get-EpoExchangeUpdateInventory` and displays:
+
+- Server
+- Status
+- Exchange build
+- Detected CU
+- Latest detected HU
+- Latest detected SU
+
+The shell equivalent is:
+
+```powershell
+.\EPO-Toolbox.ps1 -Stage UpdateInventory -TargetServers EXCH01,EXCH02 -ValidationOnly
+```
 
 ## Generated GUI config
 

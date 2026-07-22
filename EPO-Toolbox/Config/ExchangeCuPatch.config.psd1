@@ -8,6 +8,7 @@
         CurrentStage = 'SopAnalysis'
         StageOrder = @(
             'SopAnalysis'
+            'UpdateInventory'
             'DagDiscovery'
             'PreCheck'
             'Maintenance'
@@ -54,5 +55,11 @@
     LoadBalancer = @{
         Mode = 'None'
         AdapterScriptPath = ''
+    }
+
+    Inventory = @{
+        TargetServers = @()
+        IncludeHotFixInventory = $true
+        IncludeSetupLogEvidence = $true
     }
 }

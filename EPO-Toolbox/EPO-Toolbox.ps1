@@ -17,6 +17,7 @@ param(
     [ValidateSet(
         'Auto',
         'SopAnalysis',
+        'UpdateInventory',
         'DagDiscovery',
         'PreCheck',
         'Maintenance',
@@ -29,6 +30,7 @@ param(
     [string] $Stage = 'Auto',
     [string] $ConfigPath,
     [string] $OutputRoot,
+    [string[]] $TargetServers,
     [string] $CorrelationId = ([guid]::NewGuid().Guid),
     [switch] $ValidationOnly,
     [switch] $Gui
@@ -47,6 +49,7 @@ if ($Gui) {
         -ToolboxRoot $PSScriptRoot `
         -ConfigPath $ConfigPath `
         -OutputRoot $OutputRoot `
+        -TargetServers $TargetServers `
         -CorrelationId $CorrelationId `
         -Stage $Stage `
         -ValidationOnly:$ValidationOnly
@@ -64,6 +67,15 @@ switch ($ResolvedStage) {
         & (Join-Path $PSScriptRoot 'Invoke-ExchangeCuStage1SopAnalysis.ps1') `
             -ConfigPath $ConfigPath `
             -OutputRoot $OutputRoot `
+            -CorrelationId $CorrelationId `
+            -ValidationOnly:$ValidationOnly
+        break
+    }
+    'UpdateInventory' {
+        & (Join-Path $PSScriptRoot 'Invoke-EpoUpdateInventory.ps1') `
+            -ConfigPath $ConfigPath `
+            -OutputRoot $OutputRoot `
+            -TargetServers $TargetServers `
             -CorrelationId $CorrelationId `
             -ValidationOnly:$ValidationOnly
         break

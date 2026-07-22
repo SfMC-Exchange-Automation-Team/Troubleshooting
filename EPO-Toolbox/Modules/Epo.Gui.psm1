@@ -102,6 +102,7 @@ function New-EpoGuiRuntimeModel {
         [Parameter(Mandatory)] [string] $ToolboxRoot,
         [Parameter(Mandatory)] [string] $ConfigPath,
         [string] $OutputRoot,
+        [string[]] $TargetServers,
         [string] $CorrelationId,
         [string] $Stage,
         [switch] $ValidationOnly
@@ -112,7 +113,7 @@ function New-EpoGuiRuntimeModel {
         $Config = Import-PowerShellDataFile -Path $ConfigPath
     }
 
-    $StageOrder = @('SopAnalysis','DagDiscovery','PreCheck','Maintenance','PackagePrep','Install','PostCheck','Rollback','Report')
+    $StageOrder = @('SopAnalysis','UpdateInventory','DagDiscovery','PreCheck','Maintenance','PackagePrep','Install','PostCheck','Rollback','Report')
     if ($Config.ContainsKey('StageAwareness') -and $Config.StageAwareness.StageOrder) {
         $StageOrder = @($Config.StageAwareness.StageOrder)
     }
@@ -130,6 +131,7 @@ function New-EpoGuiRuntimeModel {
         Stage = $ResolvedStage
         StageOrder = $StageOrder
         ValidationOnly = [bool] $ValidationOnly
+        TargetServers = if ($TargetServers -and $TargetServers.Count) { ($TargetServers -join ',') } elseif ($Config.ContainsKey('Inventory')) { (@($Config.Inventory.TargetServers) -join ',') } else { '' }
         CustomerName = if ($Config.ContainsKey('CustomerName')) { [string] $Config.CustomerName } else { '' }
         Environment = if ($Config.ContainsKey('Environment')) { [string] $Config.Environment } else { '' }
         CuIsoPath = if ($Config.ContainsKey('Package')) { [string] $Config.Package.CuIsoPath } else { '' }
@@ -158,6 +160,9 @@ function ConvertTo-EpoUnattendedCommand {
     $Parts.Add("-ConfigPath $(ConvertTo-EpoSingleQuotedString -Value $Model.ConfigPath)")
     $Parts.Add("-OutputRoot $(ConvertTo-EpoSingleQuotedString -Value $Model.OutputRoot)")
     $Parts.Add("-CorrelationId $(ConvertTo-EpoSingleQuotedString -Value $Model.CorrelationId)")
+    if (-not [string]::IsNullOrWhiteSpace($Model.TargetServers)) {
+        $Parts.Add("-TargetServers $(ConvertTo-EpoSingleQuotedString -Value $Model.TargetServers)")
+    }
     if ($Model.ValidationOnly) {
         $Parts.Add('-ValidationOnly')
     }
@@ -211,6 +216,11 @@ function Export-EpoGuiConfigDataFile {
     LoadBalancer = @{
         Mode = $(ConvertTo-EpoSingleQuotedString -Value $Model.LoadBalancerMode)
         AdapterScriptPath = $(ConvertTo-EpoSingleQuotedString -Value $Model.LoadBalancerAdapterScriptPath)
+    }
+    Inventory = @{
+        TargetServers = @($(($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { ConvertTo-EpoSingleQuotedString -Value $_ }) -join ', '))
+        IncludeHotFixInventory = `$true
+        IncludeSetupLogEvidence = `$true
     }
 }
 "@
@@ -275,6 +285,7 @@ function Show-EpoToolboxWizard {
     $CorrelationText = New-EpoTextBox -Text $Model.CorrelationId -X 150 -Y 130 -Width 300
     $CustomerText = New-EpoTextBox -Text $Model.CustomerName -X 150 -Y 164 -Width 220
     $EnvironmentText = New-EpoTextBox -Text $Model.Environment -X 150 -Y 198 -Width 220
+    $TargetServersText = New-EpoTextBox -Text $Model.TargetServers -X 150 -Y 232 -Width 500
 
     $RuntimeTab.Controls.AddRange(@(
         (New-EpoLabel -Text 'Stage' -X 24 -Y 30),
@@ -287,7 +298,9 @@ function Show-EpoToolboxWizard {
         (New-EpoLabel -Text 'Customer name' -X 24 -Y 166),
         $CustomerText,
         (New-EpoLabel -Text 'Environment' -X 24 -Y 200),
-        $EnvironmentText
+        $EnvironmentText,
+        (New-EpoLabel -Text 'Target servers' -X 24 -Y 234),
+        $TargetServersText
     ))
 
     $CuIsoText = New-EpoTextBox -Text $Model.CuIsoPath -X 180 -Y 28 -Width 480
@@ -347,6 +360,7 @@ function Show-EpoToolboxWizard {
         $Model.CorrelationId = $CorrelationText.Text
         $Model.CustomerName = $CustomerText.Text
         $Model.Environment = $EnvironmentText.Text
+        $Model.TargetServers = $TargetServersText.Text
         $Model.CuIsoPath = $CuIsoText.Text
         $Model.ExpectedIsoHash = $HashText.Text
         $Model.ExtractRoot = $ExtractRootText.Text
@@ -357,7 +371,7 @@ function Show-EpoToolboxWizard {
         $CommandBox.Text = ConvertTo-EpoUnattendedCommand -Model $Model
     }
 
-    $InputControls = @($StageDropDown, $ValidationCheckBox, $OutputRootText, $CorrelationText, $CustomerText, $EnvironmentText, $CuIsoText, $HashText, $ExtractRootText, $SplunkText, $CrowdStrikeText, $LbModeDropDown, $LbAdapterText)
+    $InputControls = @($StageDropDown, $ValidationCheckBox, $OutputRootText, $CorrelationText, $CustomerText, $EnvironmentText, $TargetServersText, $CuIsoText, $HashText, $ExtractRootText, $SplunkText, $CrowdStrikeText, $LbModeDropDown, $LbAdapterText)
     foreach ($Control in $InputControls) {
         $Control.Add_TextChanged({ Sync-ModelFromControls })
         if ($Control -is [System.Windows.Forms.ComboBox]) {
@@ -395,7 +409,8 @@ function Show-EpoToolboxWizard {
             $ConfigCopy = Export-EpoGuiConfigDataFile -Model $Model
             $CommandBox.Text = ConvertTo-EpoUnattendedCommand -Model $Model
             $ToolboxPath = Join-Path $Model.ToolboxRoot 'EPO-Toolbox.ps1'
-            & $ToolboxPath -Stage $Model.Stage -ConfigPath $ConfigCopy -OutputRoot $Model.OutputRoot -CorrelationId $Model.CorrelationId -ValidationOnly:([bool] $Model.ValidationOnly)
+            $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            & $ToolboxPath -Stage $Model.Stage -ConfigPath $ConfigCopy -OutputRoot $Model.OutputRoot -TargetServers $Targets -CorrelationId $Model.CorrelationId -ValidationOnly:([bool] $Model.ValidationOnly)
             [System.Windows.Forms.MessageBox]::Show('Toolbox run completed. Review the output root for run evidence.', 'EPO Toolbox', 'OK', 'Information') | Out-Null
         }
         catch {
@@ -425,6 +440,7 @@ function Show-EpoToolboxDashboard {
         [Parameter(Mandatory)] [string] $ToolboxRoot,
         [Parameter(Mandatory)] [string] $ConfigPath,
         [string] $OutputRoot,
+        [string[]] $TargetServers,
         [string] $CorrelationId,
         [string] $Stage,
         [switch] $ValidationOnly
@@ -438,7 +454,7 @@ function Show-EpoToolboxDashboard {
 
     $Form = New-Object System.Windows.Forms.Form
     $Form.Text = 'EPO Toolbox'
-    $Form.Size = New-Object System.Drawing.Size(760, 470)
+    $Form.Size = New-Object System.Drawing.Size(860, 610)
     $Form.StartPosition = 'CenterScreen'
 
     $Title = New-Object System.Windows.Forms.Label
@@ -461,7 +477,7 @@ function Show-EpoToolboxDashboard {
 
     $List = New-Object System.Windows.Forms.ListView
     $List.Location = New-Object System.Drawing.Point(20, 100)
-    $List.Size = New-Object System.Drawing.Size(700, 230)
+    $List.Size = New-Object System.Drawing.Size(800, 190)
     $List.View = 'Details'
     $List.FullRowSelect = $true
     [void] $List.Columns.Add('Status', 90)
@@ -487,34 +503,87 @@ function Show-EpoToolboxDashboard {
     }
 
     $CommandPreview = New-Object System.Windows.Forms.TextBox
-    $CommandPreview.Location = New-Object System.Drawing.Point(20, 342)
-    $CommandPreview.Size = New-Object System.Drawing.Size(700, 44)
+    $CommandPreview.Location = New-Object System.Drawing.Point(20, 302)
+    $CommandPreview.Size = New-Object System.Drawing.Size(800, 44)
     $CommandPreview.Multiline = $true
     $CommandPreview.ReadOnly = $true
 
-    $Model = New-EpoGuiRuntimeModel -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $OutputRoot -CorrelationId $CorrelationId -Stage $Stage -ValidationOnly:$ValidationOnly
+    $Model = New-EpoGuiRuntimeModel -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $OutputRoot -TargetServers $TargetServers -CorrelationId $CorrelationId -Stage $Stage -ValidationOnly:$ValidationOnly
     $CommandPreview.Text = ConvertTo-EpoUnattendedCommand -Model $Model
+
+    $InventoryLabel = New-Object System.Windows.Forms.Label
+    $InventoryLabel.Text = "Update inventory request: TargetServers=$($Model.TargetServers)"
+    $InventoryLabel.Location = New-Object System.Drawing.Point(20, 356)
+    $InventoryLabel.Size = New-Object System.Drawing.Size(800, 20)
+
+    $InventoryList = New-Object System.Windows.Forms.ListView
+    $InventoryList.Location = New-Object System.Drawing.Point(20, 382)
+    $InventoryList.Size = New-Object System.Drawing.Size(800, 115)
+    $InventoryList.View = 'Details'
+    $InventoryList.FullRowSelect = $true
+    [void] $InventoryList.Columns.Add('Server', 120)
+    [void] $InventoryList.Columns.Add('Status', 90)
+    [void] $InventoryList.Columns.Add('Build', 120)
+    [void] $InventoryList.Columns.Add('CU', 180)
+    [void] $InventoryList.Columns.Add('HU', 180)
+    [void] $InventoryList.Columns.Add('SU', 180)
+
+    function Refresh-GuiInventory {
+        try {
+            Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.UpdateInventory.psm1') -Force
+            $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
+            $InventoryLabel.Text = "Update inventory request: TargetServers=$($Targets -join ', ')"
+            $InventoryList.Items.Clear()
+            $Inventory = Get-EpoExchangeUpdateInventory -ServerName $Targets
+            foreach ($ServerInventory in $Inventory.Servers) {
+                $CuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'CU' | Select-Object -First 1)
+                $HuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'HU' | Select-Object -First 1)
+                $SuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'SU' | Select-Object -First 1)
+                $Cu = if ($CuUpdate.Count) { $CuUpdate[0].DisplayName } else { '' }
+                $Hu = if ($HuUpdate.Count) { $HuUpdate[0].DisplayName } else { '' }
+                $Su = if ($SuUpdate.Count) { $SuUpdate[0].DisplayName } else { '' }
+                $Item = New-Object System.Windows.Forms.ListViewItem($ServerInventory.Server)
+                [void] $Item.SubItems.Add($ServerInventory.Status)
+                $Build = if ($ServerInventory.ExchangeSetup -and $ServerInventory.ExchangeSetup.PSObject.Properties['FileVersion']) { [string] $ServerInventory.ExchangeSetup.FileVersion } else { '' }
+                [void] $Item.SubItems.Add($Build)
+                [void] $Item.SubItems.Add([string] $Cu)
+                [void] $Item.SubItems.Add([string] $Hu)
+                [void] $Item.SubItems.Add([string] $Su)
+                [void] $InventoryList.Items.Add($Item)
+            }
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update inventory failed', 'OK', 'Error') | Out-Null
+        }
+    }
 
     $WizardButton = New-Object System.Windows.Forms.Button
     $WizardButton.Text = 'Open wizard'
-    $WizardButton.Location = New-Object System.Drawing.Point(410, 396)
+    $WizardButton.Location = New-Object System.Drawing.Point(425, 510)
     $WizardButton.Size = New-Object System.Drawing.Size(105, 30)
     $WizardButton.Enabled = $Blocked.Count -eq 0
     $WizardButton.Add_Click({ Show-EpoToolboxWizard -Model $Model })
 
     $CopyButton = New-Object System.Windows.Forms.Button
     $CopyButton.Text = 'Copy command'
-    $CopyButton.Location = New-Object System.Drawing.Point(525, 396)
+    $CopyButton.Location = New-Object System.Drawing.Point(540, 510)
     $CopyButton.Size = New-Object System.Drawing.Size(105, 30)
     $CopyButton.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($CommandPreview.Text) })
 
     $CloseButton = New-Object System.Windows.Forms.Button
     $CloseButton.Text = 'Close'
-    $CloseButton.Location = New-Object System.Drawing.Point(640, 396)
+    $InventoryButton = New-Object System.Windows.Forms.Button
+    $InventoryButton.Text = 'Refresh inventory'
+    $InventoryButton.Location = New-Object System.Drawing.Point(285, 510)
+    $InventoryButton.Size = New-Object System.Drawing.Size(125, 30)
+    $InventoryButton.Add_Click({ Refresh-GuiInventory })
+
+    $CloseButton.Location = New-Object System.Drawing.Point(655, 510)
     $CloseButton.Size = New-Object System.Drawing.Size(80, 30)
     $CloseButton.Add_Click({ $Form.Close() })
 
-    $Form.Controls.AddRange(@($Title, $Status, $List, $CommandPreview, $WizardButton, $CopyButton, $CloseButton))
+    $Form.Controls.AddRange(@($Title, $Status, $List, $CommandPreview, $InventoryLabel, $InventoryList, $InventoryButton, $WizardButton, $CopyButton, $CloseButton))
     [void] $Form.ShowDialog()
 }
 
