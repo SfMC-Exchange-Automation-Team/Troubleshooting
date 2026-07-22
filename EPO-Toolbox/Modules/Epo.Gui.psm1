@@ -563,61 +563,61 @@ function Show-EpoToolboxDashboard {
                 [void] $Item.SubItems.Add([string] $Su)
                 [void] $InventoryList.Items.Add($Item)
             }
-
-            $PreflightLabel = New-Object System.Windows.Forms.Label
-            $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Model.TargetServers)"
-            $PreflightLabel.Location = New-Object System.Drawing.Point(20, 470)
-            $PreflightLabel.Size = New-Object System.Drawing.Size(800, 20)
-
-            $PreflightList = New-Object System.Windows.Forms.ListView
-            $PreflightList.Location = New-Object System.Drawing.Point(20, 496)
-            $PreflightList.Size = New-Object System.Drawing.Size(800, 90)
-            $PreflightList.View = 'Details'
-            $PreflightList.FullRowSelect = $true
-            [void] $PreflightList.Columns.Add('Server', 120)
-            [void] $PreflightList.Columns.Add('Status', 90)
-            [void] $PreflightList.Columns.Add('Severity', 90)
-            [void] $PreflightList.Columns.Add('RebootRequired', 120)
-            [void] $PreflightList.Columns.Add('Connection', 120)
-            [void] $PreflightList.Columns.Add('Blocked', 90)
-            [void] $PreflightList.Columns.Add('Reason', 260)
-
-            function Refresh-GuiPreflight {
-                try {
-                    Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.Preflight.psm1') -Force
-                    $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                    if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
-                    $ScriptPath = Join-Path $ToolboxRoot 'Scripts\Get-PendingReboot.ps1'
-                    $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Targets -join ', ')"
-                    $PreflightList.Items.Clear()
-                    $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true
-                    foreach ($ServerPreflight in $Preflight.Servers) {
-                        $Item = New-Object System.Windows.Forms.ListViewItem($ServerPreflight.Server)
-                        [void] $Item.SubItems.Add($ServerPreflight.Status)
-                        [void] $Item.SubItems.Add($ServerPreflight.Severity)
-                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RebootRequired)
-                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.ConnectionMethod)
-                        [void] $Item.SubItems.Add([string] $ServerPreflight.Blocked)
-                        [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RemoteConnectionFailureReason)
-                        if ($ServerPreflight.Blocked) {
-                            $Item.ForeColor = [System.Drawing.Color]::DarkRed
-                        }
-                        elseif ($ServerPreflight.Status -eq 'Warning') {
-                            $Item.ForeColor = [System.Drawing.Color]::DarkOrange
-                        }
-                        else {
-                            $Item.ForeColor = [System.Drawing.Color]::DarkGreen
-                        }
-                        [void] $PreflightList.Items.Add($Item)
-                    }
-                }
-                catch {
-                    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Preflight check failed', 'OK', 'Error') | Out-Null
-                }
-            }
         }
         catch {
             [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update inventory failed', 'OK', 'Error') | Out-Null
+        }
+    }
+
+    $PreflightLabel = New-Object System.Windows.Forms.Label
+    $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Model.TargetServers)"
+    $PreflightLabel.Location = New-Object System.Drawing.Point(20, 470)
+    $PreflightLabel.Size = New-Object System.Drawing.Size(800, 20)
+
+    $PreflightList = New-Object System.Windows.Forms.ListView
+    $PreflightList.Location = New-Object System.Drawing.Point(20, 496)
+    $PreflightList.Size = New-Object System.Drawing.Size(800, 90)
+    $PreflightList.View = 'Details'
+    $PreflightList.FullRowSelect = $true
+    [void] $PreflightList.Columns.Add('Server', 120)
+    [void] $PreflightList.Columns.Add('Status', 90)
+    [void] $PreflightList.Columns.Add('Severity', 90)
+    [void] $PreflightList.Columns.Add('RebootRequired', 120)
+    [void] $PreflightList.Columns.Add('Connection', 120)
+    [void] $PreflightList.Columns.Add('Blocked', 90)
+    [void] $PreflightList.Columns.Add('Reason', 260)
+
+    function Refresh-GuiPreflight {
+        try {
+            Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.Preflight.psm1') -Force
+            $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
+            $ScriptPath = Join-Path $ToolboxRoot 'Scripts\Get-PendingReboot.ps1'
+            $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Targets -join ', ')"
+            $PreflightList.Items.Clear()
+            $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true
+            foreach ($ServerPreflight in $Preflight.Servers) {
+                $Item = New-Object System.Windows.Forms.ListViewItem($ServerPreflight.Server)
+                [void] $Item.SubItems.Add($ServerPreflight.Status)
+                [void] $Item.SubItems.Add($ServerPreflight.Severity)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RebootRequired)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.ConnectionMethod)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.Blocked)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RemoteConnectionFailureReason)
+                if ($ServerPreflight.Blocked) {
+                    $Item.ForeColor = [System.Drawing.Color]::DarkRed
+                }
+                elseif ($ServerPreflight.Status -eq 'Warning') {
+                    $Item.ForeColor = [System.Drawing.Color]::DarkOrange
+                }
+                else {
+                    $Item.ForeColor = [System.Drawing.Color]::DarkGreen
+                }
+                [void] $PreflightList.Items.Add($Item)
+            }
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Preflight check failed', 'OK', 'Error') | Out-Null
         }
     }
 
