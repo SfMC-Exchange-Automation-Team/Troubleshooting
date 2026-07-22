@@ -36,6 +36,12 @@ You can also run Stage 1 explicitly:
 .\EPO-Toolbox.ps1 -Stage SopAnalysis -ValidationOnly
 ```
 
+To launch the optional dashboard and wizard before running Stage 1, use:
+
+```powershell
+.\EPO-Toolbox.ps1 -Gui -Stage SopAnalysis -ValidationOnly
+```
+
 ## Run Stage 1 directly
 
 Use the stage script directly when testing the Stage 1 module without the main dispatcher:

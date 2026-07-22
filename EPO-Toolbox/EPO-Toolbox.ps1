@@ -30,7 +30,8 @@ param(
     [string] $ConfigPath,
     [string] $OutputRoot,
     [string] $CorrelationId = ([guid]::NewGuid().Guid),
-    [switch] $ValidationOnly
+    [switch] $ValidationOnly,
+    [switch] $Gui
 )
 
 Set-StrictMode -Version 2.0
@@ -38,6 +39,18 @@ $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $PSScriptRoot 'Config\ExchangeCuPatch.config.psd1'
+}
+
+if ($Gui) {
+    Import-Module (Join-Path $PSScriptRoot 'Modules\Epo.Gui.psm1') -Force
+    Show-EpoToolboxDashboard `
+        -ToolboxRoot $PSScriptRoot `
+        -ConfigPath $ConfigPath `
+        -OutputRoot $OutputRoot `
+        -CorrelationId $CorrelationId `
+        -Stage $Stage `
+        -ValidationOnly:$ValidationOnly
+    return
 }
 
 $Config = Import-PowerShellDataFile -Path $ConfigPath

@@ -30,12 +30,14 @@ PowerShell 7 can be used later for non-Exchange helper utilities only when a scr
 | `Config\ExchangeCuPatch.config.psd1` | Configuration file for customer/environment metadata, stage awareness, package metadata, Splunk, CrowdStrike, and load balancer settings. |
 | `Modules\Epo.Logging.psm1` | Initializes run folders and writes `Run.json`, `Events.jsonl`, evidence JSON, and `Summary.csv`. |
 | `Modules\Epo.Stage1.SopAnalysis.psm1` | Produces dynamic SOP gap/risk findings and next-stage input requirements. |
+| `Modules\Epo.Gui.psm1` | Provides the optional Windows Forms dashboard and wizard. GUI values map to unattended PowerShell parameters and config values. |
 
 ## Article set
 
 | Article | Description |
 | --- | --- |
 | [Run Stage 1 SOP analysis](stage-1-sop-analysis.md) | Explains how to run Stage 1 and interpret the output. |
+| [Use the GUI dashboard and wizard](gui-dashboard.md) | Explains the optional GUI mode, prerequisite dashboard, wizard steps, and unattended mapping. |
 | [Configure the EPO Toolbox](configuration.md) | Documents `ExchangeCuPatch.config.psd1` settings. |
 | [Output and evidence reference](output-reference.md) | Describes generated run folders and output artifacts. |
 

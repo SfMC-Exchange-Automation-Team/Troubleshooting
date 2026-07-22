@@ -94,6 +94,18 @@ Future stages should record original service startup type and status before chan
 
 Stage 1 reports `LoadBalancer.Mode = None` as a warning because load balancer requirements are still open.
 
+## GUI-generated configuration
+
+The optional GUI wizard can generate a runtime configuration file under:
+
+```powershell
+<OutputRoot>\GuiConfig\ExchangeCuPatch.gui.<CorrelationId>.psd1
+```
+
+The generated file uses the same schema as `Config\ExchangeCuPatch.config.psd1` and is passed to unattended execution with `-ConfigPath`.
+
+Do not edit generated GUI config files as the source of truth. Update the base config or rerun the wizard instead.
+
 ## Configuration guidance
 
 - Keep credentials out of the configuration file.
