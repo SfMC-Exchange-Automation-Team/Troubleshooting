@@ -70,7 +70,11 @@ $Preflight = Invoke-EpoPreflightCheck `
     -EnablePendingRebootFallback:([bool] $Config.Preflight.EnablePendingRebootFallback) `
     -IncludeSccmRebootState:([bool] $Config.Preflight.IncludeSccmRebootState) `
     -BlockOnPendingReboot:([bool] $Config.Preflight.BlockOnPendingReboot) `
-    -BlockOnUnknownRebootState:([bool] $Config.Preflight.BlockOnUnknownRebootState)
+    -BlockOnUnknownRebootState:([bool] $Config.Preflight.BlockOnUnknownRebootState) `
+    -DotNetMinimumRelease:([int] $Config.Preflight.DotNetMinimumRelease) `
+    -DotNetMinimumVersion:([string] $Config.Preflight.DotNetMinimumVersion) `
+    -BlockOnIncompatibleDotNet:([bool] $Config.Preflight.BlockOnIncompatibleDotNet) `
+    -EnableDotNetAcceleration:([bool] $Config.Preflight.EnableDotNetAcceleration)
 
 $EvidenceFile = Export-EpoEvidence -RunContext $RunContext -Name 'Preflight' -InputObject $Preflight
 $CsvFile = Export-EpoPreflightCsv -RunContext $RunContext -Preflight $Preflight
@@ -83,6 +87,9 @@ $ShellRows = foreach ($ServerPreflight in $Preflight.Servers) {
         Status = $ServerPreflight.Status
         Severity = $ServerPreflight.Severity
         RebootRequired = $ServerPreflight.PendingReboot.RebootRequired
+        DotNetVersion = $ServerPreflight.DotNet.DetectedVersion
+        DotNetReady = $ServerPreflight.DotNet.IsCompatible
+        DotNetAcceleration = $ServerPreflight.DotNet.Acceleration.Status
         ConnectionMethod = $ServerPreflight.PendingReboot.ConnectionMethod
         Blocked = $ServerPreflight.Blocked
     }

@@ -117,6 +117,10 @@ Stage 1 reports `LoadBalancer.Mode = None` as a warning because load balancer re
 | `IncludeSccmRebootState` | Includes SCCM client reboot state when available. |
 | `BlockOnPendingReboot` | Blocks the stage when `RebootRequired` is `True`. |
 | `BlockOnUnknownRebootState` | Blocks the stage when reboot state is `Unknown`. |
+| `DotNetMinimumRelease` | Minimum .NET Framework release key required for Exchange setup readiness. Defaults to `528040` for .NET Framework 4.8. |
+| `DotNetMinimumVersion` | Friendly label for the minimum .NET Framework version. |
+| `BlockOnIncompatibleDotNet` | Blocks the stage when the detected .NET Framework release is below the configured minimum. |
+| `EnableDotNetAcceleration` | Placeholder flag for future .NET assembly compilation acceleration. Currently recorded only. |
 
 ## GUI-generated configuration
 

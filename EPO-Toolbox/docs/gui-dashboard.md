@@ -108,6 +108,9 @@ The **Refresh preflight** button calls the packaged `Scripts\Get-PendingReboot.p
 - Status
 - Severity
 - Reboot required
+- .NET version
+- .NET ready state
+- .NET acceleration placeholder status
 - Connection method
 - Blocked state
 - Failure reason, when available

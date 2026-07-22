@@ -70,5 +70,9 @@
         IncludeSccmRebootState = $false
         BlockOnPendingReboot = $true
         BlockOnUnknownRebootState = $true
+        DotNetMinimumRelease = 528040
+        DotNetMinimumVersion = '4.8'
+        BlockOnIncompatibleDotNet = $true
+        EnableDotNetAcceleration = $false
     }
 }

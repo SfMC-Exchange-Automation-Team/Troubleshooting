@@ -232,6 +232,10 @@ function Export-EpoGuiConfigDataFile {
         IncludeSccmRebootState = `$false
         BlockOnPendingReboot = `$true
         BlockOnUnknownRebootState = `$true
+        DotNetMinimumRelease = 528040
+        DotNetMinimumVersion = '4.8'
+        BlockOnIncompatibleDotNet = `$true
+        EnableDotNetAcceleration = `$false
     }
 }
 "@
@@ -583,6 +587,9 @@ function Show-EpoToolboxDashboard {
     [void] $PreflightList.Columns.Add('Status', 90)
     [void] $PreflightList.Columns.Add('Severity', 90)
     [void] $PreflightList.Columns.Add('RebootRequired', 120)
+    [void] $PreflightList.Columns.Add('.NET', 90)
+    [void] $PreflightList.Columns.Add('.NET Ready', 90)
+    [void] $PreflightList.Columns.Add('.NET Accel', 95)
     [void] $PreflightList.Columns.Add('Connection', 120)
     [void] $PreflightList.Columns.Add('Blocked', 90)
     [void] $PreflightList.Columns.Add('Reason', 260)
@@ -595,12 +602,15 @@ function Show-EpoToolboxDashboard {
             $ScriptPath = Join-Path $ToolboxRoot 'Scripts\Get-PendingReboot.ps1'
             $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Targets -join ', ')"
             $PreflightList.Items.Clear()
-            $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true
+            $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true -DotNetMinimumRelease 528040 -DotNetMinimumVersion '4.8' -BlockOnIncompatibleDotNet $true -EnableDotNetAcceleration $false
             foreach ($ServerPreflight in $Preflight.Servers) {
                 $Item = New-Object System.Windows.Forms.ListViewItem($ServerPreflight.Server)
                 [void] $Item.SubItems.Add($ServerPreflight.Status)
                 [void] $Item.SubItems.Add($ServerPreflight.Severity)
                 [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RebootRequired)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.DetectedVersion)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.IsCompatible)
+                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.Acceleration.Status)
                 [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.ConnectionMethod)
                 [void] $Item.SubItems.Add([string] $ServerPreflight.Blocked)
                 [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RemoteConnectionFailureReason)
