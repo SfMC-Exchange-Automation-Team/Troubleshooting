@@ -99,6 +99,36 @@ function Test-EpoGuiPrerequisites {
     return @($Results.ToArray())
 }
 
+function Export-EpoGuiPrerequisiteEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object[]] $Prerequisites,
+        [Parameter(Mandatory)] [string] $OutputRoot,
+        [Parameter(Mandatory)] [string] $CorrelationId
+    )
+
+    $PathRoot = Join-Path $OutputRoot 'GuiPrerequisites'
+    if (-not (Test-Path -LiteralPath $PathRoot)) {
+        New-Item -ItemType Directory -Path $PathRoot -Force | Out-Null
+    }
+
+    $JsonPath = Join-Path $PathRoot ("GuiPrerequisites.{0}.json" -f $CorrelationId)
+    $CsvPath = Join-Path $PathRoot ("GuiPrerequisites.{0}.csv" -f $CorrelationId)
+    $Payload = [pscustomobject] @{
+        CorrelationId = $CorrelationId
+        CollectedAtUtc = [datetime]::UtcNow.ToString('o')
+        Status = if (@($Prerequisites | Where-Object Status -eq 'Blocked').Count) { 'Blocked' } else { 'Pass' }
+        Prerequisites = @($Prerequisites)
+    }
+
+    $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $JsonPath -Encoding UTF8
+    $Prerequisites | Export-Csv -LiteralPath $CsvPath -NoTypeInformation -Encoding UTF8
+    [pscustomobject] @{
+        JsonPath = $JsonPath
+        CsvPath = $CsvPath
+    }
+}
+
 function New-EpoGuiRuntimeModel {
     [CmdletBinding()]
     param(
@@ -461,7 +491,9 @@ function Show-EpoToolboxDashboard {
         [switch] $ValidationOnly
     )
 
-    $Prerequisites = Test-EpoGuiPrerequisites -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $OutputRoot
+    $Model = New-EpoGuiRuntimeModel -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $OutputRoot -TargetServers $TargetServers -CorrelationId $CorrelationId -Stage $Stage -ValidationOnly:$ValidationOnly
+    $Prerequisites = Test-EpoGuiPrerequisites -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $Model.OutputRoot
+    $PrerequisiteEvidence = Export-EpoGuiPrerequisiteEvidence -Prerequisites $Prerequisites -OutputRoot $Model.OutputRoot -CorrelationId $Model.CorrelationId
     $Blocked = @($Prerequisites | Where-Object { $_.Status -eq 'Blocked' })
 
     Add-Type -AssemblyName System.Windows.Forms
@@ -469,7 +501,7 @@ function Show-EpoToolboxDashboard {
 
     $Form = New-Object System.Windows.Forms.Form
     $Form.Text = 'EPO Toolbox'
-    $Form.Size = New-Object System.Drawing.Size(860, 720)
+    $Form.Size = New-Object System.Drawing.Size(860, 560)
     $Form.StartPosition = 'CenterScreen'
 
     $Title = New-Object System.Windows.Forms.Label
@@ -482,57 +514,29 @@ function Show-EpoToolboxDashboard {
     $Status.Location = New-Object System.Drawing.Point(20, 52)
     $Status.Size = New-Object System.Drawing.Size(700, 36)
     if ($Blocked.Count) {
-        $Status.Text = "Dashboard prerequisites found $($Blocked.Count) blocker(s). Resolve blocked items before opening the wizard."
+        $Status.Text = "Toolbox startup prerequisites found $($Blocked.Count) blocker(s). Details saved to $($PrerequisiteEvidence.JsonPath)"
         $Status.ForeColor = [System.Drawing.Color]::DarkRed
     }
     else {
-        $Status.Text = 'Dashboard prerequisites are sufficient to open the wizard. Later patching stages may add more gates.'
+        $Status.Text = "Toolbox startup prerequisites passed. Details saved to $($PrerequisiteEvidence.JsonPath)"
         $Status.ForeColor = [System.Drawing.Color]::DarkGreen
     }
 
-    $List = New-Object System.Windows.Forms.ListView
-    $List.Location = New-Object System.Drawing.Point(20, 100)
-    $List.Size = New-Object System.Drawing.Size(800, 190)
-    $List.View = 'Details'
-    $List.FullRowSelect = $true
-    [void] $List.Columns.Add('Status', 90)
-    [void] $List.Columns.Add('Prerequisite', 180)
-    [void] $List.Columns.Add('PowerShell value', 190)
-    [void] $List.Columns.Add('Detail', 420)
-
-    foreach ($Prerequisite in $Prerequisites) {
-        $Item = New-Object System.Windows.Forms.ListViewItem($Prerequisite.Status)
-        [void] $Item.SubItems.Add($Prerequisite.Name)
-        [void] $Item.SubItems.Add($Prerequisite.PowerShellValue)
-        [void] $Item.SubItems.Add($Prerequisite.Detail)
-        if ($Prerequisite.Status -eq 'Blocked') {
-            $Item.ForeColor = [System.Drawing.Color]::DarkRed
-        }
-        elseif ($Prerequisite.Status -eq 'Warning') {
-            $Item.ForeColor = [System.Drawing.Color]::DarkOrange
-        }
-        else {
-            $Item.ForeColor = [System.Drawing.Color]::DarkGreen
-        }
-        [void] $List.Items.Add($Item)
-    }
-
     $CommandPreview = New-Object System.Windows.Forms.TextBox
-    $CommandPreview.Location = New-Object System.Drawing.Point(20, 302)
+    $CommandPreview.Location = New-Object System.Drawing.Point(20, 100)
     $CommandPreview.Size = New-Object System.Drawing.Size(800, 44)
     $CommandPreview.Multiline = $true
     $CommandPreview.ReadOnly = $true
 
-    $Model = New-EpoGuiRuntimeModel -ToolboxRoot $ToolboxRoot -ConfigPath $ConfigPath -OutputRoot $OutputRoot -TargetServers $TargetServers -CorrelationId $CorrelationId -Stage $Stage -ValidationOnly:$ValidationOnly
     $CommandPreview.Text = ConvertTo-EpoUnattendedCommand -Model $Model
 
     $InventoryLabel = New-Object System.Windows.Forms.Label
     $InventoryLabel.Text = "Update inventory request: TargetServers=$($Model.TargetServers)"
-    $InventoryLabel.Location = New-Object System.Drawing.Point(20, 356)
+    $InventoryLabel.Location = New-Object System.Drawing.Point(20, 154)
     $InventoryLabel.Size = New-Object System.Drawing.Size(800, 20)
 
     $InventoryList = New-Object System.Windows.Forms.ListView
-    $InventoryList.Location = New-Object System.Drawing.Point(20, 382)
+    $InventoryList.Location = New-Object System.Drawing.Point(20, 180)
     $InventoryList.Size = New-Object System.Drawing.Size(800, 80)
     $InventoryList.View = 'Details'
     $InventoryList.FullRowSelect = $true
@@ -575,11 +579,11 @@ function Show-EpoToolboxDashboard {
 
     $PreflightLabel = New-Object System.Windows.Forms.Label
     $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Model.TargetServers)"
-    $PreflightLabel.Location = New-Object System.Drawing.Point(20, 470)
+    $PreflightLabel.Location = New-Object System.Drawing.Point(20, 276)
     $PreflightLabel.Size = New-Object System.Drawing.Size(800, 20)
 
     $PreflightList = New-Object System.Windows.Forms.ListView
-    $PreflightList.Location = New-Object System.Drawing.Point(20, 496)
+    $PreflightList.Location = New-Object System.Drawing.Point(20, 302)
     $PreflightList.Size = New-Object System.Drawing.Size(800, 90)
     $PreflightList.View = 'Details'
     $PreflightList.FullRowSelect = $true
@@ -633,14 +637,14 @@ function Show-EpoToolboxDashboard {
 
     $WizardButton = New-Object System.Windows.Forms.Button
     $WizardButton.Text = 'Open wizard'
-    $WizardButton.Location = New-Object System.Drawing.Point(425, 610)
+    $WizardButton.Location = New-Object System.Drawing.Point(425, 420)
     $WizardButton.Size = New-Object System.Drawing.Size(105, 30)
     $WizardButton.Enabled = $Blocked.Count -eq 0
     $WizardButton.Add_Click({ Show-EpoToolboxWizard -Model $Model })
 
     $CopyButton = New-Object System.Windows.Forms.Button
     $CopyButton.Text = 'Copy command'
-    $CopyButton.Location = New-Object System.Drawing.Point(540, 610)
+    $CopyButton.Location = New-Object System.Drawing.Point(540, 420)
     $CopyButton.Size = New-Object System.Drawing.Size(105, 30)
     $CopyButton.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($CommandPreview.Text) })
 
@@ -648,22 +652,22 @@ function Show-EpoToolboxDashboard {
     $CloseButton.Text = 'Close'
     $InventoryButton = New-Object System.Windows.Forms.Button
     $InventoryButton.Text = 'Refresh inventory'
-    $InventoryButton.Location = New-Object System.Drawing.Point(145, 610)
+    $InventoryButton.Location = New-Object System.Drawing.Point(145, 420)
     $InventoryButton.Size = New-Object System.Drawing.Size(125, 30)
     $InventoryButton.Add_Click({ Refresh-GuiInventory })
 
     $PreflightButton = New-Object System.Windows.Forms.Button
     $PreflightButton.Text = 'Refresh preflight'
-    $PreflightButton.Location = New-Object System.Drawing.Point(285, 610)
+    $PreflightButton.Location = New-Object System.Drawing.Point(285, 420)
     $PreflightButton.Size = New-Object System.Drawing.Size(125, 30)
     $PreflightButton.Add_Click({ Refresh-GuiPreflight })
 
-    $CloseButton.Location = New-Object System.Drawing.Point(655, 610)
+    $CloseButton.Location = New-Object System.Drawing.Point(655, 420)
     $CloseButton.Size = New-Object System.Drawing.Size(80, 30)
     $CloseButton.Add_Click({ $Form.Close() })
 
-    $Form.Controls.AddRange(@($Title, $Status, $List, $CommandPreview, $InventoryLabel, $InventoryList, $PreflightLabel, $PreflightList, $InventoryButton, $PreflightButton, $WizardButton, $CopyButton, $CloseButton))
+    $Form.Controls.AddRange(@($Title, $Status, $CommandPreview, $InventoryLabel, $InventoryList, $PreflightLabel, $PreflightList, $InventoryButton, $PreflightButton, $WizardButton, $CopyButton, $CloseButton))
     [void] $Form.ShowDialog()
 }
 
-Export-ModuleMember -Function Test-EpoGuiPrerequisites, New-EpoGuiRuntimeModel, ConvertTo-EpoUnattendedCommand, Export-EpoGuiConfigDataFile, Show-EpoToolboxDashboard
+Export-ModuleMember -Function Test-EpoGuiPrerequisites, Export-EpoGuiPrerequisiteEvidence, New-EpoGuiRuntimeModel, ConvertTo-EpoUnattendedCommand, Export-EpoGuiConfigDataFile, Show-EpoToolboxDashboard

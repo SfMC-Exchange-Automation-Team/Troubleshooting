@@ -1,13 +1,13 @@
 ---
 title: Use the EPO Toolbox GUI dashboard and wizard
-description: Launch the optional EPO Toolbox GUI, review dashboard prerequisites, and map wizard values to unattended PowerShell execution.
+description: Launch the optional EPO Toolbox GUI, review operational panels, and map wizard values to unattended PowerShell execution.
 ms.date: 07/22/2026
 ms.topic: how-to
 ---
 
 # Use the EPO Toolbox GUI dashboard and wizard
 
-The EPO Toolbox includes an optional Windows Forms GUI mode. The GUI is a dashboard splash that checks whether local prerequisites are met before opening a wizard.
+The EPO Toolbox includes an optional Windows Forms GUI mode. The GUI opens to an operational dashboard and can launch a wizard.
 
 The GUI does not replace unattended execution. Every dashboard and wizard value maps to PowerShell parameters or configuration values so the same run can be repeated from the command line.
 
@@ -30,9 +30,22 @@ You can combine `-Gui` with the same parameters used by unattended mode:
     -OutputRoot '\\central-share\ExchangeCU\Runs'
 ```
 
-## Dashboard prerequisites
+## Startup prerequisite evidence
 
-The dashboard runs `Test-EpoGuiPrerequisites` from `Modules\Epo.Gui.psm1`.
+The dashboard runs `Test-EpoGuiPrerequisites` from `Modules\Epo.Gui.psm1`, but it does not show the prerequisite grid on the landing page. The checks are stored as evidence for troubleshooting and error handling.
+
+Startup prerequisite evidence is written under:
+
+```powershell
+<OutputRoot>\GuiPrerequisites\
+```
+
+The files are:
+
+| File | Description |
+| --- | --- |
+| `GuiPrerequisites.<CorrelationId>.json` | Full prerequisite result object. |
+| `GuiPrerequisites.<CorrelationId>.csv` | Flat prerequisite rows for quick review. |
 
 Current prerequisite checks include:
 
@@ -45,7 +58,7 @@ Current prerequisite checks include:
 | Toolbox files | Blocks if required scripts or modules are missing. | `$PSScriptRoot` |
 | Output root | Blocks if the output root cannot be created or written to. | `-OutputRoot` |
 
-The **Open wizard** button is disabled when any prerequisite is blocked.
+The dashboard shows a short status line with the evidence path. The **Open wizard** button is disabled when any startup prerequisite is blocked.
 
 ## Wizard steps
 
@@ -146,5 +159,5 @@ Use this command for scheduled, scripted, or remote execution after values are c
 ## Current limitations
 
 - The GUI currently runs only the implemented `SopAnalysis` stage. Reserved stages can be selected for planning, but they are not implemented yet.
-- The dashboard checks local GUI/toolbox readiness only. Exchange DAG, maintenance, install, and post-check prerequisites will be added as those stages are implemented.
+- Startup prerequisite details are stored as evidence rather than shown on the landing page. Operational checks such as update inventory and preflight status remain visible on the dashboard.
 - Windows Forms requires a desktop-capable Windows session. Use unattended mode on Server Core or non-interactive hosts.
