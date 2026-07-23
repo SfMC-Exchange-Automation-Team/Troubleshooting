@@ -34,6 +34,7 @@ PowerShell 7 can be used later for non-Exchange helper utilities only when a scr
 | `Modules\Epo.Stage1.SopAnalysis.psm1` | Produces dynamic SOP gap/risk findings and next-stage input requirements. |
 | `Modules\Epo.UpdateInventory.psm1` | Builds the reusable update inventory object for Exchange CU, HU, and SU state. |
 | `Modules\Epo.Preflight.psm1` | Wraps packaged preflight checks and returns structured pass/warn/block results. |
+| `Modules\Epo.ExchangeDashboard.psm1` | Provides Exchange topology discovery, dashboard server status, connectivity probes, maintenance state, mscorsvw detection, CU name resolution, and virtual-directory health scaffolding. |
 | `Modules\Epo.Gui.psm1` | Provides the optional Windows Forms dashboard and wizard. GUI values map to unattended PowerShell parameters and config values. |
 | `Scripts\Get-PendingReboot.ps1` | Packaged pending reboot detection function used by the PreCheck stage. |
 

@@ -60,6 +60,37 @@ Current prerequisite checks include:
 
 The dashboard shows a short status line with the evidence path. The **Open wizard** button is disabled when any startup prerequisite is blocked.
 
+## Server dashboard landing page
+
+The GUI landing page defaults to a server dashboard. When the Exchange Management Shell cmdlets are available, the default view attempts to show the DAG that contains the server running the toolbox.
+
+Use the **View** drop-down to switch between:
+
+| View | Description |
+| --- | --- |
+| `Current DAG` | Servers in the DAG that contains the local server running the toolbox. This is the default view. |
+| `Current AD site` | Exchange servers in the local server's Active Directory site. |
+| `All Exchange servers` | All Exchange servers returned by `Get-ExchangeServer`. |
+
+If Exchange cmdlets are not available, the dashboard falls back to the local computer and records the discovery limitation in the status model.
+
+The server grid is a framework view that currently displays:
+
+| Column | Source |
+| --- | --- |
+| `Server` | Exchange topology discovery or fallback target list. |
+| `Patch` | Exchange setup build from inventory evidence. |
+| `CU` | Common CU name resolved from the Exchange build when possible. |
+| `Reboot` | Pending reboot state from the preflight check. |
+| `.NET` | .NET Framework version detected by preflight. |
+| `Compile` | Whether `mscorsvw.exe` is currently running. |
+| `Maint` | Maintenance mode state from `Get-ServerComponentState` when available. |
+| `Ping` | ICMP reachability. |
+| `RDP` | Quiet TCP 3389 probe. This is a placeholder for a richer RDP/connectivity test later. |
+| `WinRM` | `Test-WSMan` result. |
+
+Use **Refresh dashboard** to rerun discovery and status collection.
+
 ## Wizard steps
 
 The wizard uses three tabs.
@@ -94,7 +125,7 @@ The GUI builds a runtime model with `New-EpoGuiRuntimeModel`. The model maps UI 
 
 ## Update inventory panel
 
-The dashboard includes an **Update inventory request** panel. This panel makes update inventory requests visible in the GUI and shows the same server-level summary emitted by shell mode.
+The dashboard server grid includes the update inventory result as patch/build/CU columns. This keeps update inventory visible without requiring a separate landing-page table.
 
 The **Refresh inventory** button calls `Get-EpoExchangeUpdateInventory` and displays:
 
@@ -111,28 +142,33 @@ The shell equivalent is:
 .\EPO-Toolbox.ps1 -Stage UpdateInventory -TargetServers EXCH01,EXCH02 -ValidationOnly
 ```
 
-## Preflight pending reboot panel
+## Preflight pending reboot and .NET readiness
 
-The dashboard includes a **Preflight pending reboot request** panel. This panel makes the pending reboot preflight request visible in the GUI.
-
-The **Refresh preflight** button calls the packaged `Scripts\Get-PendingReboot.ps1` function through `Invoke-EpoPreflightCheck` and displays:
-
-- Server
-- Status
-- Severity
-- Reboot required
-- .NET version
-- .NET ready state
-- .NET acceleration placeholder status
-- Connection method
-- Blocked state
-- Failure reason, when available
+The dashboard server grid includes key preflight results: pending reboot state, .NET readiness, and `mscorsvw.exe` compile activity.
 
 The shell equivalent is:
 
 ```powershell
 .\EPO-Toolbox.ps1 -Stage PreCheck -TargetServers EXCH01,EXCH02 -ValidationOnly
 ```
+
+## Virtual directory health popup
+
+Select a server in the dashboard grid and click **Check virtual directories**.
+
+The current framework opens a popup and attempts to enumerate configured Exchange virtual directories on the selected server by using the available Exchange virtual directory cmdlets:
+
+- `Get-OwaVirtualDirectory`
+- `Get-EcpVirtualDirectory`
+- `Get-WebServicesVirtualDirectory`
+- `Get-MapiVirtualDirectory`
+- `Get-ActiveSyncVirtualDirectory`
+- `Get-OabVirtualDirectory`
+- `Get-PowerShellVirtualDirectory`
+
+For each internal or external URL found, the framework attempts a lightweight HTTP `HEAD` request and records the status code. Authentication-style responses such as `401` or `403` are treated as reachable because many Exchange virtual directories require authentication.
+
+This is intentionally a framework implementation. The response-code policy can be made stricter per virtual directory as customer requirements are confirmed.
 
 ## Generated GUI config
 

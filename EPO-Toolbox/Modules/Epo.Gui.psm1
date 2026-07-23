@@ -72,7 +72,8 @@ function Test-EpoGuiPrerequisites {
         'Scripts\Get-PendingReboot.ps1',
         'Modules\Epo.Logging.psm1',
         'Modules\Epo.Stage1.SopAnalysis.psm1',
-        'Modules\Epo.Preflight.psm1'
+        'Modules\Epo.Preflight.psm1',
+        'Modules\Epo.ExchangeDashboard.psm1'
     )
     $MissingFiles = @($RequiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ToolboxRoot $_)) })
     if ($MissingFiles.Count -eq 0) {
@@ -522,151 +523,176 @@ function Show-EpoToolboxDashboard {
         $Status.ForeColor = [System.Drawing.Color]::DarkGreen
     }
 
-    $CommandPreview = New-Object System.Windows.Forms.TextBox
-    $CommandPreview.Location = New-Object System.Drawing.Point(20, 100)
-    $CommandPreview.Size = New-Object System.Drawing.Size(800, 44)
-    $CommandPreview.Multiline = $true
-    $CommandPreview.ReadOnly = $true
+    Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.ExchangeDashboard.psm1') -Force
 
-    $CommandPreview.Text = ConvertTo-EpoUnattendedCommand -Model $Model
+    $ScopeLabel = New-Object System.Windows.Forms.Label
+    $ScopeLabel.Text = 'View'
+    $ScopeLabel.Location = New-Object System.Drawing.Point(20, 100)
+    $ScopeLabel.Size = New-Object System.Drawing.Size(45, 24)
 
-    $InventoryLabel = New-Object System.Windows.Forms.Label
-    $InventoryLabel.Text = "Update inventory request: TargetServers=$($Model.TargetServers)"
-    $InventoryLabel.Location = New-Object System.Drawing.Point(20, 154)
-    $InventoryLabel.Size = New-Object System.Drawing.Size(800, 20)
+    $ScopeDropDown = New-Object System.Windows.Forms.ComboBox
+    $ScopeDropDown.DropDownStyle = 'DropDownList'
+    $ScopeDropDown.Location = New-Object System.Drawing.Point(70, 98)
+    $ScopeDropDown.Size = New-Object System.Drawing.Size(220, 24)
+    [void] $ScopeDropDown.Items.AddRange([object[]] @('Current DAG', 'Current AD site', 'All Exchange servers'))
+    $ScopeDropDown.SelectedIndex = 0
 
-    $InventoryList = New-Object System.Windows.Forms.ListView
-    $InventoryList.Location = New-Object System.Drawing.Point(20, 180)
-    $InventoryList.Size = New-Object System.Drawing.Size(800, 80)
-    $InventoryList.View = 'Details'
-    $InventoryList.FullRowSelect = $true
-    [void] $InventoryList.Columns.Add('Server', 120)
-    [void] $InventoryList.Columns.Add('Status', 90)
-    [void] $InventoryList.Columns.Add('Build', 120)
-    [void] $InventoryList.Columns.Add('CU', 180)
-    [void] $InventoryList.Columns.Add('HU', 180)
-    [void] $InventoryList.Columns.Add('SU', 180)
+    $DashboardRequestLabel = New-Object System.Windows.Forms.Label
+    $DashboardRequestLabel.Text = 'Dashboard server request: Current DAG'
+    $DashboardRequestLabel.Location = New-Object System.Drawing.Point(310, 101)
+    $DashboardRequestLabel.Size = New-Object System.Drawing.Size(510, 20)
 
-    function Refresh-GuiInventory {
-        try {
-            Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.UpdateInventory.psm1') -Force
-            $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
-            $InventoryLabel.Text = "Update inventory request: TargetServers=$($Targets -join ', ')"
-            $InventoryList.Items.Clear()
-            $Inventory = Get-EpoExchangeUpdateInventory -ServerName $Targets
-            foreach ($ServerInventory in $Inventory.Servers) {
-                $CuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'CU' | Select-Object -First 1)
-                $HuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'HU' | Select-Object -First 1)
-                $SuUpdate = @($ServerInventory.InstalledUpdates | Where-Object Type -eq 'SU' | Select-Object -First 1)
-                $Cu = if ($CuUpdate.Count) { $CuUpdate[0].DisplayName } else { '' }
-                $Hu = if ($HuUpdate.Count) { $HuUpdate[0].DisplayName } else { '' }
-                $Su = if ($SuUpdate.Count) { $SuUpdate[0].DisplayName } else { '' }
-                $Item = New-Object System.Windows.Forms.ListViewItem($ServerInventory.Server)
-                [void] $Item.SubItems.Add($ServerInventory.Status)
-                $Build = if ($ServerInventory.ExchangeSetup -and $ServerInventory.ExchangeSetup.PSObject.Properties['FileVersion']) { [string] $ServerInventory.ExchangeSetup.FileVersion } else { '' }
-                [void] $Item.SubItems.Add($Build)
-                [void] $Item.SubItems.Add([string] $Cu)
-                [void] $Item.SubItems.Add([string] $Hu)
-                [void] $Item.SubItems.Add([string] $Su)
-                [void] $InventoryList.Items.Add($Item)
-            }
-        }
-        catch {
-            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update inventory failed', 'OK', 'Error') | Out-Null
+    $ServerList = New-Object System.Windows.Forms.ListView
+    $ServerList.Location = New-Object System.Drawing.Point(20, 132)
+    $ServerList.Size = New-Object System.Drawing.Size(800, 260)
+    $ServerList.View = 'Details'
+    $ServerList.FullRowSelect = $true
+    $ServerList.MultiSelect = $false
+    [void] $ServerList.Columns.Add('Server', 105)
+    [void] $ServerList.Columns.Add('Patch', 115)
+    [void] $ServerList.Columns.Add('CU', 150)
+    [void] $ServerList.Columns.Add('Reboot', 70)
+    [void] $ServerList.Columns.Add('.NET', 90)
+    [void] $ServerList.Columns.Add('Compile', 70)
+    [void] $ServerList.Columns.Add('Maint', 70)
+    [void] $ServerList.Columns.Add('Ping', 55)
+    [void] $ServerList.Columns.Add('RDP', 55)
+    [void] $ServerList.Columns.Add('WinRM', 60)
+
+    $DashboardCommandPreview = New-Object System.Windows.Forms.TextBox
+    $DashboardCommandPreview.Location = New-Object System.Drawing.Point(20, 402)
+    $DashboardCommandPreview.Size = New-Object System.Drawing.Size(800, 44)
+    $DashboardCommandPreview.Multiline = $true
+    $DashboardCommandPreview.ReadOnly = $true
+    $DashboardCommandPreview.Text = ConvertTo-EpoUnattendedCommand -Model $Model
+
+    function ConvertTo-EpoDashboardScope {
+        param([string] $DisplayValue)
+        switch ($DisplayValue) {
+            'Current AD site' { return 'CurrentAdSite' }
+            'All Exchange servers' { return 'AllExchangeServers' }
+            default { return 'CurrentDag' }
         }
     }
 
-    $PreflightLabel = New-Object System.Windows.Forms.Label
-    $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Model.TargetServers)"
-    $PreflightLabel.Location = New-Object System.Drawing.Point(20, 276)
-    $PreflightLabel.Size = New-Object System.Drawing.Size(800, 20)
-
-    $PreflightList = New-Object System.Windows.Forms.ListView
-    $PreflightList.Location = New-Object System.Drawing.Point(20, 302)
-    $PreflightList.Size = New-Object System.Drawing.Size(800, 90)
-    $PreflightList.View = 'Details'
-    $PreflightList.FullRowSelect = $true
-    [void] $PreflightList.Columns.Add('Server', 120)
-    [void] $PreflightList.Columns.Add('Status', 90)
-    [void] $PreflightList.Columns.Add('Severity', 90)
-    [void] $PreflightList.Columns.Add('RebootRequired', 120)
-    [void] $PreflightList.Columns.Add('.NET', 90)
-    [void] $PreflightList.Columns.Add('.NET Ready', 90)
-    [void] $PreflightList.Columns.Add('.NET Accel', 95)
-    [void] $PreflightList.Columns.Add('Connection', 120)
-    [void] $PreflightList.Columns.Add('Blocked', 90)
-    [void] $PreflightList.Columns.Add('Reason', 260)
-
-    function Refresh-GuiPreflight {
+    function Refresh-GuiServerDashboard {
         try {
-            Import-Module (Join-Path $ToolboxRoot 'Modules\Epo.Preflight.psm1') -Force
-            $Targets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if (-not $Targets.Count) { $Targets = @($env:COMPUTERNAME) }
+            $Scope = ConvertTo-EpoDashboardScope -DisplayValue ([string] $ScopeDropDown.SelectedItem)
+            $ExplicitTargets = @($Model.TargetServers -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $Topology = Get-EpoExchangeTopology -Scope $Scope -TargetServers $ExplicitTargets
+            $DashboardRequestLabel.Text = "Dashboard server request: Scope=$($Topology.Scope); DAG=$($Topology.CurrentDag); Site=$($Topology.CurrentAdSite); Servers=$($Topology.Servers -join ', ')"
+            $ServerList.Items.Clear()
             $ScriptPath = Join-Path $ToolboxRoot 'Scripts\Get-PendingReboot.ps1'
-            $PreflightLabel.Text = "Preflight pending reboot request: TargetServers=$($Targets -join ', ')"
-            $PreflightList.Items.Clear()
-            $Preflight = Invoke-EpoPreflightCheck -ServerName $Targets -PendingRebootScriptPath $ScriptPath -EnablePendingRebootFallback -BlockOnPendingReboot $true -BlockOnUnknownRebootState $true -DotNetMinimumRelease 528040 -DotNetMinimumVersion '4.8' -BlockOnIncompatibleDotNet $true -EnableDotNetAcceleration $false
-            foreach ($ServerPreflight in $Preflight.Servers) {
-                $Item = New-Object System.Windows.Forms.ListViewItem($ServerPreflight.Server)
-                [void] $Item.SubItems.Add($ServerPreflight.Status)
-                [void] $Item.SubItems.Add($ServerPreflight.Severity)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RebootRequired)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.DetectedVersion)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.IsCompatible)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.DotNet.Acceleration.Status)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.ConnectionMethod)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.Blocked)
-                [void] $Item.SubItems.Add([string] $ServerPreflight.PendingReboot.RemoteConnectionFailureReason)
-                if ($ServerPreflight.Blocked) {
+            $Rows = Get-EpoExchangeServerDashboardStatus -ServerName $Topology.Servers -PendingRebootScriptPath $ScriptPath
+            foreach ($Row in $Rows) {
+                $Item = New-Object System.Windows.Forms.ListViewItem($Row.Server)
+                [void] $Item.SubItems.Add([string] $Row.PatchLevel)
+                [void] $Item.SubItems.Add([string] $Row.CuName)
+                [void] $Item.SubItems.Add([string] $Row.PendingReboot)
+                [void] $Item.SubItems.Add([string] $Row.DotNet)
+                [void] $Item.SubItems.Add([string] $Row.Mscorsvw)
+                [void] $Item.SubItems.Add([string] $Row.Maintenance)
+                [void] $Item.SubItems.Add([string] $Row.Ping)
+                [void] $Item.SubItems.Add([string] $Row.Rdp)
+                [void] $Item.SubItems.Add([string] $Row.WinRM)
+                if ($Row.PendingReboot -eq 'True' -or $Row.Maintenance -eq 'True') {
                     $Item.ForeColor = [System.Drawing.Color]::DarkRed
                 }
-                elseif ($ServerPreflight.Status -eq 'Warning') {
+                elseif ($Row.PendingReboot -eq 'Unknown' -or $Row.Ping -ne 'True') {
                     $Item.ForeColor = [System.Drawing.Color]::DarkOrange
                 }
                 else {
                     $Item.ForeColor = [System.Drawing.Color]::DarkGreen
                 }
-                [void] $PreflightList.Items.Add($Item)
+                [void] $ServerList.Items.Add($Item)
             }
         }
         catch {
-            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Preflight check failed', 'OK', 'Error') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Dashboard refresh failed', 'OK', 'Error') | Out-Null
+        }
+    }
+
+    function Show-GuiVirtualDirectoryHealth {
+        try {
+            if (-not $ServerList.SelectedItems.Count) {
+                [System.Windows.Forms.MessageBox]::Show('Select a server first.', 'Virtual directory health', 'OK', 'Information') | Out-Null
+                return
+            }
+            $SelectedServer = $ServerList.SelectedItems[0].Text
+            $Rows = Get-EpoVirtualDirectoryHealth -ServerName $SelectedServer
+            $Dialog = New-Object System.Windows.Forms.Form
+            $Dialog.Text = "Virtual directory health - $SelectedServer"
+            $Dialog.Size = New-Object System.Drawing.Size(900, 420)
+            $Dialog.StartPosition = 'CenterParent'
+            $VdirList = New-Object System.Windows.Forms.ListView
+            $VdirList.Location = New-Object System.Drawing.Point(12, 12)
+            $VdirList.Size = New-Object System.Drawing.Size(860, 320)
+            $VdirList.View = 'Details'
+            $VdirList.FullRowSelect = $true
+            [void] $VdirList.Columns.Add('Status', 90)
+            [void] $VdirList.Columns.Add('Code', 60)
+            [void] $VdirList.Columns.Add('Virtual directory', 220)
+            [void] $VdirList.Columns.Add('URL', 360)
+            [void] $VdirList.Columns.Add('Note', 320)
+            foreach ($Row in $Rows) {
+                $Item = New-Object System.Windows.Forms.ListViewItem([string] $Row.Status)
+                [void] $Item.SubItems.Add([string] $Row.StatusCode)
+                [void] $Item.SubItems.Add([string] $Row.VirtualDirectory)
+                [void] $Item.SubItems.Add([string] $Row.Url)
+                [void] $Item.SubItems.Add([string] $Row.Note)
+                if ($Row.Status -eq 'Pass') { $Item.ForeColor = [System.Drawing.Color]::DarkGreen }
+                elseif ($Row.Status -eq 'NotAvailable') { $Item.ForeColor = [System.Drawing.Color]::DarkOrange }
+                else { $Item.ForeColor = [System.Drawing.Color]::DarkRed }
+                [void] $VdirList.Items.Add($Item)
+            }
+            $CloseVdirButton = New-Object System.Windows.Forms.Button
+            $CloseVdirButton.Text = 'Close'
+            $CloseVdirButton.Location = New-Object System.Drawing.Point(795, 342)
+            $CloseVdirButton.Size = New-Object System.Drawing.Size(75, 30)
+            $CloseVdirButton.Add_Click({ $Dialog.Close() })
+            $Dialog.Controls.AddRange(@($VdirList, $CloseVdirButton))
+            [void] $Dialog.ShowDialog($Form)
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Virtual directory health failed', 'OK', 'Error') | Out-Null
         }
     }
 
     $WizardButton = New-Object System.Windows.Forms.Button
     $WizardButton.Text = 'Open wizard'
-    $WizardButton.Location = New-Object System.Drawing.Point(425, 420)
+    $WizardButton.Location = New-Object System.Drawing.Point(425, 462)
     $WizardButton.Size = New-Object System.Drawing.Size(105, 30)
     $WizardButton.Enabled = $Blocked.Count -eq 0
     $WizardButton.Add_Click({ Show-EpoToolboxWizard -Model $Model })
 
     $CopyButton = New-Object System.Windows.Forms.Button
     $CopyButton.Text = 'Copy command'
-    $CopyButton.Location = New-Object System.Drawing.Point(540, 420)
+    $CopyButton.Location = New-Object System.Drawing.Point(540, 462)
     $CopyButton.Size = New-Object System.Drawing.Size(105, 30)
     $CopyButton.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($CommandPreview.Text) })
 
     $CloseButton = New-Object System.Windows.Forms.Button
     $CloseButton.Text = 'Close'
-    $InventoryButton = New-Object System.Windows.Forms.Button
-    $InventoryButton.Text = 'Refresh inventory'
-    $InventoryButton.Location = New-Object System.Drawing.Point(145, 420)
-    $InventoryButton.Size = New-Object System.Drawing.Size(125, 30)
-    $InventoryButton.Add_Click({ Refresh-GuiInventory })
+    $RefreshButton = New-Object System.Windows.Forms.Button
+    $RefreshButton.Text = 'Refresh dashboard'
+    $RefreshButton.Location = New-Object System.Drawing.Point(20, 462)
+    $RefreshButton.Size = New-Object System.Drawing.Size(130, 30)
+    $RefreshButton.Add_Click({ Refresh-GuiServerDashboard })
 
-    $PreflightButton = New-Object System.Windows.Forms.Button
-    $PreflightButton.Text = 'Refresh preflight'
-    $PreflightButton.Location = New-Object System.Drawing.Point(285, 420)
-    $PreflightButton.Size = New-Object System.Drawing.Size(125, 30)
-    $PreflightButton.Add_Click({ Refresh-GuiPreflight })
+    $VdirButton = New-Object System.Windows.Forms.Button
+    $VdirButton.Text = 'Check virtual directories'
+    $VdirButton.Location = New-Object System.Drawing.Point(165, 462)
+    $VdirButton.Size = New-Object System.Drawing.Size(170, 30)
+    $VdirButton.Add_Click({ Show-GuiVirtualDirectoryHealth })
 
-    $CloseButton.Location = New-Object System.Drawing.Point(655, 420)
+    $ScopeDropDown.Add_SelectedIndexChanged({ Refresh-GuiServerDashboard })
+
+    $CloseButton.Location = New-Object System.Drawing.Point(655, 462)
     $CloseButton.Size = New-Object System.Drawing.Size(80, 30)
     $CloseButton.Add_Click({ $Form.Close() })
 
-    $Form.Controls.AddRange(@($Title, $Status, $CommandPreview, $InventoryLabel, $InventoryList, $PreflightLabel, $PreflightList, $InventoryButton, $PreflightButton, $WizardButton, $CopyButton, $CloseButton))
+    $Form.Controls.AddRange(@($Title, $Status, $ScopeLabel, $ScopeDropDown, $DashboardRequestLabel, $ServerList, $DashboardCommandPreview, $RefreshButton, $VdirButton, $WizardButton, $CopyButton, $CloseButton))
+    Refresh-GuiServerDashboard
     [void] $Form.ShowDialog()
 }
 
