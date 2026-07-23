@@ -156,6 +156,18 @@ Example:
 
 Use this command for scheduled, scripted, or remote execution after values are confirmed in the GUI.
 
+## UI direction
+
+The EPO Toolbox will continue to use Windows Forms for the GUI so the tool remains PowerShell-first and easy to run on Windows Server systems.
+
+Future GUI work should use modern WinForms techniques where practical:
+
+- Prefer clean dashboard panels over dense grid-first landing pages.
+- Keep prerequisite and diagnostic details available as evidence instead of making them the primary visual focus.
+- Use consistent spacing, larger controls, and concise status text.
+- Keep operational blockers visible with clear color and text.
+- Preserve a one-to-one mapping between GUI values and unattended PowerShell parameters or config keys.
+
 ## Current limitations
 
 - The GUI currently runs only the implemented `SopAnalysis` stage. Reserved stages can be selected for planning, but they are not implemented yet.
