@@ -83,6 +83,38 @@ Get-MailboxStatistics -Database "<DatabaseName>" |
 
 `Get-MailboxStatistics` requires at least one of the following parameters: `Server`, `Database`, or `Identity`.
 
+### Confirm the metric is populated before you trust it
+
+A `0 B` reading of `BigFunnelPostingListTableTotalSize` is ambiguous, and the ambiguity matters more than the value. It can mean the mailbox is genuinely small, or it can mean the counter is not being populated on that build - and those two look identical in the output. Confirm which one you are looking at before concluding that a mailbox, or a database, is healthy.
+
+On a lab running Exchange Server SE RTM (`15.2.2562.17`), a mailbox seeded with 200 messages drawn from a 40,000-term vocabulary reported:
+
+| Property | Value |
+|---|---|
+| `BigFunnelIsEnabled` | `True` |
+| `BigFunnelIndexedCount` | `200` |
+| `BigFunnelIndexedSize` | `5.7 MB (5,976,557 bytes)` |
+| `BigFunnelPostingListTableTotalSize` | `0 B (0 bytes)` |
+| `BigFunnelPostingListTableAvailableSize` | `0 B (0 bytes)` |
+| `BigFunnelTotalPOISize` | `1.427 MB` |
+| `BigFunnelLargePOITableTotalSize` | `2.156 MB` |
+| `BigFunnelFilterTableTotalSize` | `544 KB` |
+
+The index was live: `Search-Mailbox -EstimateResultOnly` for a term appearing only in the seeded message bodies returned a hit. The zero was genuine rather than a formatting or parsing artifact - the returned object reported `IsUnlimited` as `False` and its `ToBytes()` method returned integer `0` - and it did not change over a four-minute observation window. `BigFunnelPostingListTableChunkCount` and `BigFunnelLargePostingListTableTotalSize` were not present on the statistics object at all. Roughly 4.1 MB of index payload existed and was accounted for in the POI and filter tables. Note that `BigFunnelPostingListTableAvailableSize` also read `0 B`, where the corresponding large-POI counter reported 736 KB of free space: the table is not an allocated structure that happens to be empty.
+
+Two explanations fit that result, and the lab could not separate them: the build may account for posting list data elsewhere regardless of content volume, or the counter may materialize only above an allocation threshold that 5.75 MB of content does not reach. Both carry the same consequence for monitoring, so read a zero against the corroborating counters rather than on its own:
+
+| Reading | Interpretation | Action |
+|---|---|---|
+| `BigFunnelPostingListTableTotalSize` above `0 B` | The metric is populated on this build | Apply the thresholds in the next section |
+| `0 B`, with `BigFunnelIndexedCount` at `0` | The mailbox has no index yet | Investigate indexing; this is not a table-growth question |
+| `0 B`, with `BigFunnelIndexedCount` above `0` | The mailbox is indexed but the size is not accounted for in this counter | Do not read this as healthy. Check `BigFunnelTotalPOISize`, `BigFunnelLargePOITableTotalSize`, and `BigFunnelFilterTableTotalSize` for where the index size actually is |
+
+> [!IMPORTANT]
+> If every mailbox on a database reports `0 B` while reporting a non-zero `BigFunnelIndexedCount`, threshold alerting on this metric cannot fire there. A clean monitoring run then says nothing about posting list growth - it says only that nothing could have been found. Validate the counter against at least one mailbox known to exhibit the problem before treating an absence of alerts as evidence of health. The monitoring script in the next section reports this case as a distinct `NotPopulated` status rather than as `Normal`, precisely so that it cannot be mistaken for a pass.
+
+When you judge how widespread the condition is, count it against the mailboxes that have an index, not against every row `Get-MailboxStatistics` returns. Health, arbitration, system and archive mailboxes hold no BigFunnel index at all and cannot exhibit the condition; on the lab server above they were 44 of 66 rows. A ratio taken over all rows therefore understates the problem badly and can never reach 100%, even when every mailbox capable of exhibiting it does.
+
 ### Detection signals
 
 | Detection area | Signal | Collection method |
@@ -99,9 +131,14 @@ The following thresholds are operational examples derived from observed environm
 
 | Level | Example threshold | Operator action |
 |---|---:|---|
-| Normal | Below approximately 1.7 GB | Continue periodic monitoring |
+| Normal | Below approximately 1.7 GB and not growing measurably | Continue periodic monitoring |
+| Emerging | Below approximately 1.7 GB, but growing fast enough to reach approximately 2.0 GB within 3 days | Treat as a warning. A mailbox climbing 0.3 GB per day crosses both thresholds between two daily samples, so size alone would never raise it in time |
 | Warning | At or above approximately 1.7 GB | Start proactive review; confirm growth rate; identify mailbox owner; plan content cleanup or move. This example warning value was chosen to provide approximately three days of lead time before potential user impact in the observed environment |
 | Critical | At or above approximately 2.0 GB | Treat as high risk for search-related user impact; collect diagnostics; prepare remediation |
+| Not populated | Exactly `0 B`, with `BigFunnelIndexedCount` above 0 | The rows above cannot be evaluated for this mailbox. Do not record it as Normal. Read the index size from `BigFunnelTotalPOISize`, `BigFunnelLargePOITableTotalSize`, and `BigFunnelFilterTableTotalSize`, and rely on the symptom-side signals until the counter is confirmed to populate on your build |
+
+> [!IMPORTANT]
+> The three days of lead time in the warning row is a claim about a *rate*, not about a size. It holds only for the growth rate observed in the environment the threshold was derived from. A single reading of `BigFunnelPostingListTableTotalSize` cannot tell you how much time you have; it takes two readings separated by a known interval. Compare each collection against an earlier one and derive gigabytes per day before relying on the lead time. The monitoring script below does this and reports both the rate and the projected days to the critical threshold.
 
 > [!NOTE]
 > Mailbox size alone is not the deciding factor. A mailbox can be relatively small and still have `BigFunnelPostingListTableTotalSize` well above these thresholds depending on its content shape, item count, folder structure, and search patterns.
@@ -117,13 +154,16 @@ The following thresholds are operational examples derived from observed environm
 
 ### BigFunnel health signals beyond PostingListTable size
 
-When evaluating mailbox search health, review additional BigFunnel properties:
+When evaluating mailbox search health, review additional BigFunnel properties. Two of the three are only meaningful as a change between two collections, so record them alongside the size on every run rather than reading them once:
 
-| Signal | Expected condition |
-|---|---|
-| `BigFunnelNotIndexedCount` | Should trend low or decreasing |
-| `BigFunnelCorruptedCount` | Should be 0; moving the mailbox to another database has been observed to reset this value to 0 |
-| `BigFunnelStaleCount` | Should not be growing |
+| Signal | Expected condition | How to evaluate |
+|---|---|---|
+| `BigFunnelNotIndexedCount` | Should trend low or decreasing | Compare against the previous collection for the same mailbox. A rising count means indexing is falling behind ingestion. A single high reading on a newly migrated mailbox is normal and should fall on its own |
+| `BigFunnelCorruptedCount` | Should be 0; moving the mailbox to another database has been observed to reset this value to 0 | Meaningful on its own, with no baseline. Any non-zero value warrants investigation |
+| `BigFunnelStaleCount` | Should not be growing | Compare against the previous collection. Growth here indicates items whose index entries no longer match the item |
+
+> [!NOTE]
+> These counters describe index *health*; `BigFunnelPostingListTableTotalSize` describes index *size*. They are separate problems with separate remediations, and a mailbox can be bad on one and fine on the other. Keep them separate in alerting rather than folding them into one health score.
 
 ## Monitoring automation
 
@@ -157,7 +197,12 @@ param(
     [string[]]$Databases,
     [double]$WarningGB = 1.7,
     [double]$CriticalGB = 2.0,
-    [string]$OutputPath = (Join-Path $env:ProgramData "ExchangeBigFunnelPostingListMonitor")
+    [string]$OutputPath = (Join-Path $env:ProgramData "ExchangeBigFunnelPostingListMonitor"),
+
+    # Long enough to cover a holiday weekend plus the time it takes anyone to
+    # notice, so the run that first crossed a threshold is still on disk when
+    # someone comes to look for it. Set to 0 to keep everything.
+    [int]$RetentionDays = 30
 )
 
 Set-StrictMode -Version 2.0
@@ -180,7 +225,34 @@ function Write-RunLog {
         New-Item -Path $script:OutputPath -ItemType Directory -Force | Out-Null
     }
 
-    Add-Content -Path $script:LogFile -Value $line
+    # UTF8 on both writers. Windows PowerShell 5.1 defaults Export-Csv to ASCII
+    # and Add-Content to the ANSI code page, either of which mangles a display
+    # name outside the local codepage - and a mailbox name is exactly the field
+    # someone needs to be able to copy out of the report and search for.
+    # Best effort, and deliberately so. $ErrorActionPreference is Stop, so an
+    # unguarded Add-Content turns any transient lock on the log into an uncaught
+    # terminating error: the run exits 1, which is not a code the scheduling
+    # section tells anyone to alert on, and it never reaches Exit-MonitorRun, so
+    # the lock is released as abandoned. A backup agent, an anti-virus scanner or
+    # an operator with the file open in an editor is enough to trigger it. Losing
+    # a log line is a much smaller problem than losing the run writing it.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Add-Content -Path $script:LogFile -Value $line -Encoding UTF8 -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -eq 3) {
+                # stderr is the only channel left. A scheduled task discards it,
+                # but a wrapper that redirects it will capture both the line that
+                # could not be written and the reason.
+                Write-Warning ("Could not write to the run log: {0}" -f $_.Exception.Message)
+                Write-Warning $line
+                return
+            }
+            Start-Sleep -Milliseconds (50 * $attempt)
+        }
+    }
 }
 
 function Initialize-ExchangeShell {
@@ -214,16 +286,38 @@ function Convert-ExchangeSizeToBytes {
         return $null
     }
 
-    if ($SizeValue -is [string] -and $SizeValue -match "Unlimited") {
-        return $null
+    # Get-MailboxStatistics returns Unlimited<ByteQuantifiedSize>, which is a
+    # wrapper. Test the wrapper first, because ToBytes() lives on the inner
+    # ByteQuantifiedSize and never on the wrapper itself.
+    if ($SizeValue.PSObject.Properties.Name -contains "IsUnlimited") {
+        if ($SizeValue.IsUnlimited) {
+            return $null
+        }
+
+        $SizeValue = $SizeValue.Value
+
+        if ($null -eq $SizeValue) {
+            return $null
+        }
     }
 
     # Exchange ByteQuantifiedSize objects usually expose ToBytes().
     if ($SizeValue.PSObject.Methods.Name -contains "ToBytes") {
-        return [int64]$SizeValue.ToBytes()
+        try {
+            return [int64]$SizeValue.ToBytes()
+        }
+        catch {
+            # Fall through to the text parsers below.
+        }
     }
 
     $text = [string]$SizeValue
+
+    # Catches both a literal string and any object whose ToString() is
+    # "Unlimited", regardless of how it was reached.
+    if ($text -match "Unlimited") {
+        return $null
+    }
 
     # Common Exchange string format: 1.7 GB (1,825,361,920 bytes)
     if ($text -match "\(([0-9,]+)\s+bytes\)") {
@@ -231,8 +325,11 @@ function Convert-ExchangeSizeToBytes {
     }
 
     # Fallback parser for values such as "1.7 GB", "900 MB", "512 KB".
+    # Parsed with the invariant culture: Exchange renders sizes with an
+    # invariant separator, so a comma-decimal locale would otherwise misread
+    # them.
     if ($text -match "^\s*([0-9.]+)\s*(B|KB|MB|GB|TB)\s*$") {
-        $number = [double]$matches[1]
+        $number = [double]::Parse($matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
         $unit = $matches[2].ToUpperInvariant()
 
         switch ($unit) {
@@ -244,7 +341,12 @@ function Convert-ExchangeSizeToBytes {
         }
     }
 
-    throw "Unable to parse size value: $text"
+    # Returns $null rather than throwing. A throw here is caught by the
+    # per-database handler in the collection loop, which abandons the rest of
+    # that database - so one mailbox with an unreadable value would silently
+    # drop every mailbox enumerated after it, and the run would still report as
+    # having collected the database. The caller logs the skip instead.
+    return $null
 }
 
 function Get-PostingListStatus {
@@ -257,7 +359,12 @@ function Get-PostingListStatus {
         [int64]$WarningBytes,
 
         [Parameter(Mandatory = $true)]
-        [int64]$CriticalBytes
+        [int64]$CriticalBytes,
+
+        # Deliberately untyped. Windows PowerShell 5.1 cannot bind $null to an
+        # [int64] parameter, and this arrives as $null on any build that does
+        # not expose the counter.
+        $IndexedCount = $null
     )
 
     if ($Bytes -ge $CriticalBytes) {
@@ -268,7 +375,44 @@ function Get-PostingListStatus {
         return "Warning"
     }
 
+    # A mailbox that reports indexed items while reporting 0 B here is not
+    # small; the size is not being accounted for in this counter. Returning
+    # "Normal" would make that indistinguishable from a healthy mailbox, and on
+    # a build that never populates the table every mailbox would read healthy
+    # and the monitor would never alert.
+    $indexed = $null
+    if ($null -ne $IndexedCount) {
+        $parsed = New-Object System.Int64
+        if ([int64]::TryParse([string]$IndexedCount, [ref]$parsed)) {
+            $indexed = $parsed
+        }
+    }
+
+    if ($Bytes -eq 0 -and $null -ne $indexed -and $indexed -gt 0) {
+        return "NotPopulated"
+    }
+
     return "Normal"
+}
+
+function Get-StatisticProperty {
+    # Set-StrictMode 2.0 turns any access to an absent property into a
+    # terminating error, and Get-MailboxStatistics does not return a uniform
+    # shape across builds and mailbox states.
+    [CmdletBinding()]
+    param($InputObject, [Parameter(Mandatory = $true)][string]$Name)
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
 }
 
 $script:OutputPath = $OutputPath
@@ -277,24 +421,162 @@ if (-not (Test-Path -LiteralPath $OutputPath)) {
     New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
 }
 
-$runId = Get-Date -Format "yyyyMMdd-HHmmss"
+# The process id is part of the run's identity, not decoration. Get-Date has
+# one-second resolution, so two runs starting within the same second derive the
+# same file names and then append to the same log. Measured on Windows
+# PowerShell 5.1, that collision makes one of the two die on a sharing violation
+# and exit 1, and it is not reliably the run that was refused - an overlap can
+# kill the run that was collecting.
+$runId = "{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), $PID
 $script:LogFile = Join-Path $OutputPath ("BigFunnelPostingListMonitor-{0}.log" -f $runId)
-$csvPath = Join-Path $OutputPath ("BigFunnelPostingListMonitor-{0}.csv" -f $runId)
+$script:CsvPath = Join-Path $OutputPath ("BigFunnelPostingListMonitor-{0}.csv" -f $runId)
+
+# One run at a time. Collection can take longer than the interval it is
+# scheduled on, and two concurrent runs would double the load on the store at
+# exactly the moment it is already slow. Global\ so the lock holds across
+# sessions rather than only within one desktop.
+$mutex = New-Object System.Threading.Mutex($false, "Global\BigFunnelPostingListMonitor")
+$holdingLock = $false
+
+try {
+    $holdingLock = $mutex.WaitOne(0)
+}
+catch [System.Threading.AbandonedMutexException] {
+    # A guard, not a feature. If a previous run was killed while holding the
+    # lock, the lock is ours and continuing is correct - the point is that the
+    # run must not die here. Measured on Windows PowerShell 5.1: killing the
+    # holding process does not raise this, WaitOne(0) simply returns $true, so
+    # this branch does not fire on that runtime. Do not use its absence to infer
+    # that the previous run exited cleanly; a killed run is identified by a log
+    # file with no "Monitor run complete" line.
+    $holdingLock = $true
+}
+
+if (-not $holdingLock) {
+    Write-RunLog "Another instance is already running. Exiting without collecting." "WARN"
+    $mutex.Dispose()
+    exit 4
+}
+
+# Housekeeping. Without this the output directory grows without bound, and a
+# monitor that fills a disk on an Exchange server has become a worse problem
+# than the one it was watching for. Scoped to this script's own file pattern and
+# to the current run's directory, and it never touches the run just written.
+# The -gt 0 test is not decoration: AddDays(-0) is "now", so a retention of 0
+# would delete every previous run rather than keeping them.
+function Invoke-RetentionSweep {
+    [CmdletBinding()]
+    param()
+
+    if ($RetentionDays -le 0) { return }
+
+    $cutoff = (Get-Date).AddDays(-$RetentionDays)
+
+    $stale = @(Get-ChildItem -LiteralPath $script:OutputPath -Filter "BigFunnelPostingListMonitor-*" -File -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.LastWriteTime -lt $cutoff -and
+            $_.FullName -ne $script:CsvPath -and
+            $_.FullName -ne $script:LogFile
+        })
+
+    foreach ($old in $stale) {
+        try {
+            Remove-Item -LiteralPath $old.FullName -Force -ErrorAction Stop
+        }
+        catch {
+            # A file the monitor cannot delete is not a reason to fail the run,
+            # but it is a reason to say so - this is how a full disk announces
+            # itself weeks before it becomes an outage.
+            Write-RunLog ("Could not remove [{0}]: {1}" -f $old.Name, $_.Exception.Message) "WARN"
+        }
+    }
+
+    if ($stale.Count -gt 0) {
+        Write-RunLog ("Retention: removed {0} file(s) older than {1} day(s)." -f $stale.Count, $RetentionDays)
+    }
+}
+
+# Every exit below goes through this. A process exiting does release its mutex,
+# but it releases it as abandoned, which makes the next run look like it
+# recovered from a crash. Releasing explicitly keeps that signal meaningful.
+#
+# Housekeeping happens here rather than at the end of the script, because the end
+# of the script is only reached on a successful collection. A passive DAG member
+# exits 3 on every run by design - the scheduling section says to register the
+# task on every node - so putting the sweep at the bottom meant the nodes that
+# only ever write log files were the nodes that never pruned them. The refused
+# run is deliberately not covered: it exits 4 without coming through here, which
+# is right, because a run that never held the lock should not be deleting files
+# underneath the run that does.
+function Exit-MonitorRun {
+    param([Parameter(Mandatory = $true)][int]$Code)
+
+    try {
+        Invoke-RetentionSweep
+    }
+    catch {
+        # Housekeeping must never change the exit code. The code is what the
+        # operator alerts on, and reporting a collection failure that did not
+        # happen is worse than leaving a stale file on disk.
+        Write-RunLog ("Retention sweep failed: {0}" -f $_.Exception.Message) "WARN"
+    }
+
+    if ($script:holdingLock) { $script:mutex.ReleaseMutex() }
+    $script:mutex.Dispose()
+    exit $Code
+}
 
 Write-RunLog "Starting BigFunnel PostingListTable monitor run."
-Initialize-ExchangeShell
+
+# Caught rather than left to throw. An uncaught terminating error exits 1, which
+# is not one of the codes the scheduling section tells the operator to alert on,
+# and it skips Exit-MonitorRun so the lock is released as abandoned. Both make a
+# missing Exchange shell harder to spot than it should be.
+try {
+    Initialize-ExchangeShell
+}
+catch {
+    Write-RunLog ("Pre-flight failed: {0}" -f $_.Exception.Message) "ERROR"
+    Exit-MonitorRun -Code 3
+}
 
 $warningBytes = [int64]($WarningGB * 1GB)
 $criticalBytes = [int64]($CriticalGB * 1GB)
 
 if (-not $Databases -or $Databases.Count -eq 0) {
     Write-RunLog "No databases specified. Discovering mounted mailbox databases."
-    $Databases = Get-MailboxDatabase -Status |
-        Where-Object { $_.Mounted -eq $true } |
-        Select-Object -ExpandProperty Name
+
+    # Filter on MountedOnServer, not on Mounted. Mounted is populated only on
+    # the server that holds the active copy and comes back blank from every
+    # other DAG member, in both directions - so "Mounted -eq $true" discovers
+    # nothing on a passive node and the run completes silently with an empty
+    # CSV. MountedOnServer is populated from any node.
+    $mounted = @(Get-MailboxDatabase -Status |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.MountedOnServer) })
+
+    $local = @($mounted |
+        Where-Object { ([string]$_.MountedOnServer -split "\.")[0] -eq $env:COMPUTERNAME })
+
+    if ($local.Count -eq 0 -and $mounted.Count -gt 0) {
+        Write-RunLog ("No active database copies are mounted on {0}; {1} are mounted elsewhere in the DAG. Schedule this on the active node, or pass -Databases explicitly." -f $env:COMPUTERNAME, $mounted.Count) "WARN"
+    }
+
+    $Databases = @($local | Select-Object -ExpandProperty Name)
+}
+
+# An empty scope is a failed run, not a clean one. Without this the script
+# exports a zero-row CSV, logs "Monitor run complete", and returns success -
+# which is indistinguishable from a healthy estate.
+if (-not $Databases -or @($Databases).Count -eq 0) {
+    Write-RunLog "No databases are in scope. Nothing was collected; this run says nothing about posting list growth." "ERROR"
+    Exit-MonitorRun -Code 3
 }
 
 $results = New-Object System.Collections.Generic.List[object]
+
+# Databases that raised on collection. Tracked so the run can exit 2 rather than
+# reporting success over a partial estate.
+$failedDatabases = New-Object System.Collections.Generic.List[string]
 
 foreach ($db in $Databases) {
     Write-RunLog ("Collecting mailbox statistics for database [{0}]." -f $db)
@@ -313,13 +595,38 @@ foreach ($db in $Databases) {
             $bytes = Convert-ExchangeSizeToBytes -SizeValue $property.Value
 
             if ($null -eq $bytes) {
+                # Unlimited, or a value this parser does not recognize. Logged
+                # per mailbox so a skipped mailbox is visible in the run rather
+                # than quietly missing from the CSV.
+                Write-RunLog ("Skipped mailbox [{0}] on [{1}]: could not read a size from [{2}]." -f $stat.DisplayName, $db, [string]$property.Value) "WARN"
                 continue
+            }
+
+            # Corroborating counters. Without these, a 0 B posting list table
+            # cannot be told apart from a mailbox that simply has no index.
+            $indexedCount = Get-StatisticProperty -InputObject $stat -Name "BigFunnelIndexedCount"
+
+            # Where the index size is accounted for on builds that leave the
+            # posting list table empty. Summed only from the parts that parsed,
+            # so one absent property does not zero the total.
+            $payloadBytes = $null
+
+            foreach ($name in @("BigFunnelTotalPOISize",
+                                "BigFunnelLargePOITableTotalSize",
+                                "BigFunnelFilterTableTotalSize")) {
+
+                $part = Convert-ExchangeSizeToBytes -SizeValue (Get-StatisticProperty -InputObject $stat -Name $name)
+
+                if ($null -ne $part) {
+                    $payloadBytes = [int64]$payloadBytes + [int64]$part
+                }
             }
 
             $status = Get-PostingListStatus `
                 -Bytes $bytes `
                 -WarningBytes $warningBytes `
-                -CriticalBytes $criticalBytes
+                -CriticalBytes $criticalBytes `
+                -IndexedCount $indexedCount
 
             $results.Add([pscustomobject]@{
                 Timestamp                          = Get-Date
@@ -331,23 +638,43 @@ foreach ($db in $Databases) {
                 BigFunnelPostingListTableTotalSize = [string]$property.Value
                 PostingListBytes                   = $bytes
                 PostingListGB                      = [math]::Round(($bytes / 1GB), 3)
+                BigFunnelIndexedCount              = $indexedCount
+                IndexPayloadBytes                  = $payloadBytes
                 Status                             = $status
                 LastLogonTime                      = $stat.LastLogonTime
             })
         }
     }
     catch {
+        # Recorded rather than swallowed. A database that could not be read is
+        # not a database with nothing wrong in it, and the run has to exit
+        # non-zero so the scheduler notices.
         Write-RunLog ("Failed to collect database [{0}]. Error: {1}" -f $db, $_.Exception.Message) "ERROR"
+        $failedDatabases.Add([string]$db)
     }
 }
 
+# Critical must sort first, and "Sort-Object Status, PostingListBytes
+# -Descending" does not do that: one -Descending applies to both keys, so Status
+# comes back reverse-alphabetically as Warning, NotPopulated, Normal, Critical -
+# putting the rows that matter most at the bottom of the file. Rank the statuses
+# explicitly and set the direction per key. NotPopulated needs a rank of its own
+# as well: an unmapped status returns $null from the hashtable, and $null sorts
+# ahead of 0, which would float those rows above Critical.
+$statusRank = @{ "Critical" = 0; "Warning" = 1; "NotPopulated" = 2; "Normal" = 3 }
+
 $results |
-    Sort-Object Status, PostingListBytes -Descending |
-    Export-Csv -NoTypeInformation -Path $csvPath
+    Sort-Object `
+        @{ Expression = { $statusRank[[string]$_.Status] } }, `
+        @{ Expression = { [int64]$_.PostingListBytes }; Descending = $true } |
+    Export-Csv -NoTypeInformation -Path $script:CsvPath -Encoding UTF8
 
-Write-RunLog ("Exported results to [{0}]." -f $csvPath)
+Write-RunLog ("Exported results to [{0}]." -f $script:CsvPath)
 
-$atRisk = $results | Where-Object { $_.Status -in @("Warning", "Critical") }
+# Wrapped in @() throughout. A Where-Object that matches nothing returns
+# $null, and under Set-StrictMode 2.0 reading .Count on $null is a terminating
+# error - so on a completely healthy run the unwrapped form fails here.
+$atRisk = @($results | Where-Object { $_.Status -in @("Warning", "Critical") })
 
 if ($atRisk.Count -gt 0) {
     Write-RunLog ("Alert: {0} mailbox(es) at warning or critical threshold." -f $atRisk.Count)
@@ -358,16 +685,92 @@ if ($atRisk.Count -gt 0) {
         Format-Table -AutoSize
 }
 
+# Loud on purpose. If the posting list table is empty across an indexed
+# population, the thresholds above were applied to a constant zero, and a clean
+# run means only that nothing could ever have been found.
+$notPopulated = @($results | Where-Object { $_.Status -eq "NotPopulated" })
+
+# The denominator is the indexed population, not every row collected. Health,
+# arbitration, system and archive mailboxes hold no BigFunnel index at all, so
+# they can never reach this state; on a lab server they were 44 of 66 rows.
+# Comparing against $results.Count therefore never reaches equality on a real
+# server, and the escalation below would never fire.
+$indexedPop = @($results | Where-Object { [int64]$_.BigFunnelIndexedCount -gt 0 })
+
+if ($notPopulated.Count -gt 0) {
+    $totalOutage = $notPopulated.Count -ge $indexedPop.Count
+    $level       = if ($totalOutage) { "ERROR" } else { "WARN" }
+
+    Write-RunLog ("{0} of {1} indexed mailbox(es) ({2} evaluated in total) report indexed items while BigFunnelPostingListTableTotalSize reads 0 B. This run cannot speak to posting list growth for those mailboxes; see the IndexPayloadBytes column for the index size that does exist." -f $notPopulated.Count, $indexedPop.Count, $results.Count) $level
+
+    if ($totalOutage) {
+        Write-RunLog "Every indexed mailbox in scope is in this state, so no mailbox in this run could ever have crossed a threshold. Treat the thresholds here as untested, not as passed." "ERROR"
+    }
+}
+
 Write-RunLog "Monitor run complete."
+
+# Exit codes, matching what the scheduling section tells the operator to alert
+# on. 0 is the only code that means "this run examined the estate and found
+# nothing wrong"; every other code means the monitor is not reporting, which
+# needs attention sooner than a large posting list table does. Housekeeping runs
+# inside Exit-MonitorRun, so it happens on this path and on the early ones too.
+if ($failedDatabases.Count -gt 0) {
+    Write-RunLog ("{0} of {1} database(s) could not be collected: {2}. Results are partial." -f $failedDatabases.Count, @($Databases).Count, ($failedDatabases -join ", ")) "ERROR"
+    Exit-MonitorRun -Code 2
+}
+
+Exit-MonitorRun -Code 0
 ```
 
 ### Scheduling example
 
-Use this example for at-risk databases, running every 4 hours. Run from an elevated prompt. Replace the script path, account, and database list with environment-specific values.
+Use this example to run every 4 hours. Run from an elevated Exchange Management Shell. Replace the script path, output path, and account with environment-specific values.
 
-```cmd
-schtasks /Create /TN "Exchange BigFunnel PostingListTable Monitor" /SC HOURLY /MO 4 /RU "DOMAIN\ServiceAccount" /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""%ProgramData%\ExchangeBigFunnelPostingListMonitor\Monitor-BigFunnelPostingList.ps1"" -Databases DB01,DB02 -WarningGB 1.7 -CriticalGB 2.0"
+```powershell
+# No -Databases. The script then discovers the databases whose active copy is
+# mounted on this node, which is what makes the same registration correct on
+# every DAG member and correct again after a switchover. Name databases
+# explicitly only when you deliberately want a fixed subset, and expect that
+# task to start collecting nothing the first time the copy moves.
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument (
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass ' +
+    '-File "C:\Scripts\Monitor-BigFunnelPostingList.ps1" ' +
+    '-OutputPath "C:\ProgramData\ExchangeBigFunnelPostingListMonitor" ' +
+    '-WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30')
+
+$trigger = New-ScheduledTaskTrigger -Once -At 00:05 `
+    -RepetitionInterval (New-TimeSpan -Hours 4)
+
+# ExecutionTimeLimit is the backstop for a store call that never returns. The
+# script's own mutex prevents a slow run from being overlapped by the next
+# scheduled one, but it cannot interrupt a call already in progress, so the task
+# needs a hard ceiling of its own. MultipleInstances IgnoreNew is the same
+# protection at the scheduler level.
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable
+
+Register-ScheduledTask -TaskName "Exchange BigFunnel PostingListTable Monitor" `
+    -Action $action -Trigger $trigger -Settings $settings `
+    -User "DOMAIN\ServiceAccount" -RunLevel Highest -Force
 ```
+
+Points that matter in production:
+
+- **Store the script outside its own output directory.** The script prunes files matching `BigFunnelPostingListMonitor-*` under `-OutputPath` on a retention schedule. Keeping the script somewhere else, such as `C:\Scripts`, removes any possibility of the housekeeping and the tooling sharing a folder.
+- **Use a literal path, not an environment variable.** `%ProgramData%` expands differently depending on which shell creates the task and whether the service account's profile is loaded. A hardcoded path fails visibly at registration rather than silently at 02:05.
+- **The account needs Exchange RBAC, not just local administrator.** It must be able to run `Get-ExchangeServer`, `Get-MailboxDatabase`, and `Get-MailboxStatistics`. View-Only Organization Management is sufficient and is the least-privileged role that covers all three.
+- **Interpret the exit code.** The script exits 0 on a clean run, 2 when at least one database could not be collected, 3 when it could not collect anything at all (a failed pre-flight, or no database in scope), and 4 when a previous run is still going. Alert on 2, 3, and 4: those mean the monitor itself is not reporting, which is a different and more urgent problem than a large posting list table. A run that is missing entirely leaves a log file with no `Monitor run complete` line; that is how a killed run is identified, since it has no exit code to report.
+
+#### Which DAG node to schedule on
+
+In a DAG, `Get-MailboxStatistics -Database` returns data only from the server currently hosting the active copy. Register the task on **every** member of the DAG and pass no `-Databases`, which is the case the script's discovery is built for: it selects only the databases whose active copy is mounted on the local server.
+
+That arrangement survives a switchover: whichever node holds the active copy after a failover is the node that collects it, with no reconfiguration. The nodes that do not hold an active copy exit 3 with an explanatory log line, so a node reporting exit 3 continuously is expected on a passive-only member and is not by itself a fault.
+
+A passive member still writes a log file on every run, so it is also the node where housekeeping matters most: at a 15-minute interval that is roughly 35,000 files a year in one directory, on a node that never produces a report anyone reads. The retention sweep runs on every exit that held the lock, including exit 3, so a passive member prunes its own logs without ever collecting anything.
+
+Do not try to cover the DAG from one node by naming every database in `-Databases`. It works while that node is up, and stops silently when it is not.
 
 ## Resolution
 
@@ -666,6 +1069,8 @@ If yes, treat as critical:
 1. Collect `Troubleshoot-ModernSearch.ps1` diagnostics.
 2. Open a Microsoft Support request and provide the collected data.
 3. Plan content reduction followed by mailbox move.
+
+If the value reads `0 B`, do not answer "no" and move on. Check `BigFunnelIndexedCount` first. A mailbox that reports items indexed while reporting `0 B` here is telling you the counter is not accounted for on this build, not that the mailbox is small - see [Confirm the metric is populated before you trust it](#confirm-the-metric-is-populated-before-you-trust-it). In that case this step cannot be answered from this metric, and the symptoms in Steps 1 and 2 are the evidence to work from.
 
 ### Step 4: Is the mailbox between the warning and critical thresholds?
 
