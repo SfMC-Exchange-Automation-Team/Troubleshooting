@@ -169,7 +169,7 @@ When evaluating mailbox search health, review additional BigFunnel properties. T
 
 The following script collects `BigFunnelPostingListTableTotalSize` for all mailboxes on specified databases, evaluates configurable thresholds, and exports results to CSV.
 
-From its second run onwards it also compares each mailbox against an earlier collection, derives a growth rate, and ranks the mailboxes that are not yet over the threshold by how soon they are projected to cross it. See [Ranking mailboxes by how soon they cross](#ranking-mailboxes-by-how-soon-they-cross) for how to read that output.
+From its second run onwards it also compares each mailbox against an earlier collection, derives a growth rate, and ranks the mailboxes that are not yet over the threshold by how soon they are projected to cross it. On builds where the posting list table reads `0 B` it still ranks them, by growth rate, without projecting a date. See [Ranking mailboxes by how soon they cross](#ranking-mailboxes-by-how-soon-they-cross) for how to read that output.
 
 Run it in Exchange Management Shell or a PowerShell session where Exchange cmdlets are available. The script is compatible with Windows PowerShell 5.1.
 
@@ -212,17 +212,31 @@ param(
     # and the projection swings from run to run. A day of separation is enough
     # for the rate to mean something. If the history is not yet that deep the
     # widest available window is used instead, and the run says so.
+    #
+    # Validated rather than merely defaulted. A zero or negative window is not a
+    # narrower version of this feature, it is a division by zero or a rate with
+    # the sign flipped, and either produces a confident ranking that is simply
+    # wrong. Failing at bind time is the honest response to a value the script
+    # cannot act on.
+    [ValidateRange(1, 8760)]
     [int]$TrendBaselineHours = 24,
 
     # How far ahead the "next to cross" list looks. Two weeks is chosen to be
     # longer than the gap between one working Friday and the next, so a mailbox
     # cannot appear and cross inside a single unattended weekend.
+    [ValidateRange(1, 3650)]
     [int]$ProjectionHorizonDays = 14,
 
     # Caps the per-mailbox detail written to the log. An estate with thousands
     # of affected mailboxes would otherwise make the monitor its own disk-space
     # problem. Every list capped by this is sorted worst-first, so what survives
     # the cap is the part worth reading; the full set is always in the CSV.
+    #
+    # Zero is legal and means "counts only, no per-mailbox lines" - a reasonable
+    # ask when the log is being shipped somewhere with a size budget. Negative
+    # is not: Select-Object -First rejects it and the run dies at the point it
+    # would otherwise have reported its findings.
+    [ValidateRange(0, 100000)]
     [int]$MaxAlertDetail = 20
 )
 
@@ -813,6 +827,14 @@ foreach ($db in $Databases) {
                 Trend                              = $null
                 TrendWindowHours                   = $null
                 TrendMetric                        = $null
+
+                # The size of whichever counter the rate was actually measured
+                # on. Reporting PostingListGB next to a growth rate taken from
+                # the index payload produces lines reading "at 0 GB, growing
+                # 0.0161 GB/day", which is not a rounding artifact but two
+                # different counters printed side by side as though they were
+                # one.
+                MeasuredGB                         = $null
             })
         }
     }
@@ -841,16 +863,37 @@ foreach ($db in $Databases) {
 # that is the counter the thresholds were calibrated against.
 $trendMetric = "PostingListBytes"
 
+# Whether a *date* can be put on the growth, as opposed to just an ordering.
+# The warning and critical thresholds are sizes of the posting list table and
+# nothing else. Measuring growth on a different counter and then extrapolating
+# it to those same thresholds compares two unrelated quantities: on this build
+# the index payload is single-digit megabytes while the critical line is two
+# gigabytes, so every mailbox in the estate returns a projection of months and
+# the horizon filter below discards all of them. The feature that exists to say
+# which mailbox is next then produces nothing at all, on precisely the build
+# the fallback was written for, and prints a reassuring "none projected" while
+# doing it. So on the fallback path the script ranks by rate and declines to
+# name a date, rather than inventing a threshold it has never validated.
+$projectionApplies = $true
+
 $postingListPopulated = @($results | Where-Object { [int64]$_.PostingListBytes -gt 0 }).Count
 $payloadPopulated     = @($results | Where-Object { $null -ne $_.IndexPayloadBytes -and [int64]$_.IndexPayloadBytes -gt 0 }).Count
 
 if ($postingListPopulated -eq 0 -and $payloadPopulated -gt 0) {
-    $trendMetric = "IndexPayloadBytes"
+    $trendMetric       = "IndexPayloadBytes"
+    $projectionApplies = $false
 
-    Write-RunLog ("BigFunnelPostingListTableTotalSize is 0 B for all {0} mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering of the projection below is still meaningful - the mailbox at the top is genuinely the one growing fastest towards the line. The number of days is not: the warning and critical thresholds were calibrated for the posting list table and have never been validated against this counter. Read the ranking, treat the dates as indicative, and confirm the thresholds before acting on them as deadlines." -f $results.Count) "WARN"
+    Write-RunLog ("BigFunnelPostingListTableTotalSize is 0 B for all {0} mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering below is still meaningful - the mailbox at the top is genuinely the one growing fastest. No date is given: the warning and critical thresholds are sizes of the posting list table, they have never been validated against this counter, and a projection towards them would be arithmetic on two unrelated quantities. Use the ranking to decide what to look at first, and establish a threshold for this counter on your own estate before treating any of it as a deadline." -f $results.Count) "WARN"
 }
 
 $baseline = Get-PreviousRunBaseline -Path $script:OutputPath -ExcludeFile $script:CsvPath -MinHours $TrendBaselineHours
+
+# Whether the join below actually ran. A baseline being found is not the same
+# thing: it can be found and then rejected for being too recent to divide by.
+# Without this the "nothing is projected to cross" line further down fires on
+# the rejected case too, so a run that skipped the projection entirely reports
+# an all-clear one line after saying it was skipping it.
+$trendComputed = $false
 
 if ($null -eq $baseline) {
     Write-RunLog "No earlier run was found on disk, so this run establishes the baseline. Growth rates and projections appear from the next run onwards. Until then nothing can be ranked by how soon it will cross, and an empty projection list below means only that there is no history yet."
@@ -859,6 +902,8 @@ elseif ($baseline.AgeHours -le 0.01) {
     Write-RunLog "The previous run is too recent to derive a meaningful rate from. Projections are skipped for this run." "WARN"
 }
 else {
+    $trendComputed = $true
+
     Write-RunLog ("Comparing against [{0}], {1} hour(s) earlier, {2} mailbox(es) baselined." -f
         $baseline.Source, $baseline.AgeHours, $baseline.Sizes.Count)
 
@@ -910,6 +955,7 @@ else {
         $row.GrowthGBPerDay   = [math]::Round(($perDay / 1GB), 4)
         $row.TrendWindowHours = $baseline.AgeHours
         $row.TrendMetric      = $trendMetric
+        $row.MeasuredGB       = [math]::Round(([int64]$current / 1GB), 3)
 
         if     ($delta -gt $tolerance)       { $row.Trend = "Growing" }
         elseif ($delta -lt (0 - $tolerance)) { $row.Trend = "Shrinking" }
@@ -918,11 +964,18 @@ else {
         # Only project forward for mailboxes not already past the line. Zero days
         # on something already critical is noise in a list whose whole purpose is
         # to surface what has not happened yet.
-        if ([int64]$current -ge $criticalBytes) {
-            $row.DaysToCritical = 0
-        }
-        elseif ($perDay -gt 0) {
-            $row.DaysToCritical = [math]::Round((($criticalBytes - [int64]$current) / $perDay), 2)
+        #
+        # Skipped entirely when the rate came from a counter the thresholds do
+        # not describe. Leaving DaysToCritical empty there is the point: an empty
+        # column is read as "no projection", where a number computed against the
+        # wrong threshold is read as a deadline.
+        if ($projectionApplies) {
+            if ([int64]$current -ge $criticalBytes) {
+                $row.DaysToCritical = 0
+            }
+            elseif ($perDay -gt 0) {
+                $row.DaysToCritical = [math]::Round((($criticalBytes - [int64]$current) / $perDay), 2)
+            }
         }
 
         $trended++
@@ -944,10 +997,19 @@ else {
 # ahead of 0, which would float those rows above Critical.
 $statusRank = @{ "Critical" = 0; "Warning" = 1; "NotPopulated" = 2; "Normal" = 3 }
 
+# The size key follows whichever counter is in use, for the same reason the
+# ranking does. PostingListBytes is zero on every row of a 0 B build, so sorting
+# the export by it leaves each status group in arbitrary order - and this is the
+# file the log points at for the detail it had to truncate. An ordered list in
+# the log beside an unordered one in the CSV is the worse of both: the operator
+# reads the ranking, opens the artifact to see the rest of it, and gets rows in
+# collection order that look like a continuation of the list.
+$sizeKey = if ($trendMetric -eq "IndexPayloadBytes") { "IndexPayloadBytes" } else { "PostingListBytes" }
+
 $results |
     Sort-Object `
         @{ Expression = { $statusRank[[string]$_.Status] } }, `
-        @{ Expression = { [int64]$_.PostingListBytes }; Descending = $true } |
+        @{ Expression = { [int64]($_.$sizeKey) }; Descending = $true } |
     Export-Csv -NoTypeInformation -Path $script:CsvPath -Encoding UTF8
 
 Write-RunLog ("Exported results to [{0}]." -f $script:CsvPath)
@@ -974,50 +1036,103 @@ if ($atRisk.Count -gt 0) {
 }
 
 # The list this script exists to produce, and the one a point-in-time reading
-# cannot: of everything in scope, which mailbox crosses next. Sorted by
-# time-to-threshold ascending, so the top of it is the work to do before the
-# weekend rather than the work to explain afterwards.
+# cannot: of everything in scope, which mailbox is next. It takes one of two
+# forms. Where the posting list table carries data, that question has a date
+# attached and the list is sorted by time-to-threshold ascending. Where it reads
+# 0 B the same question is answered by rate alone, because the thresholds do not
+# describe the counter the rate came from. Both are orderings of the same thing;
+# only one of them can honestly be given in days.
 #
-# Deliberately excludes anything already at or past the line. Those mailboxes
-# are in the at-risk table above and need remediating, not predicting; leaving
-# them here would put a row of zeroes at the top of the list and bury the
-# mailboxes that can still be got to in time.
-$nextToCross = @($results |
-    Where-Object {
-        $null -ne $_.DaysToCritical -and
-        [double]$_.DaysToCritical -gt 0 -and
-        [double]$_.DaysToCritical -le $ProjectionHorizonDays
-    } |
-    Sort-Object @{ Expression = { [double]$_.DaysToCritical } })
+# Either way the list deliberately excludes anything already at or past the
+# line. Those mailboxes are in the at-risk table above and need remediating, not
+# predicting; leaving them here would put a row of zeroes at the top and bury
+# the mailboxes that can still be got to in time.
+if ($projectionApplies) {
+    $nextToCross = @($results |
+        Where-Object {
+            $null -ne $_.DaysToCritical -and
+            [double]$_.DaysToCritical -gt 0 -and
+            [double]$_.DaysToCritical -le $ProjectionHorizonDays
+        } |
+        Sort-Object @{ Expression = { [double]$_.DaysToCritical } })
 
-if ($nextToCross.Count -gt 0) {
-    Write-RunLog ("{0} mailbox(es) are below the critical threshold now but projected to cross it within {1} day(s), measured on {2} over a {3}-hour window." -f
-        $nextToCross.Count, $ProjectionHorizonDays, $trendMetric, $baseline.AgeHours) "WARN"
+    if ($nextToCross.Count -gt 0) {
+        Write-RunLog ("{0} mailbox(es) are below the critical threshold now but projected to cross it within {1} day(s), measured on {2} over a {3}-hour window." -f
+            $nextToCross.Count, $ProjectionHorizonDays, $trendMetric, $baseline.AgeHours) "WARN"
 
-    $shown = 0
+        $shown = 0
 
-    foreach ($r in $nextToCross) {
-        if ($shown -ge $MaxAlertDetail) { break }
-        $shown++
+        foreach ($r in $nextToCross) {
+            if ($shown -ge $MaxAlertDetail) { break }
+            $shown++
 
-        Write-RunLog ("Next to cross: [{0}] {1} on [{2}] at {3} GB, growing {4} GB/day, projected critical in {5} day(s)." -f
-            $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $r.GrowthGBPerDay, $r.DaysToCritical) "WARN"
+            Write-RunLog ("Next to cross: [{0}] {1} on [{2}] at {3} GB, growing {4} GB/day, projected critical in {5} day(s)." -f
+                $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay, $r.DaysToCritical) "WARN"
+        }
+
+        if ($nextToCross.Count -gt $shown) {
+            Write-RunLog ("...and {0} further mailbox(es) inside the {1}-day horizon, not listed. Full detail is in [{2}]." -f
+                ($nextToCross.Count - $shown), $ProjectionHorizonDays, $script:CsvPath) "WARN"
+        }
+
+        $nextToCross |
+            Select-Object -First $MaxAlertDetail Database, DisplayName, MeasuredGB, GrowthGBPerDay, DaysToCritical, Status |
+            Format-Table -AutoSize
     }
-
-    if ($nextToCross.Count -gt $shown) {
-        Write-RunLog ("...and {0} further mailbox(es) inside the {1}-day horizon, not listed. Full detail is in [{2}]." -f
-            ($nextToCross.Count - $shown), $ProjectionHorizonDays, $script:CsvPath) "WARN"
+    elseif ($trendComputed) {
+        # Said explicitly, and only when a rate was actually derived. A silent
+        # absence here is ambiguous between "nothing is trending towards the
+        # line" and "the projection did not run", and those call for very
+        # different responses. Reporting the first when the truth is the second
+        # is the worse of the two errors, so the condition is that the join ran,
+        # not merely that a baseline file was found.
+        Write-RunLog ("No mailbox below the critical threshold is projected to cross it within {0} day(s)." -f $ProjectionHorizonDays)
     }
-
-    $nextToCross |
-        Select-Object -First $MaxAlertDetail Database, DisplayName, PostingListGB, GrowthGBPerDay, DaysToCritical, Status |
-        Format-Table -AutoSize
 }
-elseif ($null -ne $baseline) {
-    # Said explicitly. A silent absence here is ambiguous between "nothing is
-    # trending towards the line" and "the projection did not run", and those
-    # call for very different responses.
-    Write-RunLog ("No mailbox below the critical threshold is projected to cross it within {0} day(s)." -f $ProjectionHorizonDays)
+elseif ($trendComputed) {
+    # The fallback answer to the same question. No date can be put on this, for
+    # the reasons given where $projectionApplies is set, so it ranks instead:
+    # fastest first, which is the order in which these mailboxes will become
+    # someone's problem even though the script cannot say when.
+    # Filtered on Trend rather than on the raw rate, so the same 1 MB tolerance
+    # that keeps ordinary churn out of the Growing count keeps it out of this
+    # list too. A mailbox that moved by a few hundred kilobytes has a positive
+    # rate and is not growing in any sense worth paging someone about; counting
+    # it here would inflate the headline number with rows that the Trend column
+    # on the very same line calls Flat.
+    $fastestGrowing = @($results |
+        Where-Object {
+            $_.Trend -eq "Growing" -and
+            $null -ne $_.GrowthGBPerDay -and [double]$_.GrowthGBPerDay -gt 0
+        } |
+        Sort-Object @{ Expression = { [double]$_.GrowthGBPerDay } } -Descending)
+
+    if ($fastestGrowing.Count -gt 0) {
+        Write-RunLog ("{0} mailbox(es) grew over a {1}-hour window, measured on {2}. They are ranked fastest first below. No projected date is given for the reason logged above; treat this as the order to work through, not a countdown." -f
+            $fastestGrowing.Count, $baseline.AgeHours, $trendMetric) "WARN"
+
+        $shown = 0
+
+        foreach ($r in $fastestGrowing) {
+            if ($shown -ge $MaxAlertDetail) { break }
+            $shown++
+
+            Write-RunLog ("Fastest growing #{0}: [{1}] {2} on [{3}] at {4} GB, growing {5} GB/day on {6}." -f
+                $shown, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay, $trendMetric) "WARN"
+        }
+
+        if ($fastestGrowing.Count -gt $shown) {
+            Write-RunLog ("...and {0} further growing mailbox(es), not listed. Full detail is in [{1}]." -f
+                ($fastestGrowing.Count - $shown), $script:CsvPath) "WARN"
+        }
+
+        $fastestGrowing |
+            Select-Object -First $MaxAlertDetail Database, DisplayName, MeasuredGB, GrowthGBPerDay, Trend, Status |
+            Format-Table -AutoSize
+    }
+    else {
+        Write-RunLog ("No mailbox grew measurably on {0} over the {1}-hour window." -f $trendMetric, $baseline.AgeHours)
+    }
 }
 
 # Loud on purpose. If the posting list table is empty across an indexed
@@ -1146,7 +1261,8 @@ These columns are written to the CSV for every mailbox that could be matched to 
 | `PreviousBytes` | The same mailbox's size in the baseline run, in bytes |
 | `DeltaBytes` | Change since the baseline. Negative after successful remediation |
 | `GrowthGBPerDay` | `DeltaBytes` normalized to a 24-hour rate. This is the number to compare between mailboxes; raw deltas are not comparable unless both were measured over the same window |
-| `DaysToCritical` | Days until this mailbox reaches the critical threshold at its current rate. `0` means it is already at or past it. Blank means flat or shrinking, so no crossing is projected |
+| `MeasuredGB` | The current size of whichever counter `TrendMetric` names. Read this rather than `PostingListGB` alongside a growth rate: on a build where the posting list table reads `0 B` the two columns describe different things, and `PostingListGB` would report `0` next to a non-zero rate |
+| `DaysToCritical` | Days until this mailbox reaches the critical threshold at its current rate. `0` means it is already at or past it. Blank means one of three things: the mailbox is flat or shrinking, it had no baseline to compare against, or growth was measured on a counter the thresholds do not describe — see [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b) |
 | `Trend` | `Growing`, `Flat`, or `Shrinking`. A 1 MB tolerance either side of zero keeps ordinary churn out of the growing and shrinking counts |
 | `TrendWindowHours` | How far apart the two readings actually were. A short window magnifies noise, so this qualifies every rate on the row |
 | `TrendMetric` | Which counter the rate was measured on, `PostingListBytes` or `IndexPayloadBytes`. See [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b) |
@@ -1170,18 +1286,28 @@ Mailboxes already at or past the threshold are deliberately **excluded** from th
 On builds where `BigFunnelPostingListTableTotalSize` reads exactly `0 B` across an indexed population (see [Confirm the metric is populated before you trust it](#confirm-the-metric-is-populated-before-you-trust-it)), ranking on that column would sort the whole estate by a value that is zero for every row, producing an arbitrary order that still looks authoritative. The script detects this from the collected data and measures growth on the combined POI and filter sizes instead, announcing the substitution:
 
 ```output
-[WARN] BigFunnelPostingListTableTotalSize is 0 B for all 1712 mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead.
+[WARN] BigFunnelPostingListTableTotalSize is 0 B for all 1712 mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering below is still meaningful - the mailbox at the top is genuinely the one growing fastest. No date is given: ...
 ```
 
-Read the resulting ranking, but treat the day counts as indicative only. The ordering is genuine: the mailbox at the top is the one whose index is growing fastest. The projected dates are not, because the warning and critical thresholds were calibrated against the posting list table and have never been validated against this counter. Confirm your own thresholds for it before treating a projected date as a deadline.
+On this path the output is a **ranking without dates**. `DaysToCritical` stays blank and the list is headed differently:
+
+```output
+[WARN] 47 mailbox(es) grew over a 24.02-hour window, measured on IndexPayloadBytes. They are ranked fastest first below.
+[WARN] Fastest growing #1: [a1f3...] Contoso Dispatch on [DB04] at 0.412 GB, growing 0.0386 GB/day on IndexPayloadBytes.
+[WARN] Fastest growing #2: [7c02...] Shared AP Inbox on [DB01] at 0.298 GB, growing 0.0329 GB/day on IndexPayloadBytes.
+```
+
+The ordering is genuine and is what you act on: the mailbox at the top is the one whose index is growing fastest, and that is still the answer to "which one is next". The dates are withheld rather than estimated, because `-WarningGB` and `-CriticalGB` are sizes of the posting list table and have never been validated against this counter. Extrapolating one to the other compares unrelated quantities — the index payload here is typically single-digit megabytes against a two-gigabyte threshold, so every projection would land months out and the horizon filter would discard the entire list. A monitor that returns nothing while reporting no problem is worse than one that declines to guess.
+
+To get dates back on such a build, establish what a problematic `IndexPayloadBytes` looks like on your own estate first — collect for a few weeks, find the sizes at which search actually degrades — and set `-WarningGB` and `-CriticalGB` from that. Until then, work the ranking top-down.
 
 #### Parameters that control the projection
 
 | Parameter | Default | What to consider when changing it |
 |---|---:|---|
-| `-TrendBaselineHours` | `24` | How far back to reach for the comparison run. Short windows magnify noise: at a 15-minute cadence a delta is multiplied by 96 to reach a daily rate, so a few megabytes of ordinary churn reads as a trend and the projection swings between runs. If the history is not yet this deep the widest window available is used and the run is marked provisional |
-| `-ProjectionHorizonDays` | `14` | How far ahead the list looks. The default is chosen to be longer than the gap between one working Friday and the next, so a mailbox cannot appear and cross inside a single unattended weekend. Raise it for a slow-moving estate; lower it if the list is too long to act on |
-| `-MaxAlertDetail` | `20` | Caps per-mailbox detail in the log, so a large estate does not make the monitor its own disk-space problem. Every capped list is sorted worst-first, so what survives the cap is the part worth reading, and the remainder is reported as a count rather than dropped silently. The full set is always in the CSV |
+| `-TrendBaselineHours` | `24` | How far back to reach for the comparison run. Short windows magnify noise: at a 15-minute cadence a delta is multiplied by 96 to reach a daily rate, so a few megabytes of ordinary churn reads as a trend and the projection swings between runs. If the history is not yet this deep the widest window available is used and the run is marked provisional. Accepts `1`–`8760` |
+| `-ProjectionHorizonDays` | `14` | How far ahead the list looks. The default is chosen to be longer than the gap between one working Friday and the next, so a mailbox cannot appear and cross inside a single unattended weekend. Raise it for a slow-moving estate; lower it if the list is too long to act on. Accepts `1`–`3650` |
+| `-MaxAlertDetail` | `20` | Caps per-mailbox detail in the log, so a large estate does not make the monitor its own disk-space problem. Every capped list is sorted worst-first, so what survives the cap is the part worth reading, and the remainder is reported as a count rather than dropped silently. The full set is always in the CSV. Accepts `0`–`100000`; `0` means counts only, with no per-mailbox lines |
 
 > [!IMPORTANT]
 > The projection is a linear extrapolation of one interval. It is a work queue, not a forecast: mailbox growth is driven by user behavior and rarely stays linear for two weeks. Use the ordering to decide what to look at first, and re-read it each run rather than planning against a specific date. A mailbox whose rate came from a window shorter than `-TrendBaselineHours` is flagged provisional in the log for exactly this reason.
