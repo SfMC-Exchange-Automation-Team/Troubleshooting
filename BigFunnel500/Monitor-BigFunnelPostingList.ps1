@@ -129,9 +129,15 @@ Exit codes:
      mailbox crossed a line, 5 means there was no line to cross. Returning 0
      here would report "nothing found" from a run that could not have found
      anything.
+  6  Completed, nothing over threshold, but at least one mailbox is projected
+     to cross the critical threshold within 3 days (-ExitNonZeroOnAlert only).
+     Kept distinct from 1 so that 1 keeps meaning "over the line now": 1 is
+     work today, 6 is work before the weekend. A run cannot return both. Where
+     a breach and a projection coexist 1 wins, and the projections are still
+     in the log, the CSV, and the Emerging count.
 
 Invoke with powershell.exe -File, not -Command. -Command collapses every
-non-zero exit to 1, so 2, 3, 4 and 5 all arrive as "at-risk mailboxes found"
+non-zero exit to 1, so 2, 3, 4, 5 and 6 all arrive as "at-risk mailboxes found"
 and a caller cannot tell a metric outage or a failed database from a threshold
 breach. Measured, not assumed: a script whose only statement is "exit 5"
 returns 5 under -File and 1 under -Command, with no errors involved. The
@@ -165,10 +171,23 @@ they can never reach this state and would otherwise mask a total outage.
 On that build the run still answers which mailbox is next. Growth is measured
 on IndexPayloadBytes, DaysToCritical is left empty on every row, and the log
 carries a "Fastest growing #n" ranking in place of the emerging-risk list,
-which is keyed on a projection that cannot be made there. latest-summary.json
-reports TrendMetric = IndexPayloadBytes and a Growing count; alert on Growing
-rather than Emerging when TrendMetric is not PostingListBytes, because Emerging
-is empty by construction on that path.
+which is keyed on a projection that cannot be made there.
+
+Which counter to trend on is decided per mailbox, not once per run. An estate
+part-way through the transition holds both kinds at once, and a run-level
+choice would drag every mailbox onto whichever counter the majority - or in an
+earlier revision of this script, any single mailbox - happened to populate.
+That put mailboxes reading 0 B onto the posting list table, where their growth
+measured as a constant zero and the ranking that exists to name the next
+mailbox went blind for most of the population. TrendMetric in
+latest-summary.json is then Mixed, and TrendedOnPayload gives the size of the
+group that fell back.
+
+Read Emerging as the whole answer only when TrendedOnPayload is 0. Above zero
+it can only name mailboxes from the group the thresholds can see, because it is
+keyed on a projected date and no date is produced on the fallback path. Alert
+on Growing alongside it, and on GrowingRanked for the part of the estate that
+has an order but no dates.
 
 Requires Exchange RBAC permission to run:
 - Get-ExchangeServer
@@ -253,7 +272,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion   = '1.4.0'
+$script:ScriptVersion   = '1.5.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
@@ -485,6 +504,42 @@ function Get-PostingListStatus {
     return 'Normal'
 }
 
+function Get-TrendMetricForRow {
+    # Which counter this mailbox's growth can be measured on.
+    # BigFunnelPostingListTableTotalSize is the counter the thresholds describe,
+    # so it wins wherever it carries a reading. Where it reads 0 B on a mailbox
+    # that demonstrably holds an index, the index is accounted for in the POI and
+    # filter tables instead, and IndexPayloadBytes is the only counter that can
+    # see it.
+    #
+    # Asked of one mailbox, not of the run. The previous version made this choice
+    # once for the whole scope: if any mailbox anywhere had a populated posting
+    # list, every mailbox was trended on it. On an estate mid-transition that is
+    # the wrong shape. Measured on a lab estate on 15.2.2562.17, two mailboxes
+    # crossing the allocation threshold moved the other eighteen - still reading
+    # 0 B, and unchanged in every other respect - onto a counter that is a
+    # constant zero for them. The ranking that exists to name the next mailbox
+    # went blind for most of the population 27 minutes after it had been working,
+    # and nothing about those eighteen had changed. Whether the posting list
+    # table is readable is a property of a mailbox, so it is now read off one.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Row
+    )
+
+    $postingList = ConvertTo-NullableInt64 (Get-SafeProperty -InputObject $Row -Name 'PostingListBytes')
+    if ($null -ne $postingList -and $postingList -gt 0) { return 'PostingListBytes' }
+
+    $payload = ConvertTo-NullableInt64 (Get-SafeProperty -InputObject $Row -Name 'IndexPayloadBytes')
+    if ($null -ne $payload -and $payload -gt 0) { return 'IndexPayloadBytes' }
+
+    # Neither counter carries a reading, so there is nothing to choose between.
+    # Named as the posting list rather than the fallback so the row sorts and
+    # reports with the majority, instead of being pushed onto a counter it has no
+    # data for either and ranked against mailboxes that do.
+    return 'PostingListBytes'
+}
+
 function Get-PreviousRunBaseline {
     # The run ID embedded in each file name is yyyyMMdd-HHmmss followed by the
     # process id, so the timestamp parses without touching the current culture.
@@ -699,11 +754,22 @@ function Write-RunSummary {
         # Which counter GrowthGBPerDay was measured on. A consumer comparing
         # growth across runs needs it: the same column carries posting list
         # growth on one build and index payload growth on the next, and the two
-        # are three orders of magnitude apart. Growing is the headline count for
-        # the build where no projection is possible, and is the field to alert on
-        # there, since Emerging is empty by construction on that path.
+        # are three orders of magnitude apart. 'Mixed' means both were in use in
+        # the one run, which is the normal state of an estate mid-transition -
+        # read TrendedOnPayload for how much of it fell on the fallback counter.
         TrendMetric          = ''
+        TrendedOnPayload     = 0
+        # Rows reading Trend=Growing, on whichever counter measured them.
+        # GrowingRanked is the subset that appears in the fastest-first list -
+        # the fallback-counter rows, which get an ordering because they can get
+        # no date. Growing used to hold that subset alone, which meant a run
+        # could report Growing 0 with growing mailboxes plainly in its own CSV.
+        #
+        # Alert on Critical, Warning and Emerging. Growing is a triage count, not
+        # an alert condition: on a run where every posting list is readable it is
+        # the ordinary churn of the estate.
         Growing              = 0
+        GrowingRanked        = 0
         DetailCsv            = ''
         LogFile              = $script:LogFile
         ExitCode             = 0
@@ -1168,34 +1234,46 @@ try {
 
     #region trend -------------------------------------------------------------
 
-    # Which counter growth is measured on. PostingListBytes is the one the
-    # thresholds describe, so it is preferred wherever it carries data.
-    $trendMetric = 'PostingListBytes'
-
-    # Whether a *date* can be put on that growth, as opposed to just an ordering.
+    # Which counter growth is measured on, and whether a *date* can be put on
+    # that growth as opposed to just an ordering. Both are decided per mailbox by
+    # Get-TrendMetricForRow. The two run-level values below exist only to
+    # describe the run in the log and in the summary; nothing downstream acts on
+    # them.
+    #
     # The warning and critical thresholds are sizes of the posting list table and
     # nothing else. Measuring growth on a different counter and then
     # extrapolating it to those same thresholds compares two unrelated
     # quantities: on Exchange Server SE 15.2.2562.17 the index payload is
     # single-digit megabytes while the critical line is two gigabytes, so every
-    # mailbox in the estate projects out to months and every lead-time window
+    # mailbox measured that way projects out to months and every lead-time window
     # discards all of them. The report that exists to say which mailbox is next
     # then produces nothing at all, on precisely the build the fallback was
-    # written for. So on the fallback path this script ranks by rate and declines
-    # to name a date, rather than extrapolating towards a line it has never
-    # validated against this counter.
-    $projectionApplies = $true
+    # written for. So a row trended on the fallback counter is ranked by rate and
+    # given no date, rather than extrapolated towards a line that has never been
+    # validated against it.
+    $payloadRows = @($results | Where-Object { (Get-TrendMetricForRow -Row $_) -eq 'IndexPayloadBytes' })
+    $postingRows = @($results | Where-Object {
+        $pl = ConvertTo-NullableInt64 $_.PostingListBytes
+        $null -ne $pl -and $pl -gt 0
+    })
 
-    $postingListPopulated = @($results | Where-Object { [int64]$_.PostingListBytes -gt 0 }).Count
-    $payloadPopulated     = @($results | Where-Object {
-        $null -ne $_.IndexPayloadBytes -and [int64]$_.IndexPayloadBytes -gt 0
-    }).Count
+    # 'PostingListBytes', 'IndexPayloadBytes' or 'Mixed'. The first two mean what
+    # they always did; 'Mixed' is the state that used to be silently collapsed
+    # onto whichever counter happened to have one populated mailbox behind it.
+    $trendMetric = 'PostingListBytes'
+    if ($payloadRows.Count -gt 0 -and $postingRows.Count -eq 0) { $trendMetric = 'IndexPayloadBytes' }
+    elseif ($payloadRows.Count -gt 0)                           { $trendMetric = 'Mixed' }
 
-    if ($postingListPopulated -eq 0 -and $payloadPopulated -gt 0) {
-        $trendMetric       = 'IndexPayloadBytes'
-        $projectionApplies = $false
-
+    if ($payloadRows.Count -gt 0 -and $postingRows.Count -eq 0) {
         Write-RunLog ('BigFunnelPostingListTableTotalSize is 0 B for all {0} mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering below is still meaningful - the mailbox at the top is genuinely the one growing fastest. No date is given: the warning and critical thresholds are sizes of the posting list table, they have never been validated against this counter, and a projection towards them would be arithmetic on two unrelated quantities. Use the ranking to decide what to look at first, and establish a threshold for this counter on your own estate before treating any of it as a deadline.' -f $results.Count) 'WARN'
+    }
+    elseif ($payloadRows.Count -gt 0) {
+        # Deliberately does not restate the 0 B condition: the NotPopulated
+        # warning above already announces that, once, and an operator scanning
+        # the log for it should find one line, not two. This line answers the
+        # next question instead - what the run did about it.
+        Write-RunLog ('Growth on this run is split across two counters. {0} of {1} mailbox(es) in scope carry no posting list table reading and are trended on IndexPayloadBytes; the remaining {2} are trended on BigFunnelPostingListTableTotalSize. Both reports below are real: the posting list rows carry a projected date, and the IndexPayloadBytes rows carry a ranking and no date, for the reason given above. Do not read a short Emerging list as the whole answer on a run like this - it can only ever name mailboxes the thresholds can see.' -f
+            $payloadRows.Count, $results.Count, $postingRows.Count) 'WARN'
     }
 
     # The warning threshold is only useful if it buys lead time, and lead time
@@ -1227,16 +1305,37 @@ try {
         }
 
         if ($baseline.AgeHours -gt 0.01) {
-            $trended   = 0
-            $noReading = 0
+            $trended    = 0
+            $noBaseline = 0
+            # Counted per counter, not in total. A run on a mixed estate can be
+            # missing a previous reading on one counter and not the other, and a
+            # single number cannot say which - it would name whichever metric the
+            # run happened to be labelled with.
+            $noReading = @{ 'PostingListBytes' = 0; 'IndexPayloadBytes' = 0 }
             $tolerance = 1MB
 
             foreach ($row in $results) {
                 $guid = [string]$row.MailboxGuid
                 if ([string]::IsNullOrWhiteSpace($guid)) { continue }
-                if (-not $baseline.Sizes.ContainsKey($guid)) { continue }
 
-                if ($trendMetric -eq 'IndexPayloadBytes') {
+                # Not in the baseline at all: created since it was written, or on
+                # a database that failed to collect on that earlier run. Counted
+                # rather than dropped in silence, because "nothing is trending"
+                # and "the join could not see this part of the estate" produce an
+                # identical CSV, and only one of them is an answer. Measured on a
+                # lab run that evaluated 47 mailboxes, baselined 45, and said
+                # nothing at all about the other two.
+                if (-not $baseline.Sizes.ContainsKey($guid)) { $noBaseline++; continue }
+
+                # Per mailbox. A row whose posting list table is populated is
+                # trended on it and earns a projected date; a row still reading
+                # 0 B is trended on the payload and earns a rank instead. Both
+                # happen in the same run on a mixed estate, which is what an
+                # estate mid-transition actually looks like.
+                $rowMetric   = Get-TrendMetricForRow -Row $row
+                $rowProjects = ($rowMetric -eq 'PostingListBytes')
+
+                if ($rowMetric -eq 'IndexPayloadBytes') {
                     $prev    = $baseline.Sizes[$guid].Payload
                     $current = $row.IndexPayloadBytes
                 }
@@ -1251,7 +1350,7 @@ try {
                 # zero, because a missing previous value coerced to 0 turns the
                 # whole of the current size into one window's growth and parks
                 # that mailbox at the top of the ranking for no reason.
-                if ($null -eq $prev -or $null -eq $current) { $noReading++; continue }
+                if ($null -eq $prev -or $null -eq $current) { $noReading[$rowMetric]++; continue }
 
                 $delta  = [int64]$current - [int64]$prev
                 $perDay = ($delta / $baseline.AgeHours) * 24.0
@@ -1260,7 +1359,7 @@ try {
                 $row.DeltaBytes       = $delta
                 $row.GrowthGBPerDay   = [math]::Round(($perDay / 1GB), 4)
                 $row.TrendWindowHours = $baseline.AgeHours
-                $row.TrendMetric      = $trendMetric
+                $row.TrendMetric      = $rowMetric
                 $row.MeasuredGB       = [math]::Round(([int64]$current / 1GB), 3)
 
                 # A direction, with tolerance so ordinary churn does not read as
@@ -1271,12 +1370,12 @@ try {
                 elseif ($delta -lt (0 - $tolerance)) { $row.Trend = 'Shrinking' }
                 else                                 { $row.Trend = 'Flat' }
 
-                # Skipped entirely when the rate came from a counter the
+                # Skipped entirely when this row's rate came from a counter the
                 # thresholds do not describe. Leaving DaysToCritical empty there
                 # is the point: an empty column is read as "no projection", where
                 # a number computed against the wrong threshold is read as a
                 # deadline.
-                if ($projectionApplies) {
+                if ($rowProjects) {
                     if ($perDay -gt 0 -and [int64]$current -lt $criticalBytes) {
                         $row.DaysToCritical = [math]::Round((($criticalBytes - [int64]$current) / $perDay), 2)
                     }
@@ -1288,9 +1387,15 @@ try {
             }
             $trendComputed = $true
             Write-RunLog ('Growth rate computed for {0} mailbox(es) on {1}.' -f $trended, $trendMetric)
-            if ($noReading -gt 0) {
-                Write-RunLog ('{0} mailbox(es) were in the baseline but carried no {1} reading there, so no rate could be derived for them. A baseline written by an earlier version of this script does not contain that column; the next run will not have this gap.' -f
-                    $noReading, $trendMetric) 'WARN'
+            if ($noBaseline -gt 0) {
+                Write-RunLog ('{0} of {1} mailbox(es) evaluated were not in the baseline and so have no projection yet. A mailbox created since the baseline was written, or one on a database that failed to collect on that run, has no earlier reading to difference against. A large count here means the ranking covers materially less of the estate than the row count suggests.' -f
+                    $noBaseline, $results.Count)
+            }
+            foreach ($m in @('PostingListBytes', 'IndexPayloadBytes')) {
+                if ($noReading[$m] -gt 0) {
+                    Write-RunLog ('{0} mailbox(es) were in the baseline but carried no {1} reading there, so no rate could be derived for them. A baseline written by an earlier version of this script does not contain that column; the next run will not have this gap.' -f
+                        $noReading[$m], $m) 'WARN'
+                }
             }
         }
         else {
@@ -1328,12 +1433,21 @@ try {
     # so sorting the export by it leaves each status group in collection order -
     # and this is the file the log points at for the detail it had to truncate.
     # Ordering it by the counter that actually varies is what makes that pointer
-    # worth following.
-    $sizeKey = if ($trendMetric -eq 'IndexPayloadBytes') { 'IndexPayloadBytes' } else { 'PostingListBytes' }
+    # worth following. Read off each row rather than fixed for the run, for the
+    # same reason the metric is: on a mixed estate a single key leaves every row
+    # the key reads zero for sitting in collection order, which is the state this
+    # sort exists to avoid.
+    $sizeOfRow = {
+        param($Row)
+        $name = Get-TrendMetricForRow -Row $Row
+        $v    = ConvertTo-NullableInt64 (Get-SafeProperty -InputObject $Row -Name $name)
+        if ($null -eq $v) { return [int64]0 }
+        return [int64]$v
+    }
 
     $sorted = @($results | Sort-Object `
         @{ Expression = { $rank[[string]$_.Status] }; Descending = $false }, `
-        @{ Expression = { [int64]$_.$sizeKey }; Descending = $true })
+        @{ Expression = { & $sizeOfRow $_ }; Descending = $true })
 
     try {
         $sorted | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
@@ -1356,8 +1470,8 @@ try {
     # Denominator for the escalation below. Comparing against every collected
     # row looks right and is not: a real server carries health, arbitration,
     # system and archive mailboxes that hold no index at all, so they can never
-    # be NotPopulated and they hold the ratio permanently below 1. Measured on
-    # w25-ex01, 44 of 66 rows were in that category, which would have pinned a
+    # be NotPopulated and they hold the ratio permanently below 1. Measured in
+    # the lab, 44 of 66 rows were in that category, which would have pinned a
     # total outage at WARN forever. Count only mailboxes that have an index,
     # because those are the only ones the posting list table could describe.
     $indexedPop = @($sorted | Where-Object {
@@ -1422,9 +1536,17 @@ try {
 
     # Emerging risk: still below the warning line, but trending into critical
     # inside the lead-time window the thresholds are meant to provide.
+    #
+    # Sorted by how soon each mailbox crosses, not by how large it is now. It
+    # used to inherit the export's order - status rank, then size descending -
+    # which ranks by the wrong quantity for this list: a mailbox two days out is
+    # more urgent than a larger one twelve days out, and this is the one report
+    # whose entire purpose is that ordering. The -MaxAlertDetail cap made it
+    # worse than cosmetic, because the entry truncated off the bottom was the
+    # soonest to cross rather than the least interesting.
     $emerging = @($sorted | Where-Object {
         $_.Status -eq 'Normal' -and $null -ne $_.DaysToCritical -and $_.DaysToCritical -le 3
-    })
+    } | Sort-Object @{ Expression = { [double]$_.DaysToCritical }; Descending = $false })
     $shown = 0
     foreach ($r in $emerging) {
         if ($shown -ge $MaxAlertDetail) { break }
@@ -1433,48 +1555,80 @@ try {
             $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $r.DaysToCritical) 'WARN'
     }
     if ($emerging.Count -gt $shown) {
-        Write-RunLog ('...and {0} further emerging mailbox(es) not listed.' -f ($emerging.Count - $shown)) 'WARN'
+        Write-RunLog ('...and {0} further emerging mailbox(es) not listed, all of them further out than the ones above.' -f ($emerging.Count - $shown)) 'WARN'
+    }
+
+    # Exit 6, not 1. Exit 1 means a mailbox is at or above a threshold now; this
+    # means one is still below it and projected to cross inside the lead-time
+    # window. Those want different responses - the first is work today, the
+    # second is work this weekend - and collapsing them onto one code discards
+    # the only thing this report exists to produce.
+    #
+    # Before this, emerging risk reached the exit code by no path at all: a run
+    # could log two mailboxes projected critical in under two days, with
+    # -ExitNonZeroOnAlert passed, and still exit 0. A scheduled task alerting on
+    # the exit code learned nothing about the lead time the script had just
+    # measured. Gated on the switch like 1 and 5, and it cannot displace either,
+    # because it is only reached when the exit code is still 0.
+    if ($emerging.Count -gt 0 -and $ExitNonZeroOnAlert -and $exitCode -eq 0) {
+        $exitCode = 6
     }
 
     # The same question the emerging report answers - of everything in scope,
     # which mailbox is next - asked where no date can be put on the answer.
     # Emerging is keyed on DaysToCritical, which is deliberately left empty when
-    # the rate came from a counter the thresholds do not describe, so on a 0 B
-    # build that report is silent no matter how fast the index is growing. This
-    # ranks instead: fastest first, which is the order in which these mailboxes
-    # become someone's problem even though the run cannot say when.
+    # the rate came from a counter the thresholds do not describe, so those rows
+    # are silent there no matter how fast the index is growing. This ranks them
+    # instead: fastest first, which is the order in which they become someone's
+    # problem even though the run cannot say when.
+    #
+    # Selected on the row's own metric rather than on a run-level flag. Under the
+    # old gate this list appeared only when the entire scope was unreadable, so
+    # on a mixed estate the very mailboxes that had no projected date also had no
+    # ranking - they fell out of both reports at once.
     #
     # Filtered on Trend rather than on the raw rate, so the same 1 MB tolerance
     # that keeps ordinary churn out of the trend column keeps it out of this list
-    # too. Gated on $trendComputed as well as on the metric, so a run that never
-    # derived a rate stays silent here rather than reporting that nothing grew.
+    # too. Gated on $trendComputed, so a run that never derived a rate stays
+    # silent here rather than reporting that nothing grew.
     $growing = @()
-    if (-not $projectionApplies -and $trendComputed) {
+    if ($trendComputed) {
         $growing = @($sorted | Where-Object {
+            [string]$_.TrendMetric -eq 'IndexPayloadBytes' -and
             [string]$_.Trend -eq 'Growing' -and
             $null -ne $_.GrowthGBPerDay -and [double]$_.GrowthGBPerDay -gt 0
         } | Sort-Object @{ Expression = { [double]$_.GrowthGBPerDay } } -Descending)
 
         if ($growing.Count -gt 0) {
-            Write-RunLog ('{0} mailbox(es) grew over the {1}-hour window, measured on {2}. They are ranked fastest first below. No projected date is given, for the reason logged above; treat this as the order to work through, not a countdown.' -f
-                $growing.Count, $baselineHours, $trendMetric) 'WARN'
+            Write-RunLog ('{0} mailbox(es) grew over the {1}-hour window, measured on IndexPayloadBytes. They are ranked fastest first below. No projected date is given, for the reason logged above; treat this as the order to work through, not a countdown.' -f
+                $growing.Count, $baselineHours) 'WARN'
 
             $shown = 0
             foreach ($r in $growing) {
                 if ($shown -ge $MaxAlertDetail) { break }
                 $shown++
-                Write-RunLog ('Fastest growing #{0}: [{1}] {2} on [{3}] at {4} GB, growing {5} GB/day on {6}.' -f
-                    $shown, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay, $trendMetric) 'WARN'
+                Write-RunLog ('Fastest growing #{0}: [{1}] {2} on [{3}] at {4} GB, growing {5} GB/day on IndexPayloadBytes.' -f
+                    $shown, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay) 'WARN'
             }
             if ($growing.Count -gt $shown) {
                 Write-RunLog ('...and {0} further growing mailbox(es) not listed. Full detail is in [{1}].' -f
                     ($growing.Count - $shown), $csvPath) 'WARN'
             }
         }
-        else {
-            Write-RunLog ('No mailbox grew measurably on {0} over the {1}-hour window.' -f $trendMetric, $baselineHours)
+        elseif ($payloadRows.Count -gt 0) {
+            Write-RunLog ('No mailbox grew measurably on IndexPayloadBytes over the {0}-hour window.' -f $baselineHours)
         }
     }
+
+    # Every row trending upward, whichever counter its rate came from. The ranked
+    # list above covers only the IndexPayloadBytes rows, because those are the
+    # ones that get no date and so need an ordering in its place - but a summary
+    # field named Growing that counts only those reports 0 on a run whose own CSV
+    # plainly shows rows reading Trend=Growing. Measured on a live run: two
+    # mailboxes at Trend=Growing, "Growing": 0 in the summary beside them. The
+    # count and the ranked list answer different questions, so they are no longer
+    # the same number.
+    $growingAll = @($sorted | Where-Object { [string]$_.Trend -eq 'Growing' })
 
     # The runbook's post-remediation cadence asks operators to confirm the
     # table does not rebound. That question needs a shrink signal, not just a
@@ -1519,9 +1673,20 @@ try {
         $exitCode = 5
     }
 
-    if (Test-Path -LiteralPath $csvPath) {
+    # Guarded on the run having produced rows. A run that collected nothing -
+    # every database failed, or the scope matched no mailbox - still reaches here
+    # with a header-only CSV, and copying that over latest.csv destroys the last
+    # good detail at the exact moment someone goes looking for it. Measured: a
+    # 15-row, 6488-byte latest.csv replaced by a 3-byte file by a run that
+    # reported exit 2 and was therefore already known to have failed. The failure
+    # is signalled by the exit code and the summary; it does not also need to
+    # take the previous answer with it.
+    if ($sorted.Count -gt 0 -and (Test-Path -LiteralPath $csvPath)) {
         try { Copy-Item -LiteralPath $csvPath -Destination $latestCsv -Force -ErrorAction Stop }
         catch { Write-RunLog ('Could not refresh [{0}]: {1}' -f $latestCsv, $_.Exception.Message) 'WARN' }
+    }
+    elseif ($sorted.Count -eq 0 -and (Test-Path -LiteralPath $latestCsv)) {
+        Write-RunLog ('This run produced no rows, so [{0}] has been left untouched and still holds the detail from the last run that collected something. Read it together with this run''s exit code, not instead of it.' -f $latestCsv) 'WARN'
     }
 
     Write-RunSummary -Path $latestJson -Values @{
@@ -1559,7 +1724,13 @@ try {
         TrendBaseline        = $baselineName
         TrendWindowHours     = $baselineHours
         TrendMetric          = $trendMetric
-        Growing              = $growing.Count
+        # Rows trended on the fallback counter. On a 'Mixed' run this is the size
+        # of the population the Emerging list structurally cannot see, so a
+        # consumer reading Emerging as the whole answer can tell how much of the
+        # estate that answer leaves out.
+        TrendedOnPayload     = $payloadRows.Count
+        Growing              = $growingAll.Count
+        GrowingRanked        = $growing.Count
         DetailCsv            = $csvPath
         ExitCode             = $exitCode
     }

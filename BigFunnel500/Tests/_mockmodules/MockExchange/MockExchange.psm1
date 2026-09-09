@@ -46,8 +46,8 @@ function Get-MailboxDatabase {
     [CmdletBinding()]
     param([Parameter(Position = 0)][string]$Identity, [switch]$Status)
 
-    $names = @('CLAB-DAGA-DB01', 'CLAB-DAGA-DB02', 'CLAB-DAGA-DB03')
-    $owner = if ($env:MOCK_ACTIVE_ELSEWHERE -eq '1') { 'w25-ex99.example.com' } else { $env:COMPUTERNAME + '.example.com' }
+    $names = @('MDB01', 'MDB02', 'MDB03')
+    $owner = if ($env:MOCK_ACTIVE_ELSEWHERE -eq '1') { 'EXCH-99.example.com' } else { $env:COMPUTERNAME + '.example.com' }
 
     if ($Identity) {
         if ($names -notcontains $Identity) {
@@ -68,8 +68,14 @@ function Get-MailboxStatistics {
     param([string]$Database, [string]$Identity, [string]$Server)
 
     if ($env:MOCK_FAIL_DB -and $Database -eq $env:MOCK_FAIL_DB) {
-        throw "The Microsoft Exchange Information Store service on server 'w25-ex01.example.com' is inaccessible."
+        throw "The Microsoft Exchange Information Store service on server 'EXCH-01.example.com' is inaccessible."
     }
+
+    # A database that is mounted and reachable but holds no mailboxes: newly
+    # created, or one every mailbox has already been moved off. The collection
+    # succeeds and returns nothing, which is a different outcome from a database
+    # that failed, and the only way to reach the export stage with zero rows.
+    if ($env:MOCK_EMPTY -eq '1') { return }
 
     # Simulates a slow store so the run-budget gate has something to trip on.
     if ($env:MOCK_SLOW_MS) { Start-Sleep -Milliseconds ([int]$env:MOCK_SLOW_MS) }
@@ -198,8 +204,8 @@ function Get-MailboxStatistics {
         [pscustomobject]$row
     }
 
-    # Health, arbitration, system and archive mailboxes. On w25-ex01 these were
-    # 44 of 66 rows: posting list 0 B and no index at all, so they can never be
+    # Health, arbitration, system and archive mailboxes. On the lab server these
+    # were 44 of 66 rows: posting list 0 B and no index at all, so they can never be
     # NotPopulated. They exist here because the escalation from WARN to ERROR
     # divides by the indexed population, and a mock with no unindexed rows
     # cannot tell a correct denominator from a wrong one.

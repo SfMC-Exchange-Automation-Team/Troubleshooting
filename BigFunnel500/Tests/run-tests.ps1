@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $scratch)) { New-Item -ItemType Directory -Path
 $pass    = 0
 $fail    = 0
 
-if ([string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) { $env:COMPUTERNAME = 'W25-EX01' }
+if ([string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) { $env:COMPUTERNAME = 'EXCH-01' }
 
 # Command auto-loading resolves Get-MailboxDatabase and Get-MailboxStatistics
 # from the mock module, so the monitor runs as the top-level -File script and
@@ -168,12 +168,12 @@ Assert 'aborted summary keeps the same field set' `
 Write-Host ''
 Write-Host 'T4  one database unreachable' -ForegroundColor Cyan
 $d4 = Reset-Dir '_t4'
-$rc = Invoke-Monitor -OutputPath $d4 -WithEnv @{ MOCK_FAIL_DB = 'CLAB-DAGA-DB02' }
+$rc = Invoke-Monitor -OutputPath $d4 -WithEnv @{ MOCK_FAIL_DB = 'MDB02' }
 Assert 'exits 2 for partial results' ($rc -eq 2) ('got exit ' + $rc)
 $rows4 = Get-Csv $d4
 Assert 'surviving databases still collected' ($rows4.Count -eq 10) ('got ' + $rows4.Count + ' rows')
 $log4 = Get-Log $d4
-Assert 'names the database that failed' (@($log4 | Where-Object { $_ -match 'Not collected: CLAB-DAGA-DB02' }).Count -eq 1)
+Assert 'names the database that failed' (@($log4 | Where-Object { $_ -match 'Not collected: MDB02' }).Count -eq 1)
 $sum4 = Get-Summary $d4
 Assert 'summary distinguishes partial from clean' ($null -ne $sum4 -and $sum4.Completed -eq $true -and $sum4.Status -eq 'Partial') `
     ('completed=' + $(if ($sum4) { $sum4.Completed } else { 'n/a' }) + ' status=' + $(if ($sum4) { $sum4.Status } else { 'n/a' }))
@@ -412,7 +412,7 @@ $rc = Invoke-Monitor -OutputPath $d17 -Extra '-MaxRunMinutes 0.05' -WithEnv @{ M
 Assert 'exits 2 for partial results' ($rc -eq 2) ('got exit ' + $rc)
 $log17 = Get-Log $d17
 Assert 'names the database it did not start' `
-    (@($log17 | Where-Object { $_ -match 'Run budget of 0\.05 minute\(s\) is spent; database \[CLAB-DAGA-DB03\]' }).Count -eq 1) `
+    (@($log17 | Where-Object { $_ -match 'Run budget of 0\.05 minute\(s\) is spent; database \[MDB03\]' }).Count -eq 1) `
     (($log17 | Where-Object { $_ -match 'Run budget' }) -join ' | ')
 
 # Which database the budget lands on is a race between a 2-second mock delay
@@ -431,7 +431,7 @@ Assert 'databases collected before the budget ran out are kept' `
     ('got ' + (Get-Csv $d17).Count + ' rows from ' + $collected17 + ' database(s)')
 $sum17 = Get-Summary $d17
 Assert 'summary flags the overrun for the operator' ($null -ne $sum17 -and $sum17.RunBudgetExceeded -eq $true)
-Assert 'skipped database reported as not collected' ($null -ne $sum17 -and $sum17.FailedDatabases -match 'CLAB-DAGA-DB03')
+Assert 'skipped database reported as not collected' ($null -ne $sum17 -and $sum17.FailedDatabases -match 'MDB03')
 
 Write-Host ''
 Write-Host 'T18  a 0 B posting list table on an indexed mailbox is not Normal' -ForegroundColor Cyan
@@ -510,11 +510,11 @@ Assert 'and nothing is reported as a metric outage' ($null -ne $sum20 -and $sum2
 
 Write-Host ''
 Write-Host 'T21  unindexed system mailboxes do not mask a total outage' -ForegroundColor Cyan
-# Found by running v1.3.0 against the lab, not by the mock. On w25-ex01, 44 of
-# 66 rows were health, arbitration, system and archive mailboxes with no index
-# at all. Escalating on notPopulated -eq totalRows therefore never fired, and a
-# server where every indexed mailbox was affected reported WARN. The denominator
-# has to be the indexed population.
+# Found by running v1.3.0 against the lab, not by the mock. On the lab server,
+# 44 of 66 rows were health, arbitration, system and archive mailboxes with no
+# index at all. Escalating on notPopulated -eq totalRows therefore never fired,
+# and a server where every indexed mailbox was affected reported WARN. The
+# denominator has to be the indexed population.
 $d21 = Reset-Dir '_t21'
 $rc = Invoke-Monitor -OutputPath $d21 -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_SYSTEM_MBX = '15' }
 Assert 'run still succeeds' ($rc -eq 0) ('got exit ' + $rc)
@@ -780,12 +780,257 @@ Assert 'an at-risk run still exits 1, not 5' ($rc -eq 1) ('got exit ' + $rc)
 # collection is not a statement about the estate.
 $d28e = Reset-Dir '_t28e'
 $rc = Invoke-Monitor -OutputPath $d28e -Extra '-ExitNonZeroOnAlert' `
-      -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_FAIL_DB = 'CLAB-DAGA-DB02' }
+      -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_FAIL_DB = 'MDB02' }
 Assert 'a partial collection outranks the outage verdict' ($rc -eq 2) ('got exit ' + $rc)
 $sum28e = Get-Summary $d28e
 Assert 'and the summary says Partial, not MetricUnavailable' `
     ($null -ne $sum28e -and $sum28e.Status -eq 'Partial') `
     ('got [' + $(if ($sum28e) { $sum28e.Status } else { 'n/a' }) + ']')
+
+Write-Host ''
+Write-Host 'T29  on a mixed estate each mailbox is trended on its own counter' -ForegroundColor Cyan
+# The counter to trend on was chosen once for the whole run: if any mailbox
+# anywhere had a populated posting list table, every mailbox was measured on it.
+# On an estate mid-transition that is the wrong shape. Two mailboxes crossing the
+# allocation threshold moved the rest - still reading 0 B, and unchanged in every
+# other respect - onto a counter that is a constant zero for them, and the
+# ranking that exists to name the next mailbox went blind for most of the
+# population. Whether the posting list table is readable is a property of a
+# mailbox, so it is read off one.
+$d29 = Reset-Dir '_t29'
+$rc = Invoke-Monitor -OutputPath $d29 -WithEnv @{ MOCK_NOTPOPULATED = 'partial' }
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d29 -Hours 24
+$rc = Invoke-Monitor -OutputPath $d29 -WithEnv @{ MOCK_NOTPOPULATED = 'partial'; MOCK_GROWTH = '1.5' }
+Assert 'the run itself still succeeds' ($rc -eq 0) ('got exit ' + $rc)
+
+$log29  = Get-Log $d29
+$rows29 = Get-Csv $d29
+$sum29  = Get-Summary $d29
+$pay29  = @($rows29 | Where-Object { $_.TrendMetric -eq 'IndexPayloadBytes' })
+$plt29  = @($rows29 | Where-Object { $_.TrendMetric -eq 'PostingListBytes' })
+
+Assert 'the run reports both counters rather than picking one' `
+    ($null -ne $sum29 -and $sum29.TrendMetric -eq 'Mixed') `
+    ('metric=' + $(if ($sum29) { $sum29.TrendMetric } else { 'n/a' }))
+Assert 'and says how much of the estate fell on the fallback counter' `
+    ($null -ne $sum29 -and $sum29.TrendedOnPayload -eq 9) `
+    ('got ' + $(if ($sum29) { $sum29.TrendedOnPayload } else { 'n/a' }))
+Assert 'the split is recorded per row, not per run' `
+    ($pay29.Count -eq 9 -and $plt29.Count -eq 6) `
+    ('payload=' + $pay29.Count + ' postinglist=' + $plt29.Count)
+
+# The regression this closes. Trended on the posting list table these nine read
+# 0 B in both runs, so every delta was zero and the run found nothing to say
+# about them.
+Assert 'the 0 B mailboxes produce a real rate again' `
+    (@($pay29 | Where-Object { $_.GrowthGBPerDay -ne '' -and [double]$_.GrowthGBPerDay -gt 0 }).Count -eq 6) `
+    ('got ' + @($pay29 | Where-Object { $_.GrowthGBPerDay -ne '' -and [double]$_.GrowthGBPerDay -gt 0 }).Count + ' rated rows')
+Assert 'without inheriting a projection the thresholds cannot make' `
+    (@($pay29 | Where-Object { $_.DaysToCritical -ne '' }).Count -eq 0) `
+    ('dated on ' + @($pay29 | Where-Object { $_.DaysToCritical -ne '' }).Count + ' rows')
+Assert 'while the readable mailboxes keep theirs' `
+    (@($plt29 | Where-Object { $_.DaysToCritical -ne '' }).Count -eq 6) `
+    ('dated on ' + @($plt29 | Where-Object { $_.DaysToCritical -ne '' }).Count + ' of ' + $plt29.Count)
+
+# Growing counted only the ranked subset, so a mixed run reported Growing 0 with
+# growing mailboxes plainly in its own CSV.
+Assert 'Growing counts every growing mailbox, on either counter' `
+    ($null -ne $sum29 -and $sum29.Growing -eq 12 -and $sum29.GrowingRanked -eq 6) `
+    ('growing=' + $(if ($sum29) { $sum29.Growing } else { 'n/a' }) +
+     ' ranked=' + $(if ($sum29) { $sum29.GrowingRanked } else { 'n/a' }))
+Assert 'and the two-counter run is announced once' `
+    (@($log29 | Where-Object { $_ -match 'Growth on this run is split across two counters' }).Count -eq 1) `
+    (($log29 | Where-Object { $_ -match 'split across' }) -join ' | ')
+
+Write-Host ''
+Write-Host 'T30  a mailbox projected to cross gets its own exit code' -ForegroundColor Cyan
+# Emerging reached the log and the summary but never the exit code, so a
+# scheduled task keyed on the exit code - which is the documented way to run this
+# - saw exit 0 on a run whose own output named two mailboxes days from critical.
+# Exit 6 rather than 1, because "at or above a threshold now" and "still below it
+# and projected to cross" want different responses, and exit 1's meaning is a
+# contract with everything already consuming it.
+$d30 = Reset-Dir '_t30'
+$rc = Invoke-Monitor -OutputPath $d30 -Extra '-WarningGB 3.5 -CriticalGB 4.0'
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d30 -Hours 24
+$rc = Invoke-Monitor -OutputPath $d30 -Extra '-WarningGB 3.5 -CriticalGB 4.0 -ExitNonZeroOnAlert' `
+      -WithEnv @{ MOCK_GROWTH = '1.25' }
+Assert 'an emerging-only run exits 6' ($rc -eq 6) ('got exit ' + $rc)
+$sum30 = Get-Summary $d30
+Assert 'and it really is emerging-only' `
+    ($null -ne $sum30 -and $sum30.Critical -eq 0 -and $sum30.Warning -eq 0 -and $sum30.Emerging -eq 3) `
+    ('crit=' + $(if ($sum30) { $sum30.Critical } else { 'n/a' }) +
+     ' warn=' + $(if ($sum30) { $sum30.Warning } else { 'n/a' }) +
+     ' emerging=' + $(if ($sum30) { $sum30.Emerging } else { 'n/a' }))
+Assert 'the new code reaches the summary too' `
+    ($null -ne $sum30 -and $sum30.ExitCode -eq 6) `
+    ('got ' + $(if ($sum30) { $sum30.ExitCode } else { 'n/a' }))
+Assert 'nothing has breached yet, so the run is still OK' `
+    ($null -ne $sum30 -and $sum30.Status -eq 'OK') `
+    ('got [' + $(if ($sum30) { $sum30.Status } else { 'n/a' }) + ']')
+
+# Default behaviour is a contract: the switch is what turns findings into exit
+# codes, and a run without it still exits 0.
+$d30b = Reset-Dir '_t30b'
+$rc = Invoke-Monitor -OutputPath $d30b -Extra '-WarningGB 3.5 -CriticalGB 4.0'
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d30b -Hours 24
+$rc = Invoke-Monitor -OutputPath $d30b -Extra '-WarningGB 3.5 -CriticalGB 4.0' -WithEnv @{ MOCK_GROWTH = '1.25' }
+Assert 'without the switch the exit code is unchanged' ($rc -eq 0) ('got exit ' + $rc)
+
+# A breach outranks a projection. Exit 6 must not displace exit 1 on a run that
+# has both, or adding lead time would cost an operator the alert they already
+# acted on.
+$d30c = Reset-Dir '_t30c'
+$rc = Invoke-Monitor -OutputPath $d30c
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d30c -Hours 24
+$rc = Invoke-Monitor -OutputPath $d30c -Extra '-ExitNonZeroOnAlert' -WithEnv @{ MOCK_GROWTH = '1.25' }
+$sum30c = Get-Summary $d30c
+Assert 'a run with both at-risk and emerging exits 1, not 6' ($rc -eq 1) ('got exit ' + $rc)
+Assert 'and it genuinely had both' `
+    ($null -ne $sum30c -and ($sum30c.Critical + $sum30c.Warning) -gt 0 -and $sum30c.Emerging -gt 0) `
+    ('atrisk=' + $(if ($sum30c) { $sum30c.Critical + $sum30c.Warning } else { 'n/a' }) +
+     ' emerging=' + $(if ($sum30c) { $sum30c.Emerging } else { 'n/a' }))
+
+Write-Host ''
+Write-Host 'T31  the emerging list is ordered by how soon, not by how big' -ForegroundColor Cyan
+# The list was filtered out of a set sorted by status and then by size, and never
+# re-sorted, so it was published in size order under a heading that promises
+# urgency. -MaxAlertDetail made that worse than cosmetic: the entry truncated off
+# the bottom was the soonest to cross rather than the least interesting.
+#
+# The mock scales growth with size, so the biggest mailbox is also the fastest
+# and the two orderings agree. The baseline is rewritten to break that tie the
+# way a real estate does - a small mailbox filling quickly, a large one nearly
+# static - because a test that cannot tell the two orderings apart is not a test
+# of the ordering.
+$d31 = Reset-Dir '_t31'
+$rc = Invoke-Monitor -OutputPath $d31 -Extra '-WarningGB 3.0 -CriticalGB 3.5'
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d31 -Hours 24
+$base31 = @(Get-ChildItem -LiteralPath $d31 -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows31 = @(Import-Csv -LiteralPath $base31.FullName)
+foreach ($r in $rows31) {
+    switch ($r.DisplayName) {
+        # 1.20 GB now, so 1.00 GB/day: 2.30 days to 3.5 GB.
+        'Emerging Mbx' { $r.PostingListBytes = [string][int64](0.20 * 1GB) }
+        # 2.40 GB now, so 0.40 GB/day: 2.75 days. Twice the size, further out.
+        'Ana Ilic'     { $r.PostingListBytes = [string][int64](2.00 * 1GB) }
+        # 1.80 GB now, so 0.30 GB/day: 5.67 days. Outside the window, and the
+        # proof that the three-day filter still applies to the re-sorted list.
+        'Bo Persson'   { $r.PostingListBytes = [string][int64](1.50 * 1GB) }
+    }
+}
+$rows31 | Export-Csv -LiteralPath $base31.FullName -NoTypeInformation -Encoding UTF8
+
+$rc = Invoke-Monitor -OutputPath $d31 -Extra '-WarningGB 3.0 -CriticalGB 3.5'
+Assert 'the run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$log31 = Get-Log $d31
+$em31  = @($log31 | Where-Object { $_ -match 'Emerging: \[' })
+Assert 'both mailboxes inside the window are listed' ($em31.Count -eq 6) ('got ' + $em31.Count + ' lines')
+Assert 'and the one outside it is not' `
+    (@($em31 | Where-Object { $_ -match 'Bo Persson' }).Count -eq 0) `
+    (($em31 | Where-Object { $_ -match 'Bo Persson' }) -join ' | ')
+
+$days31 = @($em31 | ForEach-Object { if ($_ -match 'projected critical in ([0-9.]+) day') { [double]$matches[1] } })
+$asc31  = $true
+for ($i = 1; $i -lt $days31.Count; $i++) { if ($days31[$i] -lt $days31[$i - 1]) { $asc31 = $false } }
+Assert 'the list runs soonest first' ($asc31 -and $days31.Count -eq 6) (($days31 -join ' -> '))
+Assert 'which is not the same as biggest first' `
+    ($em31.Count -gt 0 -and $em31[0] -match 'Emerging Mbx') `
+    (($em31 | Select-Object -First 1) -join '')
+
+# The cap keeps the head of the list rather than an arbitrary slice of it.
+$d31b = Reset-Dir '_t31b'
+$rc = Invoke-Monitor -OutputPath $d31b -Extra '-WarningGB 3.0 -CriticalGB 3.5'
+$null = Set-RunAge -Dir $d31b -Hours 24
+$base31b = @(Get-ChildItem -LiteralPath $d31b -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows31b = @(Import-Csv -LiteralPath $base31b.FullName)
+foreach ($r in $rows31b) {
+    switch ($r.DisplayName) {
+        'Emerging Mbx' { $r.PostingListBytes = [string][int64](0.20 * 1GB) }
+        'Ana Ilic'     { $r.PostingListBytes = [string][int64](2.00 * 1GB) }
+        'Bo Persson'   { $r.PostingListBytes = [string][int64](1.50 * 1GB) }
+    }
+}
+$rows31b | Export-Csv -LiteralPath $base31b.FullName -NoTypeInformation -Encoding UTF8
+$rc = Invoke-Monitor -OutputPath $d31b -Extra '-WarningGB 3.0 -CriticalGB 3.5 -MaxAlertDetail 1'
+Assert 'a truncated list keeps the soonest, not the largest' `
+    (@(Get-Log $d31b | Where-Object { $_ -match 'Emerging: \[.*Emerging Mbx' }).Count -eq 1) `
+    ((Get-Log $d31b | Where-Object { $_ -match 'Emerging: \[' }) -join ' | ')
+Assert 'and says what it truncated' `
+    (@(Get-Log $d31b | Where-Object { $_ -match '5 further emerging mailbox\(es\) not listed' }).Count -eq 1) `
+    ((Get-Log $d31b | Where-Object { $_ -match 'further emerging' }) -join ' | ')
+
+Write-Host ''
+Write-Host 'T32  a run that collects nothing does not erase the last run that did' -ForegroundColor Cyan
+# latest.csv is the stable path a monitoring platform reads, and it was rewritten
+# unconditionally. A run that collected no rows therefore replaced a full detail
+# file with an empty one, so the failure took the previous answer with it - and
+# the previous answer was the only detail anyone had. Measured in the lab: 15
+# rows and 6488 bytes replaced by 3 bytes, on a run that reported exit 2 and was
+# already known to have failed. The exit code and the summary signal the failure;
+# they do not need the detail file to signal it as well.
+$d32 = Reset-Dir '_t32'
+$rc = Invoke-Monitor -OutputPath $d32
+Assert 'seed run collects rows' ($rc -eq 0) ('got exit ' + $rc)
+$latest32 = Join-Path $d32 'latest.csv'
+Assert 'and leaves them in latest.csv' `
+    ((Test-Path -LiteralPath $latest32) -and @(Import-Csv -LiteralPath $latest32).Count -eq 15) `
+    ('got ' + $(if (Test-Path -LiteralPath $latest32) { @(Import-Csv -LiteralPath $latest32).Count } else { 'no file' }) + ' rows')
+
+$rc = Invoke-Monitor -OutputPath $d32 -WithEnv @{ MOCK_EMPTY = '1' }
+$sum32 = Get-Summary $d32
+Assert 'the empty run really collected nothing' `
+    ($null -ne $sum32 -and $sum32.MailboxesEvaluated -eq 0) `
+    ('evaluated=' + $(if ($sum32) { $sum32.MailboxesEvaluated } else { 'n/a' }))
+Assert 'and latest.csv still holds the last real result' `
+    (@(Import-Csv -LiteralPath $latest32).Count -eq 15) `
+    ('got ' + @(Import-Csv -LiteralPath $latest32).Count + ' rows')
+Assert 'the run says so rather than leaving it to be discovered' `
+    (@(Get-Log $d32 | Where-Object { $_ -match 'has been left untouched' }).Count -eq 1) `
+    ((Get-Log $d32 | Where-Object { $_ -match 'latest.csv' }) -join ' | ')
+
+# The stale file must not be mistaken for this run's output. Its own timestamped
+# CSV is the empty one, and the summary still counts zero.
+Assert 'this run wrote its own empty detail file' `
+    ((Get-Csv $d32).Count -eq 0) `
+    ('got ' + (Get-Csv $d32).Count + ' rows')
+
+Write-Host ''
+Write-Host 'T33  a mailbox missing from the baseline is counted, not dropped' -ForegroundColor Cyan
+# The trend join skipped any mailbox with no baseline entry and said nothing
+# about how many it skipped, so "nothing is trending" and "the join could not see
+# this part of the estate" produced an identical CSV. Seen in the lab on a run
+# that evaluated 47 mailboxes, baselined 45, and never accounted for the other
+# two. The runbook has always described this line; the script never emitted it.
+$d33 = Reset-Dir '_t33'
+$rc = Invoke-Monitor -OutputPath $d33
+Assert 'seed run succeeds' ($rc -eq 0) ('got exit ' + $rc)
+$null = Set-RunAge -Dir $d33 -Hours 24
+$base33 = @(Get-ChildItem -LiteralPath $d33 -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows33 = @(Import-Csv -LiteralPath $base33.FullName)
+# Four mailboxes the baseline has never seen, which is what a database that
+# failed to collect on the previous run leaves behind.
+@($rows33 | Select-Object -Skip 4) | Export-Csv -LiteralPath $base33.FullName -NoTypeInformation -Encoding UTF8
+$rc = Invoke-Monitor -OutputPath $d33 -WithEnv @{ MOCK_GROWTH = '1.25' }
+Assert 'the run survives the shorter baseline' ($rc -eq 0) ('got exit ' + $rc)
+$log33 = Get-Log $d33
+Assert 'the gap is counted and explained' `
+    (@($log33 | Where-Object { $_ -match '4 of 15 mailbox\(es\) evaluated were not in the baseline' }).Count -eq 1) `
+    (($log33 | Where-Object { $_ -match 'baseline' }) -join ' | ')
+Assert 'and only the matched mailboxes carry a rate' `
+    (@(Get-Csv $d33 | Where-Object { $_.GrowthGBPerDay -ne '' }).Count -eq 11) `
+    ('got ' + @(Get-Csv $d33 | Where-Object { $_.GrowthGBPerDay -ne '' }).Count + ' rated rows')
+
+# It must stay quiet when there is no gap, or it becomes a line every run carries
+# and nobody reads.
+Assert 'a complete baseline produces no such line' `
+    (@(Get-Log $d25 | Where-Object { $_ -match 'were not in the baseline' }).Count -eq 0) `
+    ((Get-Log $d25 | Where-Object { $_ -match 'not in the baseline' }) -join ' | ')
 
 Write-Host ''
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
