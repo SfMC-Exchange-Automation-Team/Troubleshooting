@@ -102,7 +102,7 @@ On a lab running Exchange Server SE RTM (`15.2.2562.17`), a mailbox seeded with 
 
 The index was live: `Search-Mailbox -EstimateResultOnly` for a term appearing only in the seeded message bodies returned a hit. The zero was genuine rather than a formatting or parsing artifact - the returned object reported `IsUnlimited` as `False` and its `ToBytes()` method returned integer `0` - and it did not change over a four-minute observation window. `BigFunnelPostingListTableChunkCount` and `BigFunnelLargePostingListTableTotalSize` were not present on the statistics object at all. Roughly 4.1 MB of index payload existed and was accounted for in the POI and filter tables. Note that `BigFunnelPostingListTableAvailableSize` also read `0 B`, where the corresponding large-POI counter reported 736 KB of free space: the table is not an allocated structure that happens to be empty.
 
-Two explanations fit that result, and the lab could not separate them: the build may account for posting list data elsewhere regardless of content volume, or the counter may materialize only above an allocation threshold that 5.75 MB of content does not reach. Both carry the same consequence for monitoring, so read a zero against the corroborating counters rather than on its own:
+Two explanations fit that result, and the lab could not separate them: the build may account for posting list data elsewhere regardless of content volume, or the counter may materialize only above an allocation threshold that 5.699 MB of content does not reach. Both carry the same consequence for monitoring, so read a zero against the corroborating counters rather than on its own:
 
 | Reading | Interpretation | Action |
 |---|---|---|
@@ -359,7 +359,7 @@ Points that matter in production:
 - **Use a literal path, not an environment variable.** `%ProgramData%` expands differently depending on which shell creates the task and whether the service account's profile is loaded. A hardcoded path fails visibly at registration rather than silently at 02:05.
 - **The account needs Exchange RBAC, not just local administrator.** It must be able to run `Get-ExchangeServer`, `Get-MailboxDatabase`, and `Get-MailboxStatistics`. View-Only Organization Management is sufficient and is the least-privileged role that covers all three.
 - **Interpret the exit code.** See [Exit codes and the run summary](#exit-codes-and-the-run-summary) below. A run that is missing entirely leaves a log file with no `Monitor run complete` line; that is how a killed run is identified, since it has no exit code to report.
-- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4` and `5` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage or an uncollected database cannot be told apart from a threshold breach. This is measured rather than assumed: a script whose only statement is `exit 5` returns `5` under `-File` and `1` under `-Command`, with no errors involved. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
+- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed: a script whose only statement is `exit 5` returns `5` under `-File` and `1` under `-Command`, with no errors involved. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
 
 #### Exit codes and the run summary
 
@@ -373,10 +373,15 @@ The monitor reports through two independent channels: the process exit code, for
 | `3` | Fatal. Pre-flight failed, or no database was in scope | Yes, as a monitor fault, but see the DAG note below |
 | `4` | Another instance is already running | Yes, as a monitor fault |
 | `5` | Completed, but every indexed mailbox in scope reported the posting list table as `0 B`. `-ExitNonZeroOnAlert` only | Yes, as a monitoring gap |
+| `6` | Completed, nothing over threshold, but at least one mailbox is projected to cross the critical threshold within 3 days. `-ExitNonZeroOnAlert` only | Yes, as a mailbox finding, but not as urgent as `1` |
 
 Codes `2`, `3`, `4` and `5` all mean the monitor is not reporting on something, which is more urgent than a large posting list table because it is the state in which a large posting list table goes unseen. Route them differently from `1`.
 
-Exit codes `1` and `5` require `-ExitNonZeroOnAlert`. Without it the script returns `0` for anything short of a breakage and reports its findings through `latest-summary.json` only, so that "found problems" is never confused with "the monitor broke". Add the switch when a scheduler is the thing consuming the result.
+Exit code `6` is the opposite case: the monitor is working and has found something that has not happened yet. `1` is work today; `6` is work before the weekend. They are separated rather than collapsed because a queue that treats them alike either drags the projections forward into the breach queue or lets the breaches sink into the projection one. If your scheduler cannot route two codes, treat `6` as non-zero and read `latest-summary.json` for which of the two it was.
+
+Exit codes `1`, `5` and `6` require `-ExitNonZeroOnAlert`. Without it the script returns `0` for anything short of a breakage and reports its findings through `latest-summary.json` only, so that "found problems" is never confused with "the monitor broke". Add the switch when a scheduler is the thing consuming the result.
+
+A run cannot return both `1` and `6`. Where a breach and a projection coexist, `1` wins, because the mailbox already over the line is the more urgent of the two and its meaning must not change. Read `Emerging` in the summary to see whether an exit-`1` run also carried projections.
 
 `latest-summary.json` is written on every run that gets far enough to have an output directory, including runs that abort, and always carries the same field set. Its `Status` field on a run that completed is one of:
 
@@ -388,7 +393,9 @@ Exit codes `1` and `5` require `-ExitNonZeroOnAlert`. Without it the script retu
 
 Alert on `Completed = false` to catch every abort reason, and read `Status` for the reason itself. `Completed = false` does not cover `MetricUnavailable`, which is a completed run: see [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b). `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it.
 
-When `TrendMetric` in the summary is `IndexPayloadBytes` rather than `PostingListBytes`, alert on the `Growing` count rather than on `Emerging`. `Emerging` is keyed on a projected date, and no date is produced on that path, so it is empty by construction rather than because nothing is emerging. See [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b).
+`TrendMetric` in the summary names the counter growth was measured on. On a mixed estate it reads `Mixed`, meaning both counters were in use in the one run: the mailboxes whose posting list table is readable were trended on it and carry projected dates, and the mailboxes still reading `0 B` were trended on `IndexPayloadBytes` and carry a ranking instead. `TrendedOnPayload` gives the size of that second group.
+
+Read `Emerging` as the answer only when `TrendedOnPayload` is `0`. Above zero, `Emerging` is keyed on a projected date and no date is produced on the fallback path, so it can only ever name mailboxes from the group the thresholds can see - a short list there is not evidence that the rest of the estate is quiet. Alert on `Growing` alongside it, and on `GrowingRanked` for the part of the estate that has an order but no dates. See [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b).
 
 #### Which DAG node to schedule on
 
@@ -411,24 +418,20 @@ The script answers that question by joining each run against an earlier one and 
 The first run against an empty output directory has nothing to compare against, cannot produce a rate, and says so:
 
 ```output
-[INFO] No earlier run was found on disk, so this run establishes the baseline. Growth rates and projections appear from the next run onwards.
+[INFO] No previous run found. Growth trending begins from the next run.
 ```
 
-Read that literally. On a first run the projection list is empty because there is no history, **not** because nothing is trending towards the threshold. Those two states look identical in a CSV and call for completely different responses, which is why the script distinguishes them in the log rather than leaving you to infer it from an absent section. Once history exists, an empty projection is stated positively instead:
-
-```output
-[INFO] No mailbox below the critical threshold is projected to cross it within 14 day(s).
-```
+Read that literally. On a first run the projection list is empty because there is no history, **not** because nothing is trending towards the threshold. Those two states look identical in a CSV and call for completely different responses, which is why the script distinguishes them in the log rather than leaving you to infer it from an absent section.
 
 A run that has found a baseline names the file and the window it measured over, so the rates below it can be checked rather than taken on trust:
 
 ```output
 [INFO] Comparing against [BigFunnelPostingListMonitor-20250114-060012-8244.csv], 24.02 hour(s) earlier, 1712 mailbox(es) baselined.
-[INFO] Growth rate computed for 1698 of 1712 mailbox(es), measured on PostingListBytes.
-[INFO] 14 mailbox(es) were not in the baseline and so have no projection yet.
+[INFO] Growth rate computed for 1698 mailbox(es) on PostingListBytes.
+[INFO] 14 of 1712 mailbox(es) evaluated were not in the baseline and so have no projection yet. A mailbox created since the baseline was written, or one on a database that failed to collect on that run, has no earlier reading to difference against. A large count here means the ranking covers materially less of the estate than the row count suggests.
 ```
 
-That last line matters on an estate that changes shape. A mailbox created since the baseline, or one on a database that failed to collect on the previous run, has no earlier reading to difference against and is therefore absent from the projection. A large count here means the ranking covers materially less of the estate than the row count suggests.
+That last line matters on an estate that changes shape, and it is emitted only when the count is above zero. Before it existed those mailboxes were skipped in silence, so a run that could not see part of the estate and a run that found nothing to report produced an identical CSV.
 
 #### Columns added by the trend join
 
@@ -445,19 +448,26 @@ These columns are written to the CSV for every mailbox that could be matched to 
 | `TrendWindowHours` | How far apart the two readings actually were. A short window magnifies noise, so this qualifies every rate on the row |
 | `TrendMetric` | Which counter the rate was measured on, `PostingListBytes` or `IndexPayloadBytes`. See [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b) |
 
-#### The next-to-cross list
+#### The emerging list
 
-Mailboxes below the critical threshold but projected to reach it inside the horizon are listed soonest-first, in the log and as a table:
+Mailboxes below the warning threshold but projected to reach the **critical** threshold within 3 days are listed in the log, soonest first. The full set is in the CSV, in the `DaysToCritical` column:
 
 ```output
-[WARN] 3 mailbox(es) are below the critical threshold now but projected to cross it within 14 day(s), measured on PostingListBytes over a 24.02-hour window.
-[WARN] Next to cross: [a1f3...] Contoso Dispatch on [DB04] at 1.61 GB, growing 0.34 GB/day, projected critical in 1.15 day(s).
-[WARN] Next to cross: [7c02...] Shared AP Inbox on [DB01] at 1.44 GB, growing 0.09 GB/day, projected critical in 6.22 day(s).
+[WARN] Emerging: [a1f3...] Contoso Dispatch on [DB04] is 1.61 GB but projected critical in 1.15 day(s).
+[WARN] Emerging: [7c02...] Shared AP Inbox on [DB01] is 1.44 GB but projected critical in 2.78 day(s).
 ```
 
-The ordering is the point. The top of the list is the work to do before the weekend rather than the work to explain afterwards, and a mailbox projected to cross in 1.15 days needs attention ahead of one already sitting at a higher size but not moving.
+The three-day window is fixed and is not a parameter. It is the lead time the thresholds exist to buy: a mailbox climbing 0.3 GB per day crosses both lines between two daily samples, so a window shorter than the gap between one sample and the next would let it appear and cross unseen.
 
-Mailboxes already at or past the threshold are deliberately **excluded** from this list. They appear in the at-risk table above it, and they need remediating rather than predicting; including them would put a block of zeroes at the top and bury the mailboxes that can still be reached in time.
+The ordering is the point, and it is an ordering by time rather than by size. The top of the list is the work to do before the weekend rather than the work to explain afterwards, and a mailbox projected to cross in 1.15 days needs attention ahead of a larger one 2.78 days out. This matters most when `-MaxAlertDetail` truncates the list: what survives the cap is the head of it, and the remainder is reported as a count.
+
+```output
+[WARN] ...and 5 further emerging mailbox(es) not listed, all of them further out than the ones above.
+```
+
+Mailboxes already at or past a threshold are deliberately **excluded** from this list. They appear in the at-risk lines above it, and they need remediating rather than predicting; including them would put a block of zeroes at the top and bury the mailboxes that can still be reached in time.
+
+Under `-ExitNonZeroOnAlert`, a run whose only finding is an emerging mailbox exits `6`. A run that also has a mailbox over a threshold exits `1`, and the emerging entries are still in the log and the CSV.
 
 #### When the posting list table reads 0 B
 
@@ -470,25 +480,40 @@ On builds where `BigFunnelPostingListTableTotalSize` reads exactly `0 B` across 
 On this path the output is a **ranking without dates**. `DaysToCritical` stays blank and the list is headed differently:
 
 ```output
-[WARN] 47 mailbox(es) grew over a 24.02-hour window, measured on IndexPayloadBytes. They are ranked fastest first below.
+[WARN] 47 mailbox(es) grew over the 24.02-hour window, measured on IndexPayloadBytes. They are ranked fastest first below. No projected date is given, for the reason logged above; treat this as the order to work through, not a countdown.
 [WARN] Fastest growing #1: [a1f3...] Contoso Dispatch on [DB04] at 0.412 GB, growing 0.0386 GB/day on IndexPayloadBytes.
 [WARN] Fastest growing #2: [7c02...] Shared AP Inbox on [DB01] at 0.298 GB, growing 0.0329 GB/day on IndexPayloadBytes.
 ```
 
-The ordering is genuine and is what you act on: the mailbox at the top is the one whose index is growing fastest, and that is still the answer to "which one is next". The dates are withheld rather than estimated, because `-WarningGB` and `-CriticalGB` are sizes of the posting list table and have never been validated against this counter. Extrapolating one to the other compares unrelated quantities. The index payload here is typically single-digit megabytes against a two-gigabyte threshold, so every projection would land months out and the horizon filter would discard the entire list. A monitor that returns nothing while reporting no problem is worse than one that declines to guess.
+The ordering is genuine and is what you act on: the mailbox at the top is the one whose index is growing fastest, and that is still the answer to "which one is next". The dates are withheld rather than estimated, because `-WarningGB` and `-CriticalGB` are sizes of the posting list table and have never been validated against this counter. Extrapolating one to the other compares unrelated quantities. The index payload here is typically single-digit megabytes against a two-gigabyte threshold, so every projection would land months out and the three-day window would discard the entire list. A monitor that returns nothing while reporting no problem is worse than one that declines to guess.
 
 To get dates back on such a build, establish what a problematic `IndexPayloadBytes` looks like on your own estate first. Collect for a few weeks, find the sizes at which search actually degrades, and set `-WarningGB` and `-CriticalGB` from that. Until then, work the ranking top-down.
+
+##### When only part of the estate reads 0 B
+
+The choice of counter is made per mailbox, not per run. An estate part-way through the transition holds both kinds at once, and both reports appear in the same run:
+
+```output
+[WARN] Growth on this run is split across two counters. 9 of 15 mailbox(es) in scope carry no posting list table reading and are trended on IndexPayloadBytes; the remaining 6 are trended on BigFunnelPostingListTableTotalSize. ...
+```
+
+`TrendMetric` in the summary reads `Mixed` on such a run, and `TrendedOnPayload` gives the size of the fallback group. Both reports are real: the posting list rows carry projected dates and appear in the emerging list, and the payload rows carry a ranking and no dates.
+
+Read the emerging list on a mixed run as a partial answer. It can only name mailboxes the thresholds can see, so a short list there says nothing about the `TrendedOnPayload` group - work the ranking for those.
+
+This is worth stating because the alternative is not hypothetical. When the counter was chosen once per run, a single mailbox crossing the allocation threshold moved the whole scope onto the posting list table, including the mailboxes still reading `0 B`, whose growth then measured as a constant zero. Measured in the lab on Exchange Server SE 15.2.2562.17: at 17:16 the run trended 18 mailboxes on `IndexPayloadBytes` and ranked them; at 17:43, two *other* mailboxes having crossed the allocation threshold in the interval, the same 18 - unchanged in every other respect - were trended on a counter that reads zero for them, and the ranking that exists to name the next mailbox went blind for most of the population.
 
 #### Parameters that control the projection
 
 | Parameter | Default | What to consider when changing it |
 |---|---:|---|
 | `-TrendBaselineHours` | `24` | How far back to reach for the comparison run. Short windows magnify noise: at a 15-minute cadence a delta is multiplied by 96 to reach a daily rate, so a few megabytes of ordinary churn reads as a trend and the projection swings between runs. If the history is not yet this deep the widest window available is used and the run is marked provisional. Accepts `1`–`8760` |
-| `-ProjectionHorizonDays` | `14` | How far ahead the list looks. The default is chosen to be longer than the gap between one working Friday and the next, so a mailbox cannot appear and cross inside a single unattended weekend. Raise it for a slow-moving estate; lower it if the list is too long to act on. Accepts `1`–`3650` |
-| `-MaxAlertDetail` | `20` | Caps per-mailbox detail in the log, so a large estate does not make the monitor its own disk-space problem. Every capped list is sorted worst-first, so what survives the cap is the part worth reading, and the remainder is reported as a count rather than dropped silently. The full set is always in the CSV. Accepts `0`–`100000`; `0` means counts only, with no per-mailbox lines |
+| `-MaxAlertDetail` | `25` | Caps per-mailbox detail in the log, so a large estate does not make the monitor its own disk-space problem. Every capped list is sorted worst-first - by status and size for the at-risk lines, by how soon it crosses for the emerging list - so what survives the cap is the part worth reading, and the remainder is reported as a count rather than dropped silently. The full set is always in the CSV. Accepts `1`–`10000` |
+
+There is no parameter for how far ahead the emerging list looks. The three-day window is fixed in the script, for the reason given in [The emerging list](#the-emerging-list).
 
 > [!IMPORTANT]
-> The projection is a linear extrapolation of one interval. It is a work queue, not a forecast: mailbox growth is driven by user behavior and rarely stays linear for two weeks. Use the ordering to decide what to look at first, and re-read it each run rather than planning against a specific date. A mailbox whose rate came from a window shorter than `-TrendBaselineHours` is flagged provisional in the log for exactly this reason.
+> The projection is a linear extrapolation of one interval. It is a work queue, not a forecast: mailbox growth is driven by user behavior and rarely stays linear for three days. Use the ordering to decide what to look at first, and re-read it each run rather than planning against a specific date. A mailbox whose rate came from a window shorter than `-TrendBaselineHours` is flagged provisional in the log for exactly this reason.
 
 ## Resolution
 
