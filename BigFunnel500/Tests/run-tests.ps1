@@ -1193,6 +1193,68 @@ Assert 'the script carries no Add-PSSnapin call at all' `
        Where-Object { ($_ -replace '#.*$', '') -match 'Add-PSSnapin' }).Count -eq 0) ''
 
 Write-Host ''
+Write-Host 'T39  every scheduled-task example registers a task that can actually run' -ForegroundColor Cyan
+# Static, for the same reason T38's last case is. This one is not about the
+# monitor's behaviour at all - it is about the three places the registration
+# command is printed, and it exists because all three were wrong at once.
+#
+# Measured on a lab DAG member, same account and argument string, three
+# registrations minutes apart:
+#   -User alone          -> LogonType Interactive. Never runs. LastTaskResult
+#                           0x41303, no log file, no output directory.
+#   -LogonType S4U       -> runs, cannot open the Exchange runspace, exit 3.
+#   -User with -Password -> LogonType Password. Runspace opens, exit 0.
+# Only the third is a monitor. Nothing warns you about the other two, which is
+# what makes a copied-and-pasted example worth guarding.
+$docs = @($monitor, (Join-Path $root 'BigFunnel PostingListTable Runbook.md'))
+
+function Get-CommandBlocks {
+    # A window rather than a parser: these are continued commands in markdown and
+    # in comment-based help, so there is no reliable end token to match on.
+    param([string]$Path, [string]$Opening, [int]$Window = 7)
+    $lines = @(Get-Content -LiteralPath $Path)
+    $out = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $Opening) {
+            $end = [Math]::Min($i + $Window, $lines.Count - 1)
+            $out += ($lines[$i..$end] -join ' ')
+        }
+    }
+    return $out
+}
+
+$regBlocks = @()
+$actBlocks = @()
+foreach ($doc in $docs) {
+    # Anchored at the start of the line so this matches invocations only. The
+    # runbook also names Register-ScheduledTask mid-sentence when explaining what
+    # goes wrong, and those paragraphs quote the wrong form on purpose.
+    $regBlocks += Get-CommandBlocks -Path $doc -Opening '^\s*Register-ScheduledTask'
+    $actBlocks += Get-CommandBlocks -Path $doc -Opening 'New-ScheduledTaskAction' -Window 5
+}
+
+Assert 'the examples are still there to check' ($regBlocks.Count -ge 2) `
+    ('found ' + $regBlocks.Count + ' Register-ScheduledTask examples')
+
+$noPassword = @($regBlocks | Where-Object { $_ -notmatch '-Password' })
+Assert 'no example registers a principal without -Password' ($noPassword.Count -eq 0) `
+    ('first offender: ' + $(if ($noPassword.Count) { $noPassword[0].Substring(0, [Math]::Min(90, $noPassword[0].Length)) } else { '' }))
+
+$s4u = @($regBlocks | Where-Object { $_ -match '-LogonType\s+S4U' })
+Assert 'and none registers S4U, which cannot open the runspace' ($s4u.Count -eq 0) ''
+
+$viaCommand = @($actBlocks | Where-Object { $_ -match '\s-Command\b' })
+Assert 'every task action launches the script with -File, never -Command' ($viaCommand.Count -eq 0) `
+    ('first offender: ' + $(if ($viaCommand.Count) { $viaCommand[0].Substring(0, [Math]::Min(90, $viaCommand[0].Length)) } else { '' }))
+
+# The guard above keeps the command right. This one keeps the explanation of why
+# it has to be, so a future edit cannot quietly drop the reasoning and leave the
+# next reader to rediscover it on a live estate.
+$runbook = Get-Content -LiteralPath (Join-Path $root 'BigFunnel PostingListTable Runbook.md') -Raw
+Assert 'and the runbook still explains why the logon type decides it' `
+    ($runbook -match 'The logon type is load-bearing' -and $runbook -match '0x41303') ''
+
+Write-Host ''
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
 if ($fail -gt 0) { exit 1 }
 

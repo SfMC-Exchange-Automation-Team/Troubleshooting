@@ -124,19 +124,34 @@ above the fixed values, and pauses 30 seconds between databases to spread the
 load on a busy store.
 
 .EXAMPLE
+$cred = Get-Credential -Message 'Service account for the monitor task'
 Register-ScheduledTask -TaskName 'BigFunnel PostingList Monitor' -Force `
     -Action (New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
         '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
         '"C:\Scripts\Monitor-BigFunnelPostingList.ps1"')) `
     -Trigger (New-ScheduledTaskTrigger -Once -At 00:05 `
         -RepetitionInterval (New-TimeSpan -Hours 4)) `
-    -User 'CONTOSO\svc-exmon' -RunLevel Highest `
+    -User $cred.UserName -Password $cred.GetNetworkCredential().Password `
+    -RunLevel Highest `
     -Settings (New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
         -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable)
 
 Schedules the monitor every 4 hours. -ExecutionTimeLimit is the backstop for a
 store call that never returns; -MultipleInstances IgnoreNew is belt and braces
 alongside the script's own concurrency lock.
+
+-Password is not optional and -User on its own is not equivalent. Without it the
+principal defaults to LogonType Interactive, which means "run only when this
+user is logged on" - the task registers, never runs, and reports LastTaskResult
+0x41303 forever. Ticking "Do not store password", or -LogonType S4U, gives a
+task that does run and then cannot open the Exchange runspace, because an S4U
+logon carries no network credential and the runspace is a network logon even
+against this same server. Confirm with:
+
+    (Get-ScheduledTask -TaskName 'BigFunnel PostingList Monitor').Principal.LogonType
+
+which has to read Password. Where a stored password is not permitted, use
+-Credential on the script instead. A gMSA will not work here.
 
 .NOTES
 Windows PowerShell 5.1 compatible. Read-only against Exchange.
@@ -368,9 +383,11 @@ param(
     [string]$ConnectionUri = '',
 
     # Only needed where the account running the script cannot authenticate to
-    # the runspace on its own. A scheduled task with a batch logon normally can:
-    # measured on w25-ex01, a task running as a domain account opened the
-    # runspace with Kerberos and no credential.
+    # the runspace on its own. Whether it can is decided by the task's LogonType,
+    # not by the account: measured on w25-ex01, a task registered with a stored
+    # password opened the runspace with Kerberos and no credential, and the same
+    # task registered S4U could not open it at all. -Credential is the way out
+    # where a stored password is not permitted.
     [System.Management.Automation.PSCredential]$Credential,
 
     [switch]$ExitNonZeroOnAlert
@@ -379,7 +396,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion   = '1.7.0'
+$script:ScriptVersion   = '1.7.1'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
@@ -1244,8 +1261,32 @@ try {
         if ($null -eq $script:EmsSession.Session) {
             Write-RunLog ('Could not open an Exchange runspace at [{0}]. {1}' -f
                 $script:EmsUri, $script:EmsSession.Error) 'FATAL'
+
+            # The WinRM text above lists five possible causes, and from a
+            # scheduled task it is almost never any of them. SEC_E_NO_CREDENTIALS
+            # (0x8009030e), or Negotiate refusing to send default credentials,
+            # means this logon has no outbound network credential at all. The
+            # runspace is a network logon even when the target is this same
+            # server, so it fails before any of the things the WinRM text
+            # suggests are ever reached.
+            #
+            # Session 0 is the discriminator: a scheduled task or a service runs
+            # there, an interactive console does not. Both conditions together
+            # make the cause near-certain, but it is still phrased as the likely
+            # one, because a locked-out or expired account presents identically.
+            $noCredential = ($script:EmsSession.Error -match '0x8009030e' -or
+                             $script:EmsSession.Error -match 'Default credentials with Negotiate')
+            $inSession0 = $false
+            try { $inSession0 = ((Get-Process -Id $PID).SessionId -eq 0) } catch { }
+
+            if ($noCredential -and $inSession0) {
+                Write-RunLog 'Most likely cause: this run has no network credential to authenticate with. It is in session 0, so it is a scheduled task or a service, and opening the runspace is a network logon even though the target is this same server. A task registered with -User but no -Password gets an Interactive or an S4U logon, and neither one carries a network credential.' 'FATAL'
+                Write-RunLog "Check it with: (Get-ScheduledTask -TaskName '<name>').Principal.LogonType. It has to read Password. Re-register with -User '<account>' -Password '<password>', or in Task Scheduler select 'Run whether user is logged on or not' and leave 'Do not store password' clear. A gMSA cannot be used here for the same reason." 'FATAL'
+            }
+
             Write-RunLog 'This monitor requires one: the in-process snap-in cannot read a database mounted on another DAG member, and a run under it reports a subset of the estate as though it were the whole of it. Check that the Exchange PowerShell vdir is reachable and that this account has an Exchange RBAC role, or pass -ConnectionUri to point at another Exchange server in the organisation.' 'FATAL'
             $abortReason = 'Cannot open an Exchange runspace'
+            if ($noCredential -and $inSession0) { $abortReason = 'No network credential to open an Exchange runspace' }
             $exitCode = 3
             exit $exitCode
         }

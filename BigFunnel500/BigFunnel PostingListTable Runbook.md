@@ -313,7 +313,7 @@ The defaults are the values this runbook recommends, so a run with no arguments 
 | `-ExitNonZeroOnAlert` | Turns findings into the non-zero exit codes `1` and `5`. Without it the script exits `0` for anything short of a breakage and reports its findings through `latest-summary.json` only |
 | `-AllocationEvidenceMB` | The mailbox size, in MB, above which a `0 B` posting list table counts as evidence that the counter is not being populated. **A fallback only**: where any mailbox in scope has a populated table, the script measures the bar off the estate instead and ignores this value. Default `64`, roughly four times the upper bound of the measured allocation range, so a `Blind` verdict reached under it is close to unarguable. Lower it only if you have measured a lower allocation point on your own build; raising it makes the script slower to call a real outage |
 | `-ConnectionUri` | The Exchange runspace to bind through. Empty by default, which means this server's own PowerShell vdir, built from its FQDN at run time. Any Exchange server in the organization is a valid target - it does not have to be the node holding the databases being collected |
-| `-Credential` | Only needed where the account running the script cannot authenticate to that runspace on its own. A scheduled task running as a domain account normally can: measured on a lab DAG, a task with a batch logon opened the runspace with Kerberos and no credential |
+| `-Credential` | Only needed where the account running the script cannot authenticate to that runspace on its own. Whether it can is decided by the task's `LogonType`, not by the account: measured on a lab DAG, a task registered with a stored password opened the runspace with Kerberos and no credential, and the same task registered `S4U` could not open it at all. Use this where a stored password is not permitted, and supply it from your own secret store. See [The logon type is load-bearing](#the-logon-type-is-load-bearing) |
 
 ### How a mailbox is classified
 
@@ -435,18 +435,76 @@ $trigger = New-ScheduledTaskTrigger -Once -At 00:05 `
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable
 
+# -Password is not optional, and -User on its own is not equivalent. See
+# "The logon type is load-bearing" below before changing this line. Prompted
+# for rather than written into the script, so it reaches neither source
+# control nor shell history.
+$cred = Get-Credential -Message 'Service account for the monitor task'
+
 Register-ScheduledTask -TaskName "Exchange BigFunnel PostingListTable Monitor" `
     -Action $action -Trigger $trigger -Settings $settings `
-    -User "DOMAIN\ServiceAccount" -RunLevel Highest -Force
+    -User $cred.UserName -Password $cred.GetNetworkCredential().Password `
+    -RunLevel Highest -Force
 ```
 
-Points that matter in production:
+#### The logon type is load-bearing
+
+`Register-ScheduledTask -User "DOMAIN\ServiceAccount"` **with no `-Password` registers a task that never runs.** It is not a syntax error and nothing warns you: PowerShell defaults that principal to `LogonType Interactive`, which means "run only when this user is logged on", and a service account never is. The task registers, sits at `Ready`, and reports `LastTaskResult 267011` (`0x41303`, `SCHED_S_TASK_HAS_NOT_RUN`) indefinitely. No log file is written, and the output directory is never created, so the usual places you would look for a fault are all empty.
+
+The other way to get this wrong is the Task Scheduler UI's **Do not store password**, or `-LogonType S4U`. That task does run, and then cannot open the Exchange runspace: an S4U logon has no outbound network credential, and the runspace is a network logon even when the target is the same server. Every run fails identically at the binding step with `0x8009030e`, `A specified logon session does not exist`.
+
+Measured on a lab DAG member, same account and same argument string, three registrations minutes apart:
+
+| Registration | Resulting `LogonType` | What happens |
+|---|---|---|
+| `-User` alone | `Interactive` | Never runs. `LastTaskResult 0x41303`, no log, no output directory |
+| `-LogonType S4U` | `S4U` | Runs, cannot bind Exchange. Exit `3` every run |
+| `-User` + `-Password` | `Password` | Runs. Runspace opens with Kerberos, exit `0` |
+
+Only the third is a working monitor. This is a consequence of binding through a runspace rather than the snap-in, so it is specific to `1.7.0` and later; the same registration under an older build ran, and quietly collected only the local node. **A gMSA cannot be used for this task**, for the same reason S4U cannot.
+
+Where a stored password is not permitted, pass `-Credential` to the script instead and supply it from whatever secret store your estate uses. That moves the credential out of the task definition without giving up the runspace.
+
+#### Verify the registration before trusting it
+
+Three things go wrong at registration and none of them announces itself, so check rather than assume. This takes about a minute:
+
+```powershell
+$name = 'Exchange BigFunnel PostingListTable Monitor'
+
+# 1. Password, or the task will not run unattended.
+(Get-ScheduledTask -TaskName $name).Principal.LogonType
+
+# 2. Run it once on demand and read the code the scheduler recorded.
+Start-ScheduledTask -TaskName $name
+while ((Get-ScheduledTask -TaskName $name).State -eq 'Running') { Start-Sleep 5 }
+(Get-ScheduledTaskInfo -TaskName $name).LastTaskResult
+
+# 3. The exit code and the summary have to agree. If the file says 3 and the
+#    scheduler says 1, the action is using -Command somewhere.
+Get-Content 'C:\ProgramData\ExchangeBigFunnelPostingListMonitor\latest-summary.json' |
+    ConvertFrom-Json | Select-Object ScriptVersion, Completed, Status, ExitCode,
+        DatabasesInScope, MailboxesEvaluated, MetricValidation
+```
+
+| What you see | What it means |
+|---|---|
+| `LogonType` is not `Password` | Re-register. See above |
+| `LastTaskResult 267011` and `LastRunTime` in 1999 | The task never ran. `LogonType Interactive` |
+| `LastTaskResult 3`, summary `Status` names a credential | S4U, or the account has no Exchange RBAC |
+| `LastTaskResult 3`, `DatabasesInScope 0` | Expected on a passive-only member |
+| `LastTaskResult` and summary `ExitCode` disagree | The action is using `-Command`. Re-register with `-File` |
+| `LastTaskResult 0`, summary `Status OK` | Working |
+
+Do this on every member you register, not just the first. A passive-only member is the one node where a genuine fault and the expected exit `3` look alike, and the summary's `DatabasesInScope` is what tells them apart.
+
+#### Other points that matter in production
 
 - **Store the script outside its own output directory.** The script prunes files matching `BigFunnelPostingListMonitor-*` under `-OutputPath` on a retention schedule. Keeping the script somewhere else, such as `C:\Scripts`, removes any possibility of the housekeeping and the tooling sharing a folder.
 - **Use a literal path, not an environment variable.** `%ProgramData%` expands differently depending on which shell creates the task and whether the service account's profile is loaded. A hardcoded path fails visibly at registration rather than silently at 02:05.
 - **The account needs Exchange RBAC, not just local administrator.** It must be able to run `Get-ExchangeServer`, `Get-MailboxDatabase`, and `Get-MailboxStatistics`. View-Only Organization Management is sufficient and is the least-privileged role that covers all three.
 - **Interpret the exit code.** See [Exit codes and the run summary](#exit-codes-and-the-run-summary) below. A run that is missing entirely leaves a log file with no `Monitor run complete` line; that is how a killed run is identified, since it has no exit code to report.
-- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed: a script whose only statement is `exit 5` returns `5` under `-File` and `1` under `-Command`, with no errors involved. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
+- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed, and measured at the scheduler rather than in a shell: the same failing run, registered twice minutes apart with only the launcher changed, wrote `"ExitCode": 3` to `latest-summary.json` both times, and the scheduler recorded `LastTaskResult 3` under `-File` and `1` under `-Command`. That disagreement between the file and the scheduler is the signature, and step 3 of the verification above is how to catch it. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
 
 #### Exit codes and the run summary
 
@@ -507,7 +565,9 @@ Do not try to cover the DAG from one node by naming every database in `-Database
 
 #### `-Scope All`, and what a Partial means now
 
-`-Scope All` works from any invocation, including a scheduled task, because the monitor opens its own Exchange runspace rather than loading the snap-in. So a `Partial` from a `-Scope All` run is a real finding about the estate: a database that is dismounted, outside this account's RBAC, or genuinely unreachable. Read `FailedDatabases` in `latest-summary.json` and the per-database reason in the log, and treat it as a collection failure rather than an artefact of how the run was started.
+`-Scope All` works from any invocation, including a scheduled task, because the monitor opens its own Exchange runspace rather than loading the snap-in. Measured from a real scheduled task on a three-node lab DAG: `4 database(s) in scope`, 97 mailboxes evaluated, `FailedDatabases` empty, exit `0`. The same task under `-Scope Local` on the same node collected 2 databases and 50 mailboxes, which is the whole of what that node holds. So a `Partial` from a `-Scope All` run is a real finding about the estate: a database that is dismounted, outside this account's RBAC, or genuinely unreachable. Read `FailedDatabases` in `latest-summary.json` and the per-database reason in the log, and treat it as a collection failure rather than an artefact of how the run was started.
+
+This depends on the task carrying a network credential, which means the stored-password logon described in [The logon type is load-bearing](#the-logon-type-is-load-bearing). Under `S4U` the run does not reach a reduced scope, it reaches no scope at all and exits `3`.
 
 That was not always true, and an older build or an older log will show the difference. Under the in-process snap-in the same run reported `Partial` on **every** execution, naming every database whose active copy was mounted on another node:
 
