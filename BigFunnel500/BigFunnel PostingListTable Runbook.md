@@ -102,28 +102,42 @@ On a lab running Exchange Server SE RTM (`15.2.2562.17`), a mailbox seeded with 
 
 The index was live: `Search-Mailbox -EstimateResultOnly` for a term appearing only in the seeded message bodies returned a hit. The zero was genuine rather than a formatting or parsing artifact - the returned object reported `IsUnlimited` as `False` and its `ToBytes()` method returned integer `0` - and it did not change over a four-minute observation window. `BigFunnelPostingListTableChunkCount` and `BigFunnelLargePostingListTableTotalSize` were not present on the statistics object at all. Roughly 4.1 MB of index payload existed and was accounted for in the POI and filter tables. Note that `BigFunnelPostingListTableAvailableSize` also read `0 B`, where the corresponding large-POI counter reported 736 KB of free space: the table is not an allocated structure that happens to be empty.
 
-Two explanations fit that result, and the lab could not separate them: the build may account for posting list data elsewhere regardless of content volume, or the counter may materialize only above an allocation threshold that 5.699 MB of content does not reach. Both carry the same consequence for monitoring, so read a zero against the corroborating counters rather than on its own:
+Two explanations fit that result: the build may account for posting list data elsewhere regardless of content volume, or the counter may materialize only above an allocation threshold that 5.699 MB of content does not reach. A later pass on the same lab separated them, and it is the second.
+
+Three mailboxes were seeded on `15.2.2562.17` and measured together:
+
+| Mailbox | Items | Content | `BigFunnelPostingListTableTotalSize` |
+|---|---|---|---|
+| `bfseed03` | 142 | 3.447 MB | `0 B` |
+| `bfseed02` | 272 | 6.87 MB | `0 B` |
+| `bfseed01` | 740 | 16.33 MB | **`3.344 MB (3,506,176 bytes)`** |
+
+`bfseed01` had itself read `0 B` at 380 items after three weeks of sitting, and moved off zero the same afternoon it was topped up to 740. Elapsed time is therefore not the variable; content volume is. **The table is allocated somewhere between roughly 6.9 MB and 16.3 MB of mailbox content.**
+
+This changes how a `0 B` reading must be read. Below the allocation point, `0 B` is the *correct* value and not a symptom of anything - the table has not been created yet because there is not enough in the mailbox to warrant one. Above it, `0 B` on an indexed mailbox is a real monitoring gap. The same three corroborating counters still apply, but the mailbox's own size is now the first thing to check:
 
 | Reading | Interpretation | Action |
 |---|---|---|
 | `BigFunnelPostingListTableTotalSize` above `0 B` | The metric is populated on this build | Apply the thresholds in the next section |
 | `0 B`, with `BigFunnelIndexedCount` at `0` | The mailbox has no index yet | Investigate indexing; this is not a table-growth question |
-| `0 B`, with `BigFunnelIndexedCount` above `0` | The mailbox is indexed but the size is not accounted for in this counter | Do not read this as healthy. Check `BigFunnelTotalPOISize`, `BigFunnelLargePOITableTotalSize`, and `BigFunnelFilterTableTotalSize` for where the index size actually is |
+| `0 B`, indexed, and holding less than ~16 MB | Expected. The table has not been allocated at that size | None. Do not read it as a fault |
+| `0 B`, indexed, and holding well above ~16 MB | The mailbox is indexed but the size is not accounted for in this counter | Do not read this as healthy. Check `BigFunnelTotalPOISize`, `BigFunnelLargePOITableTotalSize`, and `BigFunnelFilterTableTotalSize` for where the index size actually is |
 
 > [!IMPORTANT]
-> If every mailbox on a database reports `0 B` while reporting a non-zero `BigFunnelIndexedCount`, threshold alerting on this metric cannot fire there. A clean monitoring run then says nothing about posting list growth - it says only that nothing could have been found. Validate the counter against at least one mailbox known to exhibit the problem before treating an absence of alerts as evidence of health. The monitoring script in the next section reports this case as a distinct `NotPopulated` status rather than as `Normal`, precisely so that it cannot be mistaken for a pass.
+> If every mailbox on a database reports `0 B` while reporting a non-zero `BigFunnelIndexedCount`, **and those mailboxes are large enough to have allocated a table**, threshold alerting on this metric cannot fire there. A clean monitoring run then says nothing about posting list growth - it says only that nothing could have been found. Validate the counter against at least one mailbox known to exhibit the problem before treating an absence of alerts as evidence of health. The monitoring script in the next section reports this case as a distinct `NotPopulated` status rather than as `Normal`, precisely so that it cannot be mistaken for a pass. The size qualifier is load-bearing: without it, an estate of small mailboxes - a lab, a new deployment, a small tenant - reports a total metric outage on every run, and an alert that always fires is an alert that gets muted.
 
-When you judge how widespread the condition is, count it against the mailboxes that have an index, not against every row `Get-MailboxStatistics` returns. Health, arbitration, system and archive mailboxes hold no BigFunnel index at all and cannot exhibit the condition; on the lab server above they were 44 of 66 rows. A ratio taken over all rows therefore understates the problem badly and can never reach 100%, even when every mailbox capable of exhibiting it does.
+When you judge how widespread the condition is, count it against the mailboxes that could actually exhibit it: indexed, and above the allocation point. Two separate populations have to come out of the denominator. Health, arbitration, system and archive mailboxes hold no BigFunnel index at all; on the lab server above they were 44 of 66 rows. Mailboxes below roughly 16 MB read `0 B` correctly and are not evidence of anything. A ratio taken over all rows understates the problem badly and can never reach 100%; a ratio that counts small mailboxes as witnesses overstates it and reaches 100% on a perfectly healthy small estate.
 
 #### When every indexed mailbox reads 0 B
 
-One mailbox reading `0 B` is a gap in one row. Every indexed mailbox on the server reading `0 B` is a gap in the entire run, and the two need separate alerting. In the second case nothing collected could have crossed a threshold, so a clean result carries no information whatsoever.
+One mailbox reading `0 B` is a gap in one row. Every eligible mailbox on the server reading `0 B` is a gap in the entire run, and the two need separate alerting. In the second case nothing collected could have crossed a threshold, so a clean result carries no information whatsoever.
 
 `Monitor-BigFunnelPostingList.ps1` in this folder reports that state explicitly rather than leaving it to be inferred from a count:
 
 | Where | Value | Meaning |
 |---|---|---|
-| `latest-summary.json` | `Status` = `MetricUnavailable` | Every indexed mailbox in scope reported `0 B`. Written on every run, whether or not alert exit codes were requested |
+| `latest-summary.json` | `Status` = `MetricUnavailable` | Every eligible mailbox in scope reported `0 B`. Written on every run, whether or not alert exit codes were requested |
+| `latest-summary.json` | `MetricValidation` = `Blind` | The same fact stated as a verdict on the instrument rather than on the estate |
 | Process exit code | `5` | The same condition, surfaced to the scheduler. Only under `-ExitNonZeroOnAlert` |
 | Run log | Two `[ERROR]` lines | Gives the count, and states that the thresholds in that run were untested rather than passed |
 
@@ -132,9 +146,30 @@ One mailbox reading `0 B` is a gap in one row. Every indexed mailbox on the serv
 
 Exit code `5` is kept distinct from `1` deliberately. `1` means a mailbox crossed a line; `5` means there was no line to cross. Collapsing the two lets a metric outage be triaged as a threshold breach that turned out to be nothing, which is the same false negative in a different place.
 
-The comparison is made against the indexed population rather than against every row collected, for the reason given above. Health, arbitration, system and archive mailboxes can never reach this state, so counting them in the denominator means the run-level escalation never fires on a real server.
+The comparison is made against the eligible population rather than against every row collected, for the reasons given above - indexed, because health, arbitration, system and archive mailboxes can never reach this state and counting them means the escalation never fires on a real server; and above the allocation point, because counting mailboxes that read `0 B` correctly means it fires on every small server.
 
-Verified on the lab server described above, Exchange Server SE `15.2.2562.17`. With no intervention it reports 15 of 15 indexed mailboxes at `0 B`, exits `5`, and reports `Status = MetricUnavailable`. With a single controlled non-zero value present on one mailbox, the same server minutes later reports 14 of 15, exits `1`, and reports `Status = OK`. That pair is what separates "the metric is blind" from "the metric works and nothing crossed a line," and reproducing it is the check to run before trusting an absence of alerts on your own build.
+#### When nothing in scope is large enough to say
+
+There is a third case, and it is the common one on a small or newly built estate: no mailbox in scope has a populated posting list table, **and** no mailbox is large enough to have been expected to. The run cannot tell whether the counter works. That is not a fault, and alerting on it would fire forever.
+
+`Monitor-BigFunnelPostingList.ps1` reports it as `Status = MetricInconclusive` and `MetricValidation = Inconclusive`, logs a single `WARN` naming the largest mailbox it saw and the bar it fell short of, and **leaves the exit code alone**. Mailboxes in this state are `NotAllocated` in the detail CSV, not `NotPopulated`.
+
+Read it as "this run proved nothing", not as "this run passed". To convert it into a real answer, put one mailbox above the bar - seed it, or wait for one to get there - and the next run will return `Confirmed` or `Blind`.
+
+#### Where the bar comes from
+
+The script does not carry a fixed size. It calibrates against the estate in front of it, the same way `-ThresholdMode Adaptive` derives thresholds from the population:
+
+| Situation | Bar | `AllocationEvidenceBasis` |
+|---|---|---|
+| Some mailbox in scope has a populated table | The smallest such mailbox's `TotalItemSize`, clamped up to a 16 MB floor | `Observed` |
+| No mailbox in scope has one | `-AllocationEvidenceMB`, default `64` | `Configured` |
+
+An observed bar is a direct measurement of the allocation point on the build actually in front of you, which beats any constant chosen in advance. The 16 MB floor exists because the smallest populated mailbox is only an *upper* bound: a mailbox that was large when its table was allocated and has since been emptied would otherwise drag the bar down and reclassify a healthy estate as `NotPopulated`. The clamp can only move the bar up, which errs toward "expected" - the safe direction, because a missed outage costs one quiet run and a false outage costs a muted monitor.
+
+The 64 MB fallback is roughly four times the upper bound of the measured range, so a `Blind` verdict reached under it is close to unarguable. Both the bar in force and its basis are published in `latest-summary.json` on every run.
+
+Verified on the lab server described above, Exchange Server SE `15.2.2562.17`. With no intervention it reports 15 of 15 eligible mailboxes at `0 B`, exits `5`, and reports `Status = MetricUnavailable`. With a single controlled non-zero value present on one mailbox, the same server minutes later reports 14 of 15, exits `1`, and reports `Status = OK`. That pair is what separates "the metric is blind" from "the metric works and nothing crossed a line," and reproducing it is the check to run before trusting an absence of alerts on your own build.
 
 ### Detection signals
 
@@ -193,6 +228,9 @@ When evaluating mailbox search health, review additional BigFunnel properties. T
 From its second run onwards it also compares each mailbox against an earlier collection, derives a growth rate, and ranks the mailboxes that are not yet over the threshold by how soon they are projected to cross it. On builds where the posting list table reads `0 B` it still ranks them, by growth rate, without projecting a date. See [Ranking mailboxes by how soon they cross](#ranking-mailboxes-by-how-soon-they-cross) for how to read that output.
 
 Run it in Exchange Management Shell, or in any PowerShell session where the Exchange cmdlets are available. It targets Windows PowerShell 5.1 and takes no dependency on anything outside the Exchange management tools.
+
+> [!NOTE]
+> **A clean run prints nothing to the console.** Every line goes to the run log and to `Write-Verbose`; only `ERROR` and `FATAL` surface interactively, as warnings. That is correct for the scheduled task this script is built for, where console output goes nowhere - but run by hand it looks like a hang, particularly from a session where the Exchange snap-in has to be loaded first, which is itself silent and can take a minute. Add `-Verbose` to watch a run as it happens, or read `latest-summary.json` and the log afterwards. Silence is a working run, and `$LASTEXITCODE` carries the verdict.
 
 > [!IMPORTANT]
 > Run the file, not a copy assembled out of this article. Earlier revisions of this runbook carried the whole script inline, and a copy taken from one of those has no `-Scope`, `-ThresholdMode`, `-MaxRunMinutes` or `-ExitNonZeroOnAlert`, writes neither `latest.csv` nor `latest-summary.json`, and has neither the `MetricUnavailable` status nor exit code `5`. Every exit code, contract and lab result described in this article refers to the file in this folder. The excerpts below are quoted from it for reading, and are not a substitute for it.
@@ -266,10 +304,11 @@ The defaults are the values this runbook recommends, so a run with no arguments 
 
 | Parameter | Effect |
 |---|---|
-| `-Scope` | `Local`, the default, collects only the databases whose active copy is mounted on this node. That is what makes one scheduled task correct on every DAG member and correct again after a switchover. `All` collects every database in the organization, which is right on exactly one member and wrong on all the others |
+| `-Scope` | `Local`, the default, collects only the databases whose active copy is mounted on this node. That is what makes one scheduled task correct on every DAG member and correct again after a switchover. `All` collects every database in the organization, which is right on exactly one member and wrong on all the others - and reaches the databases on those other members only when the run is driven from a real Exchange Management Shell session. From a scheduled task it collapses to the local ones and reports `Partial`. See [When `-Scope All` returns Partial](#when--scope-all-returns-partial) |
 | `-ThresholdMode` | `Fixed` applies `-WarningGB` and `-CriticalGB` as given. `Adaptive` raises them to the collected population's 95th and 99th percentile where those sit higher, never lowers them, and falls back to the fixed values when fewer than `-AdaptiveMinimumSample` mailboxes were collected or when the two percentiles fail to separate |
 | `-MaxRunMinutes` | A collection budget. Reaching it ends the run early and reports exit code `2`, so a collection cut short is never reported as a clean one |
 | `-ExitNonZeroOnAlert` | Turns findings into the non-zero exit codes `1` and `5`. Without it the script exits `0` for anything short of a breakage and reports its findings through `latest-summary.json` only |
+| `-AllocationEvidenceMB` | The mailbox size, in MB, above which a `0 B` posting list table counts as evidence that the counter is not being populated. **A fallback only**: where any mailbox in scope has a populated table, the script measures the bar off the estate instead and ignores this value. Default `64`, roughly four times the upper bound of the measured allocation range, so a `Blind` verdict reached under it is close to unarguable. Lower it only if you have measured a lower allocation point on your own build; raising it makes the script slower to call a real outage |
 
 ### How a mailbox is classified
 
@@ -284,7 +323,12 @@ function Get-PostingListStatus {
         [Parameter(Mandatory = $true)][int64]$CriticalBytes,
         # Deliberately untyped. PowerShell 5.1 cannot bind $null to [int64], and
         # this arrives as $null on any build that does not expose the counter.
-        $IndexedCount = $null
+        $IndexedCount = $null,
+        # Untyped for the same reason: TotalItemSize is absent or Unlimited on
+        # some mailboxes, and the evidence point is absent when the caller has
+        # not computed one.
+        $MailboxBytes = $null,
+        $EvidenceBytes = $null
     )
 
     if ($Bytes -ge $CriticalBytes) { return 'Critical' }
@@ -301,14 +345,34 @@ function Get-PostingListStatus {
     # the table every mailbox reads healthy and the monitor never alerts.
     # Zero bytes on a demonstrably indexed mailbox means the metric is
     # unavailable here, which is a different fact from "this mailbox is fine".
+    #
+    # But only above the size at which this build allocates the table. Below it,
+    # 0 B is the correct reading and flagging it is the mirror-image error: a
+    # small estate reports a total metric outage on every run, and an alert that
+    # always fires is an alert that gets muted.
     $indexed = ConvertTo-NullableInt64 $IndexedCount
-    if ($Bytes -eq 0 -and $null -ne $indexed -and $indexed -gt 0) { return 'NotPopulated' }
+    if ($Bytes -eq 0 -and $null -ne $indexed -and $indexed -gt 0) {
+        $size     = ConvertTo-NullableInt64 $MailboxBytes
+        $evidence = ConvertTo-NullableInt64 $EvidenceBytes
+
+        # Unparseable or Unlimited TotalItemSize lands here as $null. The mailbox
+        # cannot be judged either way, so it is reported as the benign state
+        # rather than the alarming one: a wrong "nothing is wrong" on one row is
+        # recoverable, a wrong "your monitoring is blind" trains people to
+        # ignore the message.
+        if ($null -eq $evidence -or $null -eq $size -or $size -lt $evidence) {
+            return 'NotAllocated'
+        }
+        return 'NotPopulated'
+    }
 
     return 'Normal'
 }
 ```
 
-`Critical` and `Warning` are findings about a size. `NotPopulated` is not: it says the mailbox reported a live index and a posting list table of exactly zero bytes, which is a statement about the counter rather than about the mailbox. On a build that never populates the table every indexed mailbox lands there, and that run-wide case is escalated separately as `MetricUnavailable`. See [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b).
+`Critical` and `Warning` are findings about a size. `NotPopulated` is not: it says the mailbox reported a live index, a posting list table of exactly zero bytes, and enough content that the table should have existed. That is a statement about the counter rather than about the mailbox. On a build that never populates the table every eligible mailbox lands there, and that run-wide case is escalated separately as `MetricUnavailable`. See [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b).
+
+`NotAllocated` is the same zero reading below that size, where it is expected rather than wrong. It is reported instead of `Normal` because the size still cannot be read - but it is not evidence of a fault, it does not escalate, and it does not move the exit code. Mailboxes whose `TotalItemSize` cannot be parsed, or that report `Unlimited`, land here too: they cannot be judged either way, and the classifier fails toward the benign verdict on purpose.
 
 ### Verifying a copy before you rely on it
 
@@ -320,6 +384,24 @@ function Get-PostingListStatus {
 ```
 
 It ends with a `RESULT: <n> passed, <n> failed` line and exits non-zero if anything failed. Run it after any local edit to the monitor, and run it before trusting a copy that reached you by some route other than this repository.
+
+### Rehearsing the alerting on a non-production estate
+
+`run-tests.ps1` proves the monitor behaves against a mock. It does not prove your alerting does. The route from an exit code to a ticket runs through a scheduled task, an account, a network path and whatever consumes the summary file, and the only state most estates ever produce naturally is the clean one. `Invoke-BigFunnelScenario.ps1` closes that gap by driving the monitor into each of its states against real mailboxes on a dev or lab estate.
+
+It is read-only against Exchange: no mailbox, database or index is modified. It runs the monitor once as a probe with the thresholds parked far above anything the estate holds, reads the sizes actually present, then solves for the parameters that put those same real mailboxes into the state you asked for. Every scenario declares the exit code and summary fields it expects, and the run fails loudly if it produced the state next door.
+
+```powershell
+# Which states can this estate show, and why not the rest?
+.\Invoke-BigFunnelScenario.ps1
+
+# Produce one: solve thresholds, run monitor, check result.
+.\Invoke-BigFunnelScenario.ps1 -Scenario Critical
+```
+
+The eight states are `Healthy`, `Warning`, `Critical`, `Emerging`, `Shrinking`, `Inconclusive`, `Blind` and `Partial`, covering exit codes 0, 1, 2, 5 and 6. `Inconclusive` and `Blind` are the pair worth running back to back: the same mailboxes and the same zero-byte readings produce opposite verdicts and opposite exit codes, and the only thing that changes between them is where the allocation evidence bar sits. That is the distinction in [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b), run as an experiment you can repeat.
+
+Two cautions. **The thresholds it computes are demonstration values, not production values** - they are scaled to whatever your dev estate holds, so a lab with a 30 MB posting list table produces thresholds three orders of magnitude below the shipped defaults. Use it to exercise the alerting path, never to choose thresholds. And `Emerging` and `Shrinking` are statements about change over time, so they need an earlier reading to difference against; the script writes a clearly marked synthetic baseline CSV into its own run directory, with a `SYNTHETIC-BASELINE.txt` beside it. **Never copy one into a real monitor output directory** - the monitor cannot tell it from a genuine earlier run, which is exactly why it works here.
 
 ### Scheduling example
 
@@ -372,7 +454,7 @@ The monitor reports through two independent channels: the process exit code, for
 | `2` | Completed with partial failure. At least one database was not collected, or collection was cut short by `-MaxRunMinutes` | Yes, as a monitor fault |
 | `3` | Fatal. Pre-flight failed, or no database was in scope | Yes, as a monitor fault, but see the DAG note below |
 | `4` | Another instance is already running | Yes, as a monitor fault |
-| `5` | Completed, but every indexed mailbox in scope reported the posting list table as `0 B`. `-ExitNonZeroOnAlert` only | Yes, as a monitoring gap |
+| `5` | Completed, but every mailbox large enough to have allocated a posting list table reported it as `0 B`. `-ExitNonZeroOnAlert` only | Yes, as a monitoring gap |
 | `6` | Completed, nothing over threshold, but at least one mailbox is projected to cross the critical threshold within 3 days. `-ExitNonZeroOnAlert` only | Yes, as a mailbox finding, but not as urgent as `1` |
 
 Codes `2`, `3`, `4` and `5` all mean the monitor is not reporting on something, which is more urgent than a large posting list table because it is the state in which a large posting list table goes unseen. Route them differently from `1`.
@@ -389,9 +471,20 @@ A run cannot return both `1` and `6`. Where a breach and a projection coexist, `
 |---|---|
 | `OK` | The run collected its scope and the counter was readable |
 | `Partial` | At least one database was not collected. Pairs with exit code `2` |
-| `MetricUnavailable` | Every indexed mailbox in scope reported the posting list table as `0 B`. Pairs with exit code `5`, but is reported whether or not `-ExitNonZeroOnAlert` was passed |
+| `MetricUnavailable` | Every eligible mailbox in scope reported the posting list table as `0 B`. Pairs with exit code `5`, but is reported whether or not `-ExitNonZeroOnAlert` was passed |
+| `MetricInconclusive` | Nothing in scope has a populated posting list table and nothing is large enough to have allocated one, so the run cannot say whether the counter works. **Not a fault.** Does not change the exit code |
 
-Alert on `Completed = false` to catch every abort reason, and read `Status` for the reason itself. `Completed = false` does not cover `MetricUnavailable`, which is a completed run: see [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b). `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it.
+Reported worst-first where more than one applies: `Partial`, then `MetricUnavailable`, then `MetricInconclusive`, then `OK`.
+
+Three further fields describe the run's confidence in its own instrument, independent of any threshold:
+
+| Field | Values | Meaning |
+|---|---|---|
+| `MetricValidation` | `Confirmed` / `Blind` / `Inconclusive` | Whether the counter demonstrably works in this scope, demonstrably does not, or could not be tested |
+| `AllocationEvidenceMB` | number | The mailbox size above which a `0 B` table counts as evidence of an outage, in force for this run |
+| `AllocationEvidenceBasis` | `Observed` / `Configured` | Whether that bar was measured off this estate or taken from `-AllocationEvidenceMB` |
+
+Alert on `Completed = false` to catch every abort reason, and read `Status` for the reason itself. `Completed = false` does not cover `MetricUnavailable`, which is a completed run: see [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b). Do not alert on `MetricInconclusive` - on a permanently small estate it fires on every run, and an alert that always fires gets muted; read it when triaging a clean result instead. `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it.
 
 `TrendMetric` in the summary names the counter growth was measured on. On a mixed estate it reads `Mixed`, meaning both counters were in use in the one run: the mailboxes whose posting list table is readable were trended on it and carry projected dates, and the mailboxes still reading `0 B` were trended on `IndexPayloadBytes` and carry a ranking instead. `TrendedOnPayload` gives the size of that second group.
 
@@ -406,6 +499,50 @@ That arrangement survives a switchover: whichever node holds the active copy aft
 A passive member still writes a log file on every run, so it is also the node where housekeeping matters most: at a 15-minute interval that is roughly 35,000 files a year in one directory, on a node that never produces a report anyone reads. The retention sweep runs on every exit that held the lock, including exit 3, so a passive member prunes its own logs without ever collecting anything.
 
 Do not try to cover the DAG from one node by naming every database in `-Databases`. It works while that node is up, and stops silently when it is not.
+
+#### When `-Scope All` returns Partial
+
+A scheduled task registered with `-Scope All` reports exit code `2` and `Status = Partial` on every run, and `FailedDatabases` in `latest-summary.json` names every database whose active copy is mounted on another node. The log carries one entry per dropped database:
+
+```text
+Exchange Information Store on server 'ex01.contoso.com' is inaccessible.
+  MapiExceptionNetworkError: Unable to make admin interface connection to
+  server. (hr=0x80040115, ec=-2147221227)
+  Lid: 12514 Win32Error: 0x5
+```
+
+**This is a constraint of how the run was invoked, not a fault in the estate.** `Win32Error: 0x5` is `ACCESS_DENIED`, and the call fails in under a second rather than timing out, which is the tell: nothing was ever attempted on the wire.
+
+The mechanism is the script's own fallback. When `Get-MailboxStatistics` is not already present in the session, the monitor loads the Exchange management snap-in into the calling process. A store cmdlet loaded that way makes the store admin bind *from that process*, and an in-process bind can only reach a store on the same server. A real Exchange Management Shell session is not a snap-in - it is a remote runspace, and the cmdlet is proxied to an Exchange server that makes the store call in its own service context. That is the difference, and it is the whole difference.
+
+So `-Scope All` does what its help says, from EMS. `powershell.exe -NoProfile -File` is not EMS, which means the recommended scheduled-task registration is exactly the invocation where `-Scope All` cannot work. Measured on a three-node DAG, same node, same account, seconds apart:
+
+| Invoked as | Exit | Mailboxes | Databases | Failed |
+|---|---:|---:|---:|---:|
+| `powershell.exe -File` (scheduled-task style) | `2` | 5 | 1 | 3 |
+| Same script inside an imported EMS runspace | `0` | 97 | 4 | 0 |
+
+Two things follow that are easy to get wrong while triaging this:
+
+- **Not every cross-node Exchange call fails, so a working call proves nothing.** `Get-MailboxDatabaseCopyStatus` and `Get-ServerHealth` against the same peer succeed from the same failing session, because neither touches the store. Only store admin calls fail: `Get-MailboxStatistics -Database`, `Get-MailboxStatistics -Identity`, and `Get-LogonStatistics -Database`.
+- **`Test-MAPIConnectivity -Server <peer>` is not a valid second opinion.** Run from the same session it fails the same way, which reads like a store outage on the peer and sends the investigation to the wrong host. It is measuring the invocation, not the peer.
+
+The fix is to leave `-Scope` at its default. `Local` on every node covers the DAG, needs no Exchange session, and is unaffected by all of the above. Where a single org-wide run is genuinely wanted - an ad-hoc estate sweep rather than monitoring - bootstrap the runspace before invoking the monitor:
+
+```powershell
+$s = New-PSSession -ConfigurationName Microsoft.Exchange `
+        -ConnectionUri 'http://ex01.contoso.com/PowerShell/' -Authentication Kerberos
+Import-PSSession -Session $s -AllowClobber -DisableNameChecking `
+    -CommandName Get-MailboxStatistics, Get-MailboxDatabase, Get-ExchangeServer, Get-Mailbox |
+    Out-Null
+
+# Get-MailboxStatistics now exists as a proxy function, so the snap-in fallback
+# never fires and every store call is made by the Exchange server, not by this
+# process.
+& 'C:\Scripts\Monitor-BigFunnelPostingList.ps1' -Scope All -OutputPath 'C:\Temp\Sweep'
+```
+
+One consequence for reading the logs: a passive member running at `-Scope Local` logs a `WARN` recommending `-Scope All` or scheduling on the active node. **Only the second half of that advice works in a scheduled task**, and neither is needed if the task is registered on every member as this section describes.
 
 ### Ranking mailboxes by how soon they cross
 

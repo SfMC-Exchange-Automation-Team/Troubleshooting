@@ -515,6 +515,12 @@ Write-Host 'T21  unindexed system mailboxes do not mask a total outage' -Foregro
 # index at all. Escalating on notPopulated -eq totalRows therefore never fired,
 # and a server where every indexed mailbox was affected reported WARN. The
 # denominator has to be the indexed population.
+#
+# Since v1.6.0 the denominator is narrower still - indexed *and* large enough to
+# have allocated a posting list table - so this case now also proves the
+# narrowing did not cost the real signal. The system mailboxes hold 0 B of
+# content as well as no index, and are excluded on either test; the count is
+# unchanged at 15 of 15.
 $d21 = Reset-Dir '_t21'
 $rc = Invoke-Monitor -OutputPath $d21 -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_SYSTEM_MBX = '15' }
 Assert 'run still succeeds' ($rc -eq 0) ('got exit ' + $rc)
@@ -528,8 +534,8 @@ $log21 = Get-Log $d21
 Assert 'ERROR still fires even though most rows are Normal' `
     (@($log21 | Where-Object { $_ -match '\[ERROR\].*Treat the thresholds here as untested' }).Count -eq 1) `
     (($log21 | Where-Object { $_ -match 'untested|reads 0 B' }) -join ' | ')
-Assert 'the log reports the indexed population as the denominator' `
-    (@($log21 | Where-Object { $_ -match '15 of 15 indexed mailbox\(es\) \(60 evaluated in total\)' }).Count -eq 1) `
+Assert 'the log reports the eligible population as the denominator' `
+    (@($log21 | Where-Object { $_ -match '15 of 15 eligible mailbox\(es\) \(60 evaluated in total\)' }).Count -eq 1) `
     (($log21 | Where-Object { $_ -match 'reads 0 B' }) -join ' | ')
 
 Write-Host ''
@@ -1031,6 +1037,127 @@ Assert 'and only the matched mailboxes carry a rate' `
 Assert 'a complete baseline produces no such line' `
     (@(Get-Log $d25 | Where-Object { $_ -match 'were not in the baseline' }).Count -eq 0) `
     ((Get-Log $d25 | Where-Object { $_ -match 'not in the baseline' }) -join ' | ')
+
+Write-Host ''
+Write-Host 'T34  a small estate is not a blind one' -ForegroundColor Cyan
+# The false positive that made all of this necessary. NotPopulated was applied to
+# any indexed mailbox reading 0 B with no size test at all, so on an estate where
+# every mailbox is too small to have allocated a posting list table the run
+# escalated itself to a full metric outage: two ERROR lines, Status
+# MetricUnavailable, exit 5. Reproduced on w25-ex03, where that is simply what a
+# small mailbox looks like.
+#
+# Measured on Exchange Server SE 15.2.2562.17: 3.45 MB and 6.87 MB of content
+# both read 0 B, 16.33 MB read 3.344 MB. Below the allocation point 0 B is the
+# correct reading, and a monitor that cries wolf on every small estate gets
+# muted - which costs exactly what NotPopulated was added to buy.
+$d34 = Reset-Dir '_t34'
+$rc = Invoke-Monitor -OutputPath $d34 -Extra '-ExitNonZeroOnAlert' `
+      -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_MAILBOX_MB = '4' }
+Assert 'a scope of small mailboxes does not raise an alert exit code' ($rc -eq 0) ('got exit ' + $rc)
+
+$rows34 = @(Get-Csv $d34)
+Assert 'every small zero-reader is NotAllocated, none is NotPopulated' `
+    (@($rows34 | Where-Object { $_.Status -eq 'NotAllocated' }).Count -eq 15 -and
+     @($rows34 | Where-Object { $_.Status -eq 'NotPopulated' }).Count -eq 0) `
+    (($rows34 | Group-Object Status | ForEach-Object { $_.Name + '=' + $_.Count }) -join ' ')
+
+$log34 = Get-Log $d34
+Assert 'and nothing is reported as an error' `
+    (@($log34 | Where-Object { $_ -match '\[ERROR\]' }).Count -eq 0) `
+    (($log34 | Where-Object { $_ -match '\[ERROR\]' }) -join ' | ')
+Assert 'the run says why it could not prove anything, once' `
+    (@($log34 | Where-Object { $_ -match 'below the 64 MB at which this build is expected to allocate' }).Count -eq 1) `
+    (($log34 | Where-Object { $_ -match 'allocate' }) -join ' | ')
+
+$sum34 = Get-Summary $d34
+Assert 'the summary reports it as inconclusive, not as a fault and not as OK' `
+    ($null -ne $sum34 -and $sum34.Status -eq 'MetricInconclusive' -and
+     $sum34.MetricValidation -eq 'Inconclusive') `
+    ('got [' + $(if ($sum34) { $sum34.Status + '/' + $sum34.MetricValidation } else { 'n/a' }) + ']')
+Assert 'and it publishes the bar it used and where the bar came from' `
+    ($null -ne $sum34 -and $sum34.AllocationEvidenceMB -eq 64 -and
+     $sum34.AllocationEvidenceBasis -eq 'Configured' -and
+     $sum34.NotAllocated -eq 15 -and $sum34.NotPopulated -eq 0) `
+    ('got ' + $(if ($sum34) { '' + $sum34.AllocationEvidenceMB + '/' + $sum34.AllocationEvidenceBasis +
+                              ' notalloc=' + $sum34.NotAllocated + ' notpop=' + $sum34.NotPopulated } else { 'n/a' }))
+
+Write-Host ''
+Write-Host 'T35  a genuine outage still reads as one' -ForegroundColor Cyan
+# The other half of the same guarantee, and the more important half: making the
+# monitor quieter is only correct if it stays loud where it should be. Same
+# MOCK_NOTPOPULATED=all as T34, at the default 5.2 GB - unarguably large enough
+# to have allocated a table. T28 already asserts the exit code and Status here;
+# this adds the verdict fields, which are what a consumer now reads to tell a
+# blind run from a small one.
+$d35 = Reset-Dir '_t35'
+$rc = Invoke-Monitor -OutputPath $d35 -Extra '-ExitNonZeroOnAlert' -WithEnv @{ MOCK_NOTPOPULATED = 'all' }
+Assert 'large mailboxes reading 0 B still exit 5' ($rc -eq 5) ('got exit ' + $rc)
+$sum35 = Get-Summary $d35
+Assert 'and are still called a metric outage, explicitly Blind' `
+    ($null -ne $sum35 -and $sum35.Status -eq 'MetricUnavailable' -and
+     $sum35.MetricValidation -eq 'Blind' -and
+     $sum35.NotPopulated -eq 15 -and $sum35.NotAllocated -eq 0) `
+    ('got [' + $(if ($sum35) { $sum35.Status + '/' + $sum35.MetricValidation +
+                               ' notpop=' + $sum35.NotPopulated + ' notalloc=' + $sum35.NotAllocated } else { 'n/a' }) + ']')
+Assert 'the ERROR pair is intact' `
+    (@(Get-Log $d35 | Where-Object { $_ -match '\[ERROR\].*Treat the thresholds here as untested' }).Count -eq 1) `
+    ((Get-Log $d35 | Where-Object { $_ -match '\[ERROR\]' }) -join ' | ')
+
+Write-Host ''
+Write-Host 'T36  the bar is measured off the estate, not assumed' -ForegroundColor Cyan
+# Where any mailbox has a populated table, the smallest such mailbox is a direct
+# observation of this build's allocation point and beats the configured
+# constant - the same move -ThresholdMode Adaptive already makes.
+#
+# It also exercises the 16 MB clamp. The populated mailboxes here hold 4 MB of
+# content, which as a bar would be a lie: a mailbox that was large when the
+# table was allocated and has since been emptied is a lower bound, not the
+# allocation point. Unclamped it would drag the bar to 4 MB and reclassify the
+# zero-readers as NotPopulated, manufacturing the very outage T34 removed.
+$d36 = Reset-Dir '_t36'
+$rc = Invoke-Monitor -OutputPath $d36 -WithEnv @{ MOCK_NOTPOPULATED = 'partial'; MOCK_MAILBOX_MB = '4' }
+Assert 'the run completes' ($rc -eq 0) ('got exit ' + $rc)
+$sum36 = Get-Summary $d36
+Assert 'one populated table is enough to confirm the counter works' `
+    ($null -ne $sum36 -and $sum36.MetricValidation -eq 'Confirmed' -and $sum36.Status -eq 'OK') `
+    ('got [' + $(if ($sum36) { $sum36.MetricValidation + '/' + $sum36.Status } else { 'n/a' }) + ']')
+Assert 'the bar is observed from the population and clamped to the 16 MB floor' `
+    ($null -ne $sum36 -and $sum36.AllocationEvidenceBasis -eq 'Observed' -and
+     $sum36.AllocationEvidenceMB -eq 16) `
+    ('got ' + $(if ($sum36) { '' + $sum36.AllocationEvidenceMB + '/' + $sum36.AllocationEvidenceBasis } else { 'n/a' }))
+Assert 'and the zero-readers below it are expected, not flagged' `
+    ($null -ne $sum36 -and $sum36.NotAllocated -eq 9 -and $sum36.NotPopulated -eq 0) `
+    ('notalloc=' + $(if ($sum36) { $sum36.NotAllocated } else { 'n/a' }) +
+     ' notpop=' + $(if ($sum36) { $sum36.NotPopulated } else { 'n/a' }))
+
+Write-Host ''
+Write-Host 'T37  a mailbox whose size cannot be read is not accused' -ForegroundColor Cyan
+# TotalItemSize is absent, Unlimited or malformed often enough to matter, and the
+# size test has to fail in the benign direction: a wrong "nothing is wrong" on
+# one row is recoverable, a wrong "your monitoring is blind" on the run trains
+# people to ignore the message.
+#
+# It also covers the collection guard. Convert-ExchangeSizeToBytes throws on a
+# value it cannot parse, which is correct for the posting list table and wrong
+# here - unguarded it would take out the whole row, and on a database where
+# every row threw, the whole database. The evaluated count is the assertion that
+# matters: the rows have to survive.
+$d37 = Reset-Dir '_t37'
+$rc = Invoke-Monitor -OutputPath $d37 -Extra '-ExitNonZeroOnAlert' `
+      -WithEnv @{ MOCK_NOTPOPULATED = 'all'; MOCK_MAILBOX_MB = 'garbage' }
+Assert 'an unreadable size does not raise an alert exit code' ($rc -eq 0) ('got exit ' + $rc)
+$sum37 = Get-Summary $d37
+Assert 'and does not cost the rows' `
+    ($null -ne $sum37 -and $sum37.MailboxesEvaluated -eq 15) `
+    ('evaluated=' + $(if ($sum37) { $sum37.MailboxesEvaluated } else { 'n/a' }))
+Assert 'unjudgeable mailboxes are NotAllocated, never NotPopulated' `
+    (@(Get-Csv $d37 | Where-Object { $_.Status -eq 'NotAllocated' }).Count -eq 15 -and
+     @(Get-Csv $d37 | Where-Object { $_.Status -eq 'NotPopulated' }).Count -eq 0) `
+    ((Get-Csv $d37 | Group-Object Status | ForEach-Object { $_.Name + '=' + $_.Count }) -join ' ')
+Assert 'and the run does not claim to be blind on evidence it does not have' `
+    ($null -ne $sum37 -and $sum37.MetricValidation -eq 'Inconclusive') `
+    ('got [' + $(if ($sum37) { $sum37.MetricValidation } else { 'n/a' }) + ']')
 
 Write-Host ''
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

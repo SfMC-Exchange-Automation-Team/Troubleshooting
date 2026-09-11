@@ -30,7 +30,13 @@ Explicit database names. When omitted, databases are discovered according to
 .PARAMETER Scope
 Local  - databases whose active copy is currently mounted on this server
          (default; correct for a per-server scheduled task in a DAG).
-All    - every mounted database in the organization.
+All    - every mounted database in the organization. Reaches a database
+         mounted on another server only when this script is driven from an
+         Exchange Management Shell session, where store cmdlets are proxied to
+         an Exchange server. Under a bare powershell.exe - which is what a
+         scheduled task runs - the snap-in fallback binds the store in-process,
+         every remote database fails ACCESS_DENIED, and the run reports Partial
+         and exit 2. Use Local per node for scheduled monitoring.
 Ignored when -Databases is supplied.
 
 .PARAMETER ThresholdMode
@@ -73,6 +79,25 @@ backstop for that case.
 Maximum number of per-mailbox alert lines written to the log per category.
 A server in a bad state can hold thousands of at-risk mailboxes, and one log
 line each turns the run into its own disk-space problem.
+
+.PARAMETER AllocationEvidenceMB
+How large a mailbox must be before a 0 B posting list table on it counts as
+evidence that the counter is not being populated. Below this a 0 B reading is
+reported as NotAllocated and means nothing is wrong.
+
+Only used as a fallback. Where any mailbox in scope has a populated table, the
+run calibrates against that instead and this value is ignored - see
+Get-AllocationEvidenceBytes.
+
+The default of 64 MB is deliberately well clear of the measured allocation
+point. On Exchange Server SE 15.2.2562.17 a mailbox holding 6.87 MB still read
+0 B while one holding 16.33 MB had allocated 3.344 MB, so allocation happens
+somewhere between the two. 64 MB is roughly four times the upper bound, which
+keeps a "the counter is blind here" verdict close to unarguable at the cost of
+more runs reporting MetricInconclusive on a small estate.
+
+Lower it if the estate is uniformly small and the inconclusive verdict is
+unhelpful; raise it to demand stronger evidence before the run alerts.
 
 .PARAMETER ExitNonZeroOnAlert
 Return a non-zero exit code when the run has something to say: 1 when at-risk
@@ -123,12 +148,13 @@ Exit codes:
      or collection was cut short by -MaxRunMinutes.
   3  Fatal. Pre-flight failed, or no databases were in scope.
   4  Another instance is already running.
-  5  Completed, but every indexed mailbox in scope reported the posting list
-     table as 0 B, so no threshold in this run could have fired
-     (-ExitNonZeroOnAlert only). Kept distinct from 1 on purpose: 1 means a
-     mailbox crossed a line, 5 means there was no line to cross. Returning 0
-     here would report "nothing found" from a run that could not have found
-     anything.
+  5  Completed, but every mailbox large enough to have allocated a posting
+     list table reported it as 0 B, so no threshold in this run could have
+     fired (-ExitNonZeroOnAlert only). Kept distinct from 1 on purpose: 1
+     means a mailbox crossed a line, 5 means there was no line to cross.
+     Returning 0 here would report "nothing found" from a run that could not
+     have found anything. A scope holding only mailboxes too small to have
+     allocated does not reach this code - see MetricInconclusive below.
   6  Completed, nothing over threshold, but at least one mailbox is projected
      to cross the critical threshold within 3 days (-ExitNonZeroOnAlert only).
      Kept distinct from 1 so that 1 keeps meaning "over the line now": 1 is
@@ -148,25 +174,55 @@ Status values in the detail CSV:
   Warning       at or above the warning threshold
   NotPopulated  BigFunnelPostingListTableTotalSize is 0 B on a mailbox
                 BigFunnel reports as indexed (BigFunnelIndexedCount above
-                zero). The metric this monitor is built on is not being
-                populated for that mailbox, so its size cannot be read as
-                healthy - it cannot be read at all. Confirmed on Exchange
-                Server SE 15.2.2562.17, where a fully indexed mailbox kept
-                its index in BigFunnelTotalPOISize,
-                BigFunnelLargePOITableTotalSize and
+                zero) that is also large enough to have allocated the table.
+                The metric this monitor is built on is not being populated
+                for that mailbox, so its size cannot be read as healthy - it
+                cannot be read at all. Confirmed on Exchange Server SE
+                15.2.2562.17, where a fully indexed mailbox kept its index in
+                BigFunnelTotalPOISize, BigFunnelLargePOITableTotalSize and
                 BigFunnelFilterTableTotalSize while the posting list table
                 stayed at exactly 0 B. Check IndexPayloadBytes for the size
                 that is actually there.
+  NotAllocated  the same 0 B reading on an indexed mailbox holding less
+                content than this build allocates a posting list table at.
+                Expected, not a fault: the table has not been created yet
+                because there is not enough in the mailbox to warrant one.
+                Reported rather than called Normal because the size still
+                cannot be read, but it is not evidence of anything wrong.
+                Mailboxes whose TotalItemSize cannot be parsed, or that
+                report Unlimited, land here too - they cannot be judged
+                either way, and a wrong "nothing is wrong" on one row is
+                cheaper than a wrong "your monitoring is blind" on the run.
   Normal        below the warning threshold, with no contradicting counter
 
-If NotPopulated covers every mailbox that has an index, this build does not
-surface the metric and a clean run proves nothing about posting list growth.
-Treat that as a monitoring gap to raise, not as a pass. The run says so itself
-rather than leaving it to be noticed: Status in latest-summary.json becomes
+Where the allocation bar sits is decided per run, not fixed. Where any mailbox
+in scope has a populated posting list table, the smallest such mailbox is a
+direct observation of this build's allocation point and is used as the bar,
+clamped up to a 16 MB floor. Where none has, -AllocationEvidenceMB is used
+instead. Measured on 15.2.2562.17: 3.45 MB and 6.87 MB of content both read
+0 B, 16.33 MB read 3.344 MB, so allocation happens between the two.
+AllocationEvidenceMB and AllocationEvidenceBasis in latest-summary.json report
+the bar in force and which of the two it came from.
+
+If NotPopulated covers every eligible mailbox, this build does not surface the
+metric and a clean run proves nothing about posting list growth. Treat that as
+a monitoring gap to raise, not as a pass. The run says so itself rather than
+leaving it to be noticed: Status in latest-summary.json becomes
 MetricUnavailable, and the exit code becomes 5 under -ExitNonZeroOnAlert. The
-comparison is against indexed mailboxes rather than all collected rows on
-purpose: health, arbitration, system and archive mailboxes hold no index, so
-they can never reach this state and would otherwise mask a total outage.
+comparison is against eligible mailboxes rather than all collected rows on
+purpose. Health, arbitration, system and archive mailboxes hold no index, so
+they can never reach this state and would otherwise mask a total outage; and
+mailboxes below the allocation bar read 0 B correctly, so counting them as
+witnesses would escalate every small estate to a false outage.
+
+MetricValidation in latest-summary.json carries the run's verdict on its own
+instrument, independent of any threshold:
+  Confirmed     something in scope has a populated table, so the counter
+                demonstrably works here
+  Blind         nothing does, and mailboxes large enough to have allocated
+                are reading 0 B anyway
+  Inconclusive  nothing does, and nothing in scope is large enough to settle
+                it either way
 
 On that build the run still answers which mailbox is next. Growth is measured
 on IndexPayloadBytes, DaysToCritical is left empty on every row, and the log
@@ -211,10 +267,16 @@ Status for the reason itself. latest.csv is only refreshed when a run produced
 detail, so it can legitimately be older than the summary beside it.
 
 Status on a run that completed is one of:
-  OK                 the run collected its scope and the counter was readable
-  Partial            at least one database was not collected (exit code 2)
-  MetricUnavailable  every indexed mailbox in scope reported the posting list
-                     table as 0 B
+  OK                  the run collected its scope and the counter was readable
+  Partial             at least one database was not collected (exit code 2)
+  MetricUnavailable   every eligible mailbox in scope reported the posting
+                      list table as 0 B
+  MetricInconclusive  nothing in scope has a populated posting list table and
+                      nothing in scope is large enough to have allocated one,
+                      so the run cannot say whether the counter works
+
+Reported worst-first where more than one applies: Partial, then
+MetricUnavailable, then MetricInconclusive, then OK.
 
 Completed = false does not cover MetricUnavailable. Such a run completes and
 collects everything asked of it; it just cannot read the one counter it exists
@@ -222,6 +284,14 @@ to read, so every threshold in it was applied to a constant zero and a clean
 result means only that nothing could have been found. Alert on it separately,
 as a monitoring gap rather than a pass. Unlike the exit code, this value is not
 gated on -ExitNonZeroOnAlert.
+
+MetricInconclusive is not a fault and does not move the exit code. It is the
+expected steady state of a small or newly built estate, where every mailbox is
+below the allocation bar and 0 B is the correct reading. It is still reported,
+because a run whose thresholds were never exercised should not read as a run
+that passed them - but alerting on it would fire on every run forever, and an
+alert that always fires is an alert that gets muted. To convert it into a real
+answer, put one mailbox above the bar.
 #>
 
 [CmdletBinding()]
@@ -243,6 +313,12 @@ param(
     [ValidateRange(10, 1000000)]
     [int]$AdaptiveMinimumSample = 100,
 
+    # ValidateNotNullOrEmpty because the documented usage sets $out on a line
+    # above the command, and running the command without that line binds an
+    # empty string here. That reached the pre-flight and exited 3 with
+    # "Cannot bind argument to parameter 'LiteralPath'" - a true message about
+    # the wrong parameter. Rejecting it at bind time names -OutputPath instead.
+    [ValidateNotNullOrEmpty()]
     [string]$OutputPath = (Join-Path $env:ProgramData 'ExchangeBigFunnelPostingListMonitor'),
 
     [ValidateRange(0, 3650)]
@@ -266,13 +342,18 @@ param(
     [ValidateRange(1, 10000)]
     [int]$MaxAlertDetail = 25,
 
+    # Fallback only. See Get-AllocationEvidenceBytes: a run that can see the
+    # allocation point in its own population uses that instead.
+    [ValidateRange(1, 1048576)]
+    [int]$AllocationEvidenceMB = 64,
+
     [switch]$ExitNonZeroOnAlert
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion   = '1.5.0'
+$script:ScriptVersion   = '1.6.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
@@ -481,7 +562,15 @@ function Get-PostingListStatus {
         [Parameter(Mandatory = $true)][int64]$CriticalBytes,
         # Deliberately untyped. PowerShell 5.1 cannot bind $null to [int64], and
         # this arrives as $null on any build that does not expose the counter.
-        $IndexedCount = $null
+        $IndexedCount = $null,
+
+        # Mailbox content size, and the size above which this build is expected
+        # to have allocated a posting list table. Both untyped for the same
+        # reason as $IndexedCount: TotalItemSize is absent or Unlimited on some
+        # mailboxes, and the evidence point is absent when the caller has not
+        # computed one.
+        $MailboxBytes = $null,
+        $EvidenceBytes = $null
     )
 
     if ($Bytes -ge $CriticalBytes) { return 'Critical' }
@@ -498,10 +587,88 @@ function Get-PostingListStatus {
     # the table every mailbox reads healthy and the monitor never alerts.
     # Zero bytes on a demonstrably indexed mailbox means the metric is
     # unavailable here, which is a different fact from "this mailbox is fine".
+    #
+    # But not every such mailbox is evidence of that. The table is allocated
+    # above a content threshold rather than withheld by the build: measured on
+    # the same build, 3.45 MB and 6.87 MB mailboxes read 0 B while a 16.33 MB
+    # one had allocated 3.344 MB. Below the allocation point 0 B is the correct
+    # reading and nothing is wrong, so calling it NotPopulated raises an alarm
+    # on every small mailbox in the estate. That is how the state was behaving
+    # before -AllocationEvidenceMB existed, and on an estate of uniformly small
+    # mailboxes it escalated a whole run to MetricUnavailable, which is a false
+    # positive loud enough to get the monitor muted.
     $indexed = ConvertTo-NullableInt64 $IndexedCount
-    if ($Bytes -eq 0 -and $null -ne $indexed -and $indexed -gt 0) { return 'NotPopulated' }
+    if ($Bytes -eq 0 -and $null -ne $indexed -and $indexed -gt 0) {
+        $size     = ConvertTo-NullableInt64 $MailboxBytes
+        $evidence = ConvertTo-NullableInt64 $EvidenceBytes
+
+        # Unparseable or Unlimited TotalItemSize lands here as $null. The
+        # mailbox cannot be judged either way, so it is reported as the benign
+        # state rather than the alarming one: a wrong "nothing is wrong" on one
+        # row is recoverable, a wrong "your monitoring is blind" trains people
+        # to ignore the message.
+        if ($null -eq $evidence -or $null -eq $size -or $size -lt $evidence) {
+            return 'NotAllocated'
+        }
+        return 'NotPopulated'
+    }
 
     return 'Normal'
+}
+
+function Get-AllocationEvidenceBytes {
+    # How large a mailbox has to be before its 0 B posting list table counts as
+    # evidence that the counter is not being populated at all.
+    #
+    # Preferring the population over the configured constant is the same move
+    # -ThresholdMode Adaptive already makes, and for the same reason: the
+    # estate in front of the script is better evidence about this build than a
+    # number chosen in advance. Where any mailbox has a populated table, the
+    # smallest such mailbox *is* an observation of the allocation point, so it
+    # is used directly.
+    #
+    # Clamped to a floor because the smallest populated mailbox is only an
+    # upper bound on the allocation point, and a mailbox that was large when
+    # the table was allocated and has since been emptied is a lower one that
+    # lies. Without the clamp a single archived mailbox reading 40 MB of table
+    # against 2 MB of content would drop the bar to 2 MB and reclassify most of
+    # a healthy estate as NotPopulated. The clamp can only ever move the bar
+    # up, which errs toward "expected" - the safe direction, because the cost
+    # of a missed outage is one quiet run and the cost of a false outage is a
+    # muted monitor.
+    [CmdletBinding()]
+    param(
+        # Not mandatory, and deliberately so: a run that collected nothing still
+        # reaches this call, and 5.1 refuses to bind an empty collection to a
+        # mandatory parameter. An empty population is a legitimate answer here -
+        # it observes nothing and falls through to the configured value.
+        $Rows = @(),
+        [Parameter(Mandatory = $true)][int64]$FallbackBytes
+    )
+
+    # 16 MB: the smallest mailbox measured on 15.2.2562.17 that had actually
+    # allocated. Anything below this is a size the table was observed *not* to
+    # be allocated at, so it cannot be a credible allocation point.
+    $floor = 16MB
+
+    $observed = $null
+    foreach ($r in $Rows) {
+        $pl = ConvertTo-NullableInt64 (Get-SafeProperty -InputObject $r -Name 'PostingListBytes')
+        if ($null -eq $pl -or $pl -le 0) { continue }
+
+        $size = ConvertTo-NullableInt64 (Get-SafeProperty -InputObject $r -Name 'TotalItemBytes')
+        if ($null -eq $size) { continue }
+
+        if ($null -eq $observed -or $size -lt $observed) { $observed = $size }
+    }
+
+    if ($null -ne $observed) {
+        $bytes = [int64]$observed
+        if ($bytes -lt $floor) { $bytes = [int64]$floor }
+        return [pscustomobject]@{ Bytes = $bytes; Basis = 'Observed' }
+    }
+
+    return [pscustomobject]@{ Bytes = $FallbackBytes; Basis = 'Configured' }
 }
 
 function Get-TrendMetricForRow {
@@ -715,6 +882,18 @@ function Write-RunSummary {
         # the reason. The single field an alert rule should key on.
         Completed            = $false
         Status               = ''
+        # The run's verdict on its own instrument, independent of any threshold:
+        # Confirmed, Blind or Inconclusive. Read it before trusting an all-clear
+        # - a Blind or Inconclusive run applied every threshold to a constant
+        # zero, and only one of those two is a fault.
+        MetricValidation     = ''
+        # The bar in force this run, and where it came from. Observed means it
+        # was derived from the smallest mailbox in scope that had allocated a
+        # posting list table, which is a direct measurement of this build's
+        # allocation point. Configured means nothing had allocated one and
+        # -AllocationEvidenceMB was used instead.
+        AllocationEvidenceMB    = 0
+        AllocationEvidenceBasis = ''
         ThresholdMode        = ''
         # What actually applied. Adaptive falls back to Fixed on a small or
         # tightly clustered population, and a consumer comparing runs needs to
@@ -738,10 +917,16 @@ function Write-RunSummary {
         Shrinking            = 0
         SearchHealthIssues   = 0
         # Mailboxes BigFunnel reports as indexed whose posting list table is
-        # nonetheless 0 B. A non-zero count here means the metric this monitor
-        # is built on is not populated on this build, and a clean run says
-        # nothing about posting list growth.
+        # nonetheless 0 B, and which are large enough that it should not be. A
+        # non-zero count here means the metric this monitor is built on is not
+        # populated on this build, and a clean run says nothing about posting
+        # list growth.
         NotPopulated         = 0
+        # The same 0 B reading below the allocation bar, where it is the correct
+        # reading rather than a fault. Counted separately so that a small estate
+        # is not mistaken for a blind one - conflating the two is what made an
+        # earlier version escalate every lab to a metric outage.
+        NotAllocated         = 0
         SkippedUnparseable   = 0
         # Present but unreadable - Unlimited, or an empty property. Separate
         # from SkippedUnparseable because the causes differ, and both are
@@ -973,7 +1158,7 @@ try {
                 ForEach-Object { [string](Get-SafeProperty $_ 'Name') })
 
             if ($targets.Count -eq 0 -and $all.Count -gt 0) {
-                Write-RunLog ('No active database copies are mounted on {0}. {1} database(s) are mounted elsewhere in the DAG; use -Scope All or schedule this on the active node.' -f $me, $all.Count) 'WARN'
+                Write-RunLog ('No active database copies are mounted on {0}. {1} database(s) are mounted elsewhere in the DAG. Expected on a passive member: register this task on every DAG member, so whichever node holds the active copy is the node that collects it. -Scope All is not a substitute - from a scheduled task it cannot reach a database mounted on another node.' -f $me, $all.Count) 'WARN'
             }
         }
         else {
@@ -1091,6 +1276,22 @@ try {
                         if ($null -ne $part) { $payload = [int64]$payload + [int64]$part }
                     }
 
+                    # Convert-ExchangeSizeToBytes throws on a value it cannot
+                    # parse, which is right for the posting list table - that is
+                    # the counter this script exists to read, and swallowing a
+                    # bad reading there would report a fault as a healthy zero.
+                    # It is wrong here. TotalItemSize is only ever used to decide
+                    # whether a 0 B posting list table is expected, so an
+                    # unreadable one means "cannot judge this mailbox", not
+                    # "abandon the row". Letting it throw would take out the
+                    # whole mailbox, and on a database where it threw for every
+                    # row, the whole database.
+                    $mailboxBytes = $null
+                    try {
+                        $mailboxBytes = Convert-ExchangeSizeToBytes -SizeValue (Get-SafeProperty $stat 'TotalItemSize')
+                    }
+                    catch { $mailboxBytes = $null }
+
                     $results.Add([pscustomobject]@{
                         # Round-trip format: unambiguous for any downstream
                         # parser regardless of the collecting server's locale.
@@ -1101,6 +1302,13 @@ try {
                         MailboxGuid                        = [string](Get-SafeProperty $stat 'MailboxGuid')
                         ItemCount                          = Get-SafeProperty $stat 'ItemCount'
                         TotalItemSize                      = [string](Get-SafeProperty $stat 'TotalItemSize')
+                        # Parsed alongside the display string because the
+                        # allocation-evidence test compares against it and
+                        # cannot re-derive it from the formatted text without
+                        # re-implementing Convert-ExchangeSizeToBytes. Null on
+                        # an Unlimited or unparseable value, which the status
+                        # classifier treats as "cannot judge".
+                        TotalItemBytes                     = $mailboxBytes
                         BigFunnelPostingListTableTotalSize = [string]$raw
                         PostingListBytes                   = $bytes
                         PostingListGB                      = [math]::Round(($bytes / 1GB), 3)
@@ -1224,10 +1432,22 @@ try {
     Write-RunLog ('Thresholds in force ({0}): warning {1} GB, critical {2} GB.' -f
         $thresholdBasis, [math]::Round($warningBytes / 1GB, 3), [math]::Round($criticalBytes / 1GB, 3))
 
+    # Computed before the status loop because it needs the whole population:
+    # the cheapest evidence about where this build allocates the posting list
+    # table is a mailbox on which it already has.
+    $evidence = Get-AllocationEvidenceBytes -Rows $results `
+        -FallbackBytes ([int64]$AllocationEvidenceMB * 1MB)
+
+    Write-RunLog ('A 0 B posting list table counts as evidence of a metric outage above {0} MB of mailbox content ({1}).' -f
+        [math]::Round($evidence.Bytes / 1MB, 1),
+        $(if ($evidence.Basis -eq 'Observed') { 'observed from the smallest mailbox in scope that has allocated one' } else { 'configured, no mailbox in scope has allocated one' }))
+
     foreach ($row in $results) {
         $row.Status = Get-PostingListStatus -Bytes ([int64]$row.PostingListBytes) `
             -WarningBytes $warningBytes -CriticalBytes $criticalBytes `
-            -IndexedCount $row.BigFunnelIndexedCount
+            -IndexedCount $row.BigFunnelIndexedCount `
+            -MailboxBytes $row.TotalItemBytes `
+            -EvidenceBytes $evidence.Bytes
     }
 
     #endregion
@@ -1272,8 +1492,17 @@ try {
         # warning above already announces that, once, and an operator scanning
         # the log for it should find one line, not two. This line answers the
         # next question instead - what the run did about it.
-        Write-RunLog ('Growth on this run is split across two counters. {0} of {1} mailbox(es) in scope carry no posting list table reading and are trended on IndexPayloadBytes; the remaining {2} are trended on BigFunnelPostingListTableTotalSize. Both reports below are real: the posting list rows carry a projected date, and the IndexPayloadBytes rows carry a ranking and no date, for the reason given above. Do not read a short Emerging list as the whole answer on a run like this - it can only ever name mailboxes the thresholds can see.' -f
-            $payloadRows.Count, $results.Count, $postingRows.Count) 'WARN'
+        #
+        # The denominator is the trended population, not the scope. It used to be
+        # $results.Count, which on the lab estate printed "20 of 50 ... the
+        # remaining 3" - and 20 plus 3 is not 50. The 27 unaccounted mailboxes
+        # were the ones carrying no index at all, which are trended on neither
+        # counter and have no business being in a sentence that splits a total in
+        # two. The two row sets are disjoint by construction: Get-TrendMetricForRow
+        # returns PostingListBytes wherever that counter has a reading, so a
+        # mailbox can be in one list or the other but never both.
+        Write-RunLog ('Growth on this run is split across two counters. Of the {1} mailbox(es) carrying a reading to trend, {0} have no posting list table and are trended on IndexPayloadBytes; the other {2} are trended on BigFunnelPostingListTableTotalSize. Both reports below are real: the posting list rows carry a projected date, and the IndexPayloadBytes rows carry a ranking and no date, for the reason given above. Do not read a short Emerging list as the whole answer on a run like this - it can only ever name mailboxes the thresholds can see.' -f
+            $payloadRows.Count, ($payloadRows.Count + $postingRows.Count), $postingRows.Count) 'WARN'
     }
 
     # The warning threshold is only useful if it buys lead time, and lead time
@@ -1426,7 +1655,13 @@ try {
     # rows above Critical. It ranks below Warning because it is a statement
     # about the metric, not about the mailbox, but above Normal because it is
     # the one row type a reader must not skim past.
-    $rank = @{ 'Critical' = 0; 'Warning' = 1; 'NotPopulated' = 2; 'Normal' = 3 }
+    #
+    # NotAllocated sits between the two. It is a benign state - the mailbox is
+    # simply too small to have allocated a table yet - so it must not rank with
+    # NotPopulated, which is a monitoring fault. It stays above Normal only so
+    # that the rows the thresholds could not be applied to are grouped together
+    # rather than scattered through the healthy population.
+    $rank = @{ 'Critical' = 0; 'Warning' = 1; 'NotPopulated' = 2; 'NotAllocated' = 3; 'Normal' = 4 }
 
     # The size key follows whichever counter is in use, for the same reason the
     # ranking below does. PostingListBytes is zero on every row of a 0 B build,
@@ -1460,9 +1695,10 @@ try {
         $exitCode = 2
     }
 
-    $atRisk = @($sorted | Where-Object { $_.Status -in @('Warning', 'Critical') })
-    $crit   = @($atRisk | Where-Object { $_.Status -eq 'Critical' })
-    $notPop = @($sorted | Where-Object { $_.Status -eq 'NotPopulated' })
+    $atRisk   = @($sorted | Where-Object { $_.Status -in @('Warning', 'Critical') })
+    $crit     = @($atRisk | Where-Object { $_.Status -eq 'Critical' })
+    $notPop   = @($sorted | Where-Object { $_.Status -eq 'NotPopulated' })
+    $notAlloc = @($sorted | Where-Object { $_.Status -eq 'NotAllocated' })
 
     Write-RunLog ('Summary: {0} mailbox(es) evaluated, {1} critical, {2} warning, {3} database(s) failed.' -f
         $sorted.Count, $crit.Count, ($atRisk.Count - $crit.Count), $script:FailedDbs.Count)
@@ -1474,31 +1710,88 @@ try {
     # the lab, 44 of 66 rows were in that category, which would have pinned a
     # total outage at WARN forever. Count only mailboxes that have an index,
     # because those are the only ones the posting list table could describe.
-    $indexedPop = @($sorted | Where-Object {
+    #
+    # Narrowed further to mailboxes large enough to have allocated a table. An
+    # indexed 4 MB mailbox reading 0 B is not evidence of anything; including it
+    # in the denominator was what let a lab estate of small mailboxes escalate
+    # itself to a full metric outage. Only mailboxes that should have allocated
+    # can testify that the counter is blind.
+    $eligible = @($sorted | Where-Object {
         $c = ConvertTo-NullableInt64 $_.BigFunnelIndexedCount
-        $null -ne $c -and $c -gt 0
+        $s = ConvertTo-NullableInt64 $_.TotalItemBytes
+        $null -ne $c -and $c -gt 0 -and $null -ne $s -and $s -ge $evidence.Bytes
     })
 
-    # Loud on purpose. If the posting list table is empty across an indexed
-    # population, every threshold in this script is being applied to a constant
-    # zero, and a clean run means only that nothing could ever have been found.
+    $populated = @($sorted | Where-Object {
+        $pl = ConvertTo-NullableInt64 $_.PostingListBytes
+        $null -ne $pl -and $pl -gt 0
+    })
+
+    # Three-way, because "the counter did not report anything" and "the counter
+    # cannot report anything" are different facts and only one of them is a
+    # problem. The old two-way version collapsed them and alarmed on both.
+    #
+    #   Confirmed     something in scope has a populated table, so the counter
+    #                 demonstrably works on this build
+    #   Blind         nothing has one, and mailboxes large enough to have
+    #                 allocated are reading 0 B anyway - a real monitoring gap
+    #   Inconclusive  nothing has one, and nothing in scope is large enough to
+    #                 prove it either way
     #
     # The flag is carried out of the block because it has to reach both the exit
     # code and the summary. Logging two ERROR lines and then reporting Status OK
     # with exit 0 is the same false negative NotPopulated was added to prevent,
     # moved one layer up: the CSV stops calling a blind mailbox healthy, and then
     # the run calls itself healthy anyway.
-    $metricUnavailable = $false
+    $metricUnavailable  = $false
+    $metricInconclusive = $false
 
+    if ($populated.Count -gt 0) {
+        $metricValidation = 'Confirmed'
+    }
+    elseif ($eligible.Count -gt 0) {
+        $metricValidation = 'Blind'
+    }
+    else {
+        $metricValidation = 'Inconclusive'
+    }
+
+    # Loud on purpose, but only here. If the posting list table is empty across
+    # a population that should have allocated one, every threshold in this
+    # script is being applied to a constant zero, and a clean run means only
+    # that nothing could ever have been found.
     if ($notPop.Count -gt 0) {
-        $total = $notPop.Count -ge $indexedPop.Count
+        $total = $metricValidation -eq 'Blind' -and $notPop.Count -ge $eligible.Count
         $metricUnavailable = $total
         $lvl   = if ($total) { 'ERROR' } else { 'WARN' }
-        Write-RunLog ('{0} of {1} indexed mailbox(es) ({2} evaluated in total) report BigFunnelIndexedCount above zero while BigFunnelPostingListTableTotalSize reads 0 B. On those mailboxes the index is present but is not accounted for in the posting list table, so this run cannot speak to posting list growth. Verified on Exchange Server SE 15.2.2562.17, where the index sits in the POI and filter tables instead; see the IndexPayloadBytes column.' -f
-            $notPop.Count, $indexedPop.Count, $sorted.Count) $lvl
+        Write-RunLog ('{0} of {1} eligible mailbox(es) ({2} evaluated in total) hold more than {3} MB and report BigFunnelIndexedCount above zero while BigFunnelPostingListTableTotalSize reads 0 B. On those mailboxes the index is present but is not accounted for in the posting list table, so this run cannot speak to posting list growth. Verified on Exchange Server SE 15.2.2562.17, where the index sits in the POI and filter tables instead; see the IndexPayloadBytes column.' -f
+            $notPop.Count, $eligible.Count, $sorted.Count,
+            [math]::Round($evidence.Bytes / 1MB, 1)) $lvl
         if ($total) {
-            Write-RunLog 'Every indexed mailbox in scope is in this state, so no mailbox in this run could ever have crossed a threshold. Treat the thresholds here as untested, not as passed.' 'ERROR'
+            Write-RunLog 'Every eligible mailbox in scope is in this state, so no mailbox in this run could ever have crossed a threshold. Treat the thresholds here as untested, not as passed.' 'ERROR'
         }
+    }
+
+    # Not an alert. Nothing is wrong here - the run simply has no mailbox big
+    # enough to say whether the counter works, which is the expected state on a
+    # small or newly built estate. Said out loud anyway, because a run whose
+    # thresholds were never exercised should not read as a run that passed
+    # them. WARN rather than ERROR, and the exit code is left alone: this fires
+    # on every run of a permanently small estate, and an alert that always
+    # fires is an alert that gets muted.
+    if ($metricValidation -eq 'Inconclusive' -and $notAlloc.Count -gt 0) {
+        $metricInconclusive = $true
+
+        $largest = 0
+        foreach ($r in $notAlloc) {
+            $s = ConvertTo-NullableInt64 $r.TotalItemBytes
+            if ($null -ne $s -and $s -gt $largest) { $largest = $s }
+        }
+
+        Write-RunLog ('{0} indexed mailbox(es) report 0 B, and all of them are below the {1} MB at which this build is expected to allocate a posting list table - the largest holds {2} MB. That is the expected reading for a mailbox that size, not a fault, so no mailbox here is flagged. It also means no threshold in this run was tested: nothing in scope is large enough to show whether the counter works. Seed or wait for a mailbox above {1} MB to settle this either way.' -f
+            $notAlloc.Count,
+            [math]::Round($evidence.Bytes / 1MB, 1),
+            [math]::Round($largest / 1MB, 1)) 'WARN'
     }
 
     if ($atRisk.Count -gt 0) {
@@ -1699,8 +1992,25 @@ try {
         # than signalling it, and a caller reading this file is entitled to know
         # the metric was blind whether or not it asked for alert exit codes.
         # Ordered worst-first: a database that was never collected outranks a
-        # counter that read zero, because the second is at least a complete run.
-        Status               = $(if ($exitCode -eq 2) { 'Partial' } elseif ($metricUnavailable) { 'MetricUnavailable' } else { 'OK' })
+        # counter that read zero, which in turn outranks a run that could not
+        # tell whether the counter works, because that last one is not a fault
+        # at all - it is a scope too small to prove anything either way.
+        Status               = $(
+            if ($exitCode -eq 2)         { 'Partial' }
+            elseif ($metricUnavailable)  { 'MetricUnavailable' }
+            elseif ($metricInconclusive) { 'MetricInconclusive' }
+            else                         { 'OK' }
+        )
+        # Confirmed: something in scope has a populated posting list table, so
+        # the counter demonstrably works on this build. Blind: nothing is
+        # populated and something large enough to have been is sitting at 0 B.
+        # Inconclusive: nothing is populated and nothing in scope is big enough
+        # to settle it. Read this before trusting an all-clear.
+        MetricValidation     = $metricValidation
+        AllocationEvidenceMB = [math]::Round($evidence.Bytes / 1MB, 1)
+        # Observed = derived from the smallest populated mailbox in this run.
+        # Configured = nothing was populated, so -AllocationEvidenceMB was used.
+        AllocationEvidenceBasis = $evidence.Basis
         ThresholdMode        = $ThresholdMode
         ThresholdBasis       = $thresholdBasis
         WarningGB            = [math]::Round($warningBytes / 1GB, 3)
@@ -1718,6 +2028,10 @@ try {
         Shrinking            = $shrinking.Count
         SearchHealthIssues   = $healthIssues.Count
         NotPopulated         = $notPop.Count
+        # Indexed, reading 0 B, and below the allocation evidence bar. Expected,
+        # not a fault. Counted separately so a consumer can see the difference
+        # between "the counter is blind" and "these mailboxes are small".
+        NotAllocated         = $notAlloc.Count
         SkippedUnparseable   = $script:ParseFailures
         SkippedNoSize        = $script:NoSizeValue
         MissingProperty      = $script:PropertyMissing
