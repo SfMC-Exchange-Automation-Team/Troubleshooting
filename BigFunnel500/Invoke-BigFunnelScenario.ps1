@@ -320,11 +320,14 @@ Write-Host ('  {0} mailbox(es) collected' -f $rows.Count)
 
 # A probe that exited 2 collected some databases and dropped others, and every
 # figure below is therefore drawn from a slice of the estate. Saying so is not
-# pedantry: the reachability report reads as a statement about the whole estate,
-# and the most common way to land here is running -Scope All from a scheduled
-# task, where the monitor's Add-PSSnapin fallback binds the store in-process and
-# cannot reach a database mounted on another node. That drops every remote
-# database and still produces a plausible-looking report.
+# pedantry: the reachability report reads as a statement about the whole estate.
+#
+# This used to be mostly an artefact of how the monitor was invoked - under the
+# in-process snap-in a -Scope All run dropped every database mounted on another
+# node. The monitor now opens its own Exchange runspace and the snap-in is never
+# used, so a Partial here means a database genuinely could not be collected:
+# dismounted, RBAC, or a real store problem. Worth reading rather than
+# explaining away.
 if ($probeExit -eq 2) {
     $probeSummaryPath = Join-Path $probeDir 'latest-summary.json'
     $dropped = ''
@@ -338,10 +341,9 @@ if ($probeExit -eq 2) {
     if (-not [string]::IsNullOrWhiteSpace($dropped)) {
         Write-Host ('  Not collected: {0}' -f $dropped) -ForegroundColor Yellow
     }
-    if ($Scope -eq 'All') {
-        Write-Host '  -Scope All reaches databases on other nodes only from an Exchange' -ForegroundColor Yellow
-        Write-Host '  Management Shell. Run this from EMS, or use -Scope Local per node.' -ForegroundColor Yellow
-    }
+    Write-Host '  Check those databases are mounted and that this account has an' -ForegroundColor Yellow
+    Write-Host '  Exchange RBAC role covering them. The monitor log names the reason' -ForegroundColor Yellow
+    Write-Host '  per database.' -ForegroundColor Yellow
 }
 
 # The evidence bar the monitor applies when nothing overrides it, so the

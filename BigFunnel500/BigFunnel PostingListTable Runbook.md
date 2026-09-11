@@ -227,10 +227,13 @@ When evaluating mailbox search health, review additional BigFunnel properties. T
 
 From its second run onwards it also compares each mailbox against an earlier collection, derives a growth rate, and ranks the mailboxes that are not yet over the threshold by how soon they are projected to cross it. On builds where the posting list table reads `0 B` it still ranks them, by growth rate, without projecting a date. See [Ranking mailboxes by how soon they cross](#ranking-mailboxes-by-how-soon-they-cross) for how to read that output.
 
-Run it in Exchange Management Shell, or in any PowerShell session where the Exchange cmdlets are available. It targets Windows PowerShell 5.1 and takes no dependency on anything outside the Exchange management tools.
+Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchange Management Shell: the script opens its own remote Exchange runspace against the local server's PowerShell vdir, and reuses an existing import when it finds one, so running it from EMS costs nothing extra. It takes no dependency on anything outside the Exchange management tools.
+
+> [!IMPORTANT]
+> **The in-process Exchange snap-in is never used, and that is deliberate.** A store cmdlet loaded by `Add-PSSnapin` binds the store from the calling process, and an in-process bind reaches only a store on the same server - so a `-Scope All` run under it drops every database mounted on another DAG member and still writes a complete-looking summary. Measured on a three-node DAG, same server and minute: the snap-in collected 50 mailboxes across 2 of 4 databases and reported `Partial`; the runspace collected 97 across all 4 and reported `OK`. A run that cannot open a runspace exits `3` rather than collecting a subset. `-ConnectionUri` points at another Exchange server in the organisation where the local vdir is not the one to use; it does not have to be the node holding the database. `latest-summary.json` records which binding was used in `Binding`, and where, in `ConnectionUri`.
 
 > [!NOTE]
-> **A clean run prints nothing to the console.** Every line goes to the run log and to `Write-Verbose`; only `ERROR` and `FATAL` surface interactively, as warnings. That is correct for the scheduled task this script is built for, where console output goes nowhere - but run by hand it looks like a hang, particularly from a session where the Exchange snap-in has to be loaded first, which is itself silent and can take a minute. Add `-Verbose` to watch a run as it happens, or read `latest-summary.json` and the log afterwards. Silence is a working run, and `$LASTEXITCODE` carries the verdict.
+> **A clean run prints nothing to the console.** Every line goes to the run log and to `Write-Verbose`; only `ERROR` and `FATAL` surface interactively, as warnings. That is correct for the scheduled task this script is built for, where console output goes nowhere - but run by hand it looks like a hang, particularly during the first few seconds while the Exchange runspace is being opened and its proxies imported, which is itself silent. Add `-Verbose` to watch a run as it happens, or read `latest-summary.json` and the log afterwards. Silence is a working run, and `$LASTEXITCODE` carries the verdict.
 
 > [!IMPORTANT]
 > Run the file, not a copy assembled out of this article. Earlier revisions of this runbook carried the whole script inline, and a copy taken from one of those has no `-Scope`, `-ThresholdMode`, `-MaxRunMinutes` or `-ExitNonZeroOnAlert`, writes neither `latest.csv` nor `latest-summary.json`, and has neither the `MetricUnavailable` status nor exit code `5`. Every exit code, contract and lab result described in this article refers to the file in this folder. The excerpts below are quoted from it for reading, and are not a substitute for it.
@@ -300,15 +303,17 @@ param(
 )
 ```
 
-The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Four parameters exist mainly because a monitoring integration needs them:
+The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Six parameters exist mainly because a monitoring integration needs them:
 
 | Parameter | Effect |
 |---|---|
-| `-Scope` | `Local`, the default, collects only the databases whose active copy is mounted on this node. That is what makes one scheduled task correct on every DAG member and correct again after a switchover. `All` collects every database in the organization, which is right on exactly one member and wrong on all the others - and reaches the databases on those other members only when the run is driven from a real Exchange Management Shell session. From a scheduled task it collapses to the local ones and reports `Partial`. See [When `-Scope All` returns Partial](#when--scope-all-returns-partial) |
+| `-Scope` | `Local`, the default, collects only the databases whose active copy is mounted on this node. That is what makes one scheduled task correct on every DAG member and correct again after a switchover. `All` collects every database in the organization, from any invocation including a scheduled task, because the script binds through an Exchange runspace rather than the in-process snap-in. Right on exactly one member and redundant on the others, so it suits an ad-hoc sweep rather than monitoring. See [`-Scope All`, and what a Partial means now](#-scope-all-and-what-a-partial-means-now) |
 | `-ThresholdMode` | `Fixed` applies `-WarningGB` and `-CriticalGB` as given. `Adaptive` raises them to the collected population's 95th and 99th percentile where those sit higher, never lowers them, and falls back to the fixed values when fewer than `-AdaptiveMinimumSample` mailboxes were collected or when the two percentiles fail to separate |
 | `-MaxRunMinutes` | A collection budget. Reaching it ends the run early and reports exit code `2`, so a collection cut short is never reported as a clean one |
 | `-ExitNonZeroOnAlert` | Turns findings into the non-zero exit codes `1` and `5`. Without it the script exits `0` for anything short of a breakage and reports its findings through `latest-summary.json` only |
 | `-AllocationEvidenceMB` | The mailbox size, in MB, above which a `0 B` posting list table counts as evidence that the counter is not being populated. **A fallback only**: where any mailbox in scope has a populated table, the script measures the bar off the estate instead and ignores this value. Default `64`, roughly four times the upper bound of the measured allocation range, so a `Blind` verdict reached under it is close to unarguable. Lower it only if you have measured a lower allocation point on your own build; raising it makes the script slower to call a real outage |
+| `-ConnectionUri` | The Exchange runspace to bind through. Empty by default, which means this server's own PowerShell vdir, built from its FQDN at run time. Any Exchange server in the organization is a valid target - it does not have to be the node holding the databases being collected |
+| `-Credential` | Only needed where the account running the script cannot authenticate to that runspace on its own. A scheduled task running as a domain account normally can: measured on a lab DAG, a task with a batch logon opened the runspace with Kerberos and no credential |
 
 ### How a mailbox is classified
 
@@ -500,9 +505,11 @@ A passive member still writes a log file on every run, so it is also the node wh
 
 Do not try to cover the DAG from one node by naming every database in `-Databases`. It works while that node is up, and stops silently when it is not.
 
-#### When `-Scope All` returns Partial
+#### `-Scope All`, and what a Partial means now
 
-A scheduled task registered with `-Scope All` reports exit code `2` and `Status = Partial` on every run, and `FailedDatabases` in `latest-summary.json` names every database whose active copy is mounted on another node. The log carries one entry per dropped database:
+`-Scope All` works from any invocation, including a scheduled task, because the monitor opens its own Exchange runspace rather than loading the snap-in. So a `Partial` from a `-Scope All` run is a real finding about the estate: a database that is dismounted, outside this account's RBAC, or genuinely unreachable. Read `FailedDatabases` in `latest-summary.json` and the per-database reason in the log, and treat it as a collection failure rather than an artefact of how the run was started.
+
+That was not always true, and an older build or an older log will show the difference. Under the in-process snap-in the same run reported `Partial` on **every** execution, naming every database whose active copy was mounted on another node:
 
 ```text
 Exchange Information Store on server 'ex01.contoso.com' is inaccessible.
@@ -511,38 +518,20 @@ Exchange Information Store on server 'ex01.contoso.com' is inaccessible.
   Lid: 12514 Win32Error: 0x5
 ```
 
-**This is a constraint of how the run was invoked, not a fault in the estate.** `Win32Error: 0x5` is `ACCESS_DENIED`, and the call fails in under a second rather than timing out, which is the tell: nothing was ever attempted on the wire.
+`Win32Error: 0x5` is `ACCESS_DENIED`, and the call failed in under a second rather than timing out - the tell that nothing was attempted on the wire. If you see that signature, you are looking at output from a build before `1.7.0`, or at another script that still loads the snap-in. It is not a fault on the server named in the message.
 
-The mechanism is the script's own fallback. When `Get-MailboxStatistics` is not already present in the session, the monitor loads the Exchange management snap-in into the calling process. A store cmdlet loaded that way makes the store admin bind *from that process*, and an in-process bind can only reach a store on the same server. A real Exchange Management Shell session is not a snap-in - it is a remote runspace, and the cmdlet is proxied to an Exchange server that makes the store call in its own service context. That is the difference, and it is the whole difference.
-
-So `-Scope All` does what its help says, from EMS. `powershell.exe -NoProfile -File` is not EMS, which means the recommended scheduled-task registration is exactly the invocation where `-Scope All` cannot work. Measured on a three-node DAG, same node, same account, seconds apart:
-
-| Invoked as | Exit | Mailboxes | Databases | Failed |
-|---|---:|---:|---:|---:|
-| `powershell.exe -File` (scheduled-task style) | `2` | 5 | 1 | 3 |
-| Same script inside an imported EMS runspace | `0` | 97 | 4 | 0 |
-
-Two things follow that are easy to get wrong while triaging this:
+Two things follow that are easy to get wrong while triaging any in-process store binding, and they still apply to other scripts:
 
 - **Not every cross-node Exchange call fails, so a working call proves nothing.** `Get-MailboxDatabaseCopyStatus` and `Get-ServerHealth` against the same peer succeed from the same failing session, because neither touches the store. Only store admin calls fail: `Get-MailboxStatistics -Database`, `Get-MailboxStatistics -Identity`, and `Get-LogonStatistics -Database`.
 - **`Test-MAPIConnectivity -Server <peer>` is not a valid second opinion.** Run from the same session it fails the same way, which reads like a store outage on the peer and sends the investigation to the wrong host. It is measuring the invocation, not the peer.
 
-The fix is to leave `-Scope` at its default. `Local` on every node covers the DAG, needs no Exchange session, and is unaffected by all of the above. Where a single org-wide run is genuinely wanted - an ad-hoc estate sweep rather than monitoring - bootstrap the runspace before invoking the monitor:
+For scheduled monitoring, still leave `-Scope` at its default. `Local` on every node covers the DAG, survives a switchover with no reconfiguration, and spreads the collection across the members that own the data instead of funnelling every store call through one runspace. Reserve `-Scope All` for an ad-hoc estate-wide sweep from one place:
 
 ```powershell
-$s = New-PSSession -ConfigurationName Microsoft.Exchange `
-        -ConnectionUri 'http://ex01.contoso.com/PowerShell/' -Authentication Kerberos
-Import-PSSession -Session $s -AllowClobber -DisableNameChecking `
-    -CommandName Get-MailboxStatistics, Get-MailboxDatabase, Get-ExchangeServer, Get-Mailbox |
-    Out-Null
-
-# Get-MailboxStatistics now exists as a proxy function, so the snap-in fallback
-# never fires and every store call is made by the Exchange server, not by this
-# process.
 & 'C:\Scripts\Monitor-BigFunnelPostingList.ps1' -Scope All -OutputPath 'C:\Temp\Sweep'
 ```
 
-One consequence for reading the logs: a passive member running at `-Scope Local` logs a `WARN` recommending `-Scope All` or scheduling on the active node. **Only the second half of that advice works in a scheduled task**, and neither is needed if the task is registered on every member as this section describes.
+One consequence for reading the logs: a passive member running at `-Scope Local` logs a `WARN` saying no active copies are mounted there and pointing at the two ways round it. Both now work. Neither is needed if the task is registered on every member as this section describes, which remains the recommendation.
 
 ### Ranking mailboxes by how soon they cross
 

@@ -146,7 +146,8 @@ Exit codes:
   1  Completed, at-risk mailboxes found (-ExitNonZeroOnAlert only).
   2  Completed with partial failure. At least one database was not collected,
      or collection was cut short by -MaxRunMinutes.
-  3  Fatal. Pre-flight failed, or no databases were in scope.
+  3  Fatal. Pre-flight failed, no databases were in scope, or no Exchange
+     runspace could be opened.
   4  Another instance is already running.
   5  Completed, but every mailbox large enough to have allocated a posting
      list table reported it as 0 B, so no threshold in this run could have
@@ -250,6 +251,19 @@ Requires Exchange RBAC permission to run:
 - Get-MailboxDatabase
 - Get-MailboxStatistics
 
+It binds those three through a remote Exchange runspace, opening one against
+this server's PowerShell vdir when the session does not already have one, and
+reusing an existing import when it does. The in-process snap-in is never used.
+That is a hard requirement, not a preference: the snap-in binds the store
+in-process and cannot read a database mounted on another DAG member, so a
+-Scope All run under it drops every remote database and still reports a
+complete-looking result. Measured on a 3-node DAG, same server and minute, the
+snap-in saw 50 mailboxes across 2 of 4 databases and the runspace saw 97 across
+all 4. A run that cannot open a runspace exits 3 rather than collecting a
+subset. Where the local vdir is not the one to use, -ConnectionUri points at
+any other Exchange server in the organisation; it does not have to be the node
+holding the database.
+
 Outputs, written to -OutputPath:
   BigFunnelPostingListMonitor-<runId>.csv   per-run detail, retained
   BigFunnelPostingListMonitor-<runId>.log   per-run log, retained
@@ -347,17 +361,36 @@ param(
     [ValidateRange(1, 1048576)]
     [int]$AllocationEvidenceMB = 64,
 
+    # Empty means this server, built from its own FQDN at run time. Point it at
+    # another Exchange server where the local PowerShell vdir is not the one to
+    # use - the runspace only has to be an Exchange server in the same
+    # organisation, not the node holding any particular database.
+    [string]$ConnectionUri = '',
+
+    # Only needed where the account running the script cannot authenticate to
+    # the runspace on its own. A scheduled task with a batch logon normally can:
+    # measured on w25-ex01, a task running as a domain account opened the
+    # runspace with Kerberos and no credential.
+    [System.Management.Automation.PSCredential]$Credential,
+
     [switch]$ExitNonZeroOnAlert
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion   = '1.6.0'
+$script:ScriptVersion   = '1.7.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
 $script:FailedDbs       = New-Object System.Collections.Generic.List[string]
+
+# Declared here, not at the point of use. StrictMode 2.0 throws on a variable
+# that was never assigned, and the finally block reads EmsSession to close the
+# runspace - including on an abort that happened before it was ever opened.
+$script:EmsSession      = $null
+$script:BindingUsed     = ''
+$script:EmsUri          = ''
 
 # PowerShell 5.1's -Encoding UTF8 writes a byte-order mark. Harmless in a log,
 # but the same encoder is reused for the summary JSON, where a leading BOM
@@ -878,6 +911,13 @@ function Write-RunSummary {
         Server               = $script:ThisServer
         Scope                = ''
         ExchangeVersion      = ''
+        # How the Exchange cmdlets were bound this run, and where. Worth
+        # alerting on if it ever reads anything other than EMS or Existing: the
+        # in-process snap-in silently drops databases mounted on other DAG
+        # members, so a figure collected under it describes one node rather than
+        # the estate. See the binding region for the measurement.
+        Binding              = ''
+        ConnectionUri        = ''
         # False whenever the run stopped before completing collection, whatever
         # the reason. The single field an alert rule should key on.
         Completed            = $false
@@ -1061,6 +1101,98 @@ $exitCode = 0
 $abortReason           = ''
 $script:SummaryWritten = $false
 
+#region Exchange binding -------------------------------------------------------
+
+function Get-LocalExchangeUri {
+    # The PowerShell vdir on this server. USERDNSDOMAIN is absent under some
+    # service logons, so the domain is read from WMI when it is missing rather
+    # than producing http://SERVER./PowerShell/ and a confusing DNS failure.
+    $dom = $env:USERDNSDOMAIN
+    if ([string]::IsNullOrWhiteSpace($dom)) {
+        try { $dom = [string](Get-WmiObject Win32_ComputerSystem -ErrorAction Stop).Domain }
+        catch { $dom = '' }
+    }
+    $target = $env:COMPUTERNAME
+    if (-not [string]::IsNullOrWhiteSpace($dom)) { $target = ('{0}.{1}' -f $env:COMPUTERNAME, $dom) }
+    return ('http://{0}/PowerShell/' -f $target)
+}
+
+function Get-ExchangeBinding {
+    # None   nothing is bound yet.
+    # SnapIn the in-process binding. Rejected - see Connect-ExchangeRunspace.
+    # Proxy  a remote runspace is already imported, or a test double is loaded.
+    #        Either way the caller did not get here through Add-PSSnapin, so it
+    #        is left alone.
+    $c = Get-Command Get-MailboxStatistics -ErrorAction SilentlyContinue
+    if ($null -eq $c) { return 'None' }
+    if ($c.CommandType -eq 'Cmdlet' -and
+        ([string]$c.ModuleName) -like 'Microsoft.Exchange.Management.PowerShell*') { return 'SnapIn' }
+    return 'Proxy'
+}
+
+function Connect-ExchangeRunspace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [System.Management.Automation.PSCredential]$SessionCredential
+    )
+
+    $result = @{ Session = $null; Auth = ''; Error = '' }
+    $errors = New-Object System.Collections.Generic.List[string]
+
+    # Kerberos first because it is what a domain-joined server actually uses and
+    # it is the only one of the three that can be confirmed by name in the log.
+    # The others are tried so that a non-Kerberos estate still connects rather
+    # than aborting on a mechanism mismatch.
+    foreach ($auth in @('Kerberos', 'Negotiate', 'Default')) {
+        try {
+            $p = @{
+                ConfigurationName = 'Microsoft.Exchange'
+                ConnectionUri     = $Uri
+                Authentication    = $auth
+                ErrorAction       = 'Stop'
+            }
+            if ($null -ne $SessionCredential) { $p['Credential'] = $SessionCredential }
+            $result.Session = New-PSSession @p
+            $result.Auth    = $auth
+            break
+        }
+        catch {
+            $errors.Add(('{0}: {1}' -f $auth, ($_.Exception.Message -replace '\s+', ' ')))
+        }
+    }
+
+    if ($null -eq $result.Session) {
+        $result.Error = ($errors -join ' | ')
+        return $result
+    }
+
+    try {
+        # Three cmdlets, not the whole Exchange command set. A full import takes
+        # tens of seconds and builds several hundred proxies this script never
+        # calls; these are the three named in the Requires list above.
+        #
+        # The -Global re-import is not redundant. Import-PSSession called from
+        # inside a function puts its proxies in that function's module scope,
+        # which is discarded on return - the caller then finds no
+        # Get-MailboxStatistics and reports the binding as failed, with a
+        # session that is open and working. Same 5.1 module-scope trap as
+        # New-PSDrive -Scope Script being invisible to Get-FileHash.
+        $m = Import-PSSession -Session $result.Session `
+                -CommandName 'Get-ExchangeServer', 'Get-MailboxDatabase', 'Get-MailboxStatistics' `
+                -AllowClobber -DisableNameChecking -ErrorAction Stop
+        Import-Module $m -Global -DisableNameChecking -Force -ErrorAction Stop
+    }
+    catch {
+        $result.Error = ('proxy import failed: {0}' -f ($_.Exception.Message -replace '\s+', ' '))
+        Remove-PSSession -Session $result.Session -ErrorAction SilentlyContinue
+        $result.Session = $null
+    }
+    return $result
+}
+
+#endregion
+
 # Declared out here because the finally block reads it, and StrictMode 2.0
 # throws on a variable that was never assigned - which would replace the real
 # abort reason with a misleading one.
@@ -1077,12 +1209,52 @@ try {
         $Scope, $ThresholdMode, $WarningGB, $CriticalGB, $TrendBaselineHours,
         $MaxRunMinutes, $ThrottleDelaySeconds, $RetentionDays, $MaxAlertDetail, [bool]$ExitNonZeroOnAlert)
 
-    if (-not (Get-Command Get-MailboxStatistics -ErrorAction SilentlyContinue)) {
-        try { Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn -ErrorAction Stop }
-        catch { Write-RunLog ('Could not load the Exchange snap-in: {0}' -f $_.Exception.Message) 'WARN' }
+    # The Exchange snap-in is deliberately never loaded. It binds the store
+    # in-process and reaches only databases mounted on this node, so a -Scope
+    # All run under it drops every remote database and still writes a
+    # plausible-looking summary. Measured on w25-ex01 2026-09-10, same server,
+    # same minute, 4 databases across a 3-node DAG:
+    #
+    #   snap-in   2 databases failed,  50 mailboxes, Status Partial, exit 2
+    #   runspace  0 databases failed,  97 mailboxes, Status OK,      exit 0
+    #
+    # The call the snap-in cannot make fails in about a second as
+    # MapiNetworkErrorException, "Exchange Information Store on server <x> is
+    # inaccessible. Make sure that the network is connected" - which reads like
+    # an outage on a server that is in fact healthy, and is the single most
+    # misleading thing this script used to be able to report.
+    #
+    # An already-imported runspace is reused rather than replaced, so running
+    # from an Exchange Management Shell console costs nothing here. Only the
+    # snap-in binding is refused.
+    $script:EmsUri = $ConnectionUri
+    if ([string]::IsNullOrWhiteSpace($script:EmsUri)) { $script:EmsUri = Get-LocalExchangeUri }
+
+    $binding = Get-ExchangeBinding
+    if ($binding -eq 'Proxy') {
+        Write-RunLog 'Exchange cmdlets are already bound through a remote runspace in this session. Reusing it.'
+        $script:BindingUsed = 'Existing'
     }
+    else {
+        if ($binding -eq 'SnapIn') {
+            Write-RunLog 'The Exchange snap-in is loaded in this session. It cannot reach a database mounted on another DAG member, so a remote runspace is being opened and will take precedence over it.' 'WARN'
+        }
+        Write-RunLog ('Opening an Exchange runspace at [{0}].' -f $script:EmsUri)
+        $script:EmsSession = Connect-ExchangeRunspace -Uri $script:EmsUri -SessionCredential $Credential
+        if ($null -eq $script:EmsSession.Session) {
+            Write-RunLog ('Could not open an Exchange runspace at [{0}]. {1}' -f
+                $script:EmsUri, $script:EmsSession.Error) 'FATAL'
+            Write-RunLog 'This monitor requires one: the in-process snap-in cannot read a database mounted on another DAG member, and a run under it reports a subset of the estate as though it were the whole of it. Check that the Exchange PowerShell vdir is reachable and that this account has an Exchange RBAC role, or pass -ConnectionUri to point at another Exchange server in the organisation.' 'FATAL'
+            $abortReason = 'Cannot open an Exchange runspace'
+            $exitCode = 3
+            exit $exitCode
+        }
+        Write-RunLog ('Exchange runspace open, Authentication={0}.' -f $script:EmsSession.Auth)
+        $script:BindingUsed = ('EMS ({0})' -f $script:EmsSession.Auth)
+    }
+
     if (-not (Get-Command Get-MailboxStatistics -ErrorAction SilentlyContinue)) {
-        Write-RunLog 'Get-MailboxStatistics is not available. Run from the Exchange Management Shell.' 'FATAL'
+        Write-RunLog 'Get-MailboxStatistics is still unavailable after binding. The runspace opened but imported nothing usable.' 'FATAL'
         $abortReason = 'Exchange cmdlets unavailable'
         $exitCode = 3
         exit $exitCode
@@ -1158,7 +1330,7 @@ try {
                 ForEach-Object { [string](Get-SafeProperty $_ 'Name') })
 
             if ($targets.Count -eq 0 -and $all.Count -gt 0) {
-                Write-RunLog ('No active database copies are mounted on {0}. {1} database(s) are mounted elsewhere in the DAG. Expected on a passive member: register this task on every DAG member, so whichever node holds the active copy is the node that collects it. -Scope All is not a substitute - from a scheduled task it cannot reach a database mounted on another node.' -f $me, $all.Count) 'WARN'
+                Write-RunLog ('No active database copies are mounted on {0}. {1} database(s) are mounted elsewhere in the DAG. Expected on a passive member. Either register this task on every DAG member so whichever node holds the active copy is the node that collects it, or run -Scope All, which from the Exchange runspace this script now opens does reach databases mounted on other nodes.' -f $me, $all.Count) 'WARN'
             }
         }
         else {
@@ -1987,6 +2159,8 @@ try {
         DurationSeconds      = [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)
         Scope                = $Scope
         ExchangeVersion      = $(if ($build.Known) { [string]$build.Version } else { '' })
+        Binding              = $script:BindingUsed
+        ConnectionUri        = $script:EmsUri
         Completed            = $true
         # Ungated, unlike the exit code above. Status describes the run rather
         # than signalling it, and a caller reading this file is entitled to know
@@ -2095,6 +2269,15 @@ finally {
     if ($null -ne $mutex) {
         if ($holding) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
+    }
+
+    # Closed here rather than after the collection loop so that an abort mid-run
+    # does not leave a runspace open on the Exchange server. Only sessions this
+    # script opened are closed: a console that imported its own is left alone,
+    # because tearing down the caller's session would be a surprising thing for
+    # a read-only monitor to do.
+    if ($null -ne $script:EmsSession -and $null -ne $script:EmsSession.Session) {
+        Remove-PSSession -Session $script:EmsSession.Session -ErrorAction SilentlyContinue
     }
 }
 

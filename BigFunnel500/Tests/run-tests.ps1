@@ -1160,6 +1160,39 @@ Assert 'and the run does not claim to be blind on evidence it does not have' `
     ('got [' + $(if ($sum37) { $sum37.MetricValidation } else { 'n/a' }) + ']')
 
 Write-Host ''
+Write-Host 'T38  the store binding is declared, and it is never the snap-in' -ForegroundColor Cyan
+# The snap-in binds the store in-process and cannot read a database mounted on
+# another DAG member, so a -Scope All run under it reports a subset of the estate
+# as though it were all of it, with no error to say so. Measured on a 3-node DAG,
+# same server and minute: 50 mailboxes across 2 of 4 databases under the snap-in,
+# 97 across all 4 through a runspace.
+#
+# The mock module supplies the cmdlets as functions, which is the same shape an
+# already-imported runspace has, so this also covers the reuse path that lets the
+# monitor run from an Exchange Management Shell console without opening a second
+# session.
+$d38 = Reset-Dir '_t38'
+$rc = Invoke-Monitor -OutputPath $d38
+Assert 'a session that already has the cmdlets is reused, not rebound' ($rc -eq 0) ('got exit ' + $rc)
+$sum38 = Get-Summary $d38
+Assert 'and the run publishes which binding it used' `
+    ($null -ne $sum38 -and $sum38.Binding -eq 'Existing') `
+    ('got [' + $(if ($sum38) { $sum38.Binding } else { 'n/a' }) + ']')
+Assert 'along with the runspace it would otherwise have opened' `
+    ($null -ne $sum38 -and $sum38.ConnectionUri -match '^http://.+/PowerShell/$') `
+    ('got [' + $(if ($sum38) { $sum38.ConnectionUri } else { 'n/a' }) + ']')
+Assert 'and no run reports having found the snap-in loaded' `
+    (@(Get-Log $d38 | Where-Object { $_ -match 'snap-in is loaded' }).Count -eq 0) ''
+# Static, deliberately. The assertions above show this build does not reach for
+# the snap-in. This one shows the next build cannot either, and it does not need
+# a DAG to demonstrate it on. The comment text is stripped before matching,
+# because the code explains at length why the snap-in is refused and naming it
+# in a comment is not the same as calling it.
+Assert 'the script carries no Add-PSSnapin call at all' `
+    (@(Get-Content -LiteralPath $monitor |
+       Where-Object { ($_ -replace '#.*$', '') -match 'Add-PSSnapin' }).Count -eq 0) ''
+
+Write-Host ''
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
 if ($fail -gt 0) { exit 1 }
 
