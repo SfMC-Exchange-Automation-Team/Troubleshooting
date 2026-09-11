@@ -421,7 +421,13 @@ $natBlind = @($blindDbs | Where-Object { $dbFacts[$_].MaxZeroContent -ge $defaul
 $canCross = ($maxPl -gt 0 -and $null -ne (Resolve-ThresholdGB -Bytes $maxPl -Mode 'AtMost'))
 
 $reasons = @{
-    'Healthy'      = @{ Ok = ($rows.Count -gt 0); Why = 'needs at least one mailbox in scope' }
+    # Healthy asserts Status OK, and OK needs the metric to have been validated -
+    # which takes one populated posting list table somewhere in scope. Without
+    # one the run is MetricInconclusive no matter where the thresholds are put,
+    # so "at least one mailbox in scope" is not a sufficient precondition: it
+    # passes reachability on a small single-database node and then fails its own
+    # check. Measured on w25-ex03, 5 mailboxes, none populated.
+    'Healthy'      = @{ Ok = ($maxPl -gt 0);     Why = 'needs at least one populated posting list table, or the run reports MetricInconclusive rather than OK however the thresholds are placed' }
     'Warning'      = @{ Ok = $canCross;           Why = 'needs a populated posting list table of at least ~1 MB, so a threshold can be placed at or below it' }
     'Critical'     = @{ Ok = $canCross;           Why = 'needs a populated posting list table of at least ~1 MB, so a threshold can be placed at or below it' }
     'Emerging'     = @{ Ok = $canCross;           Why = 'needs a populated posting list table of at least ~1 MB to project a crossing date from' }
