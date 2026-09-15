@@ -1,113 +1,190 @@
-# **Get-ExoQueue - CURRENTLY BEING REBUILT DUE TO GET-MESSAGETRACEV2 changes**
+# **Get-ExoQueue**
 
 ## **Overview**
-`Get-ExoQueue` is a PowerShell function designed to approximate the Exchange Online message queue using **Message Trace data**. It retrieves messages for a specified time range and outputs results in **GridView**, **CSV**, or **XML** format.  
-This tool is intended for **administrative and troubleshooting purposes** and is **not an exact representation of the transport queue**.
+
+`Get-ExoQueue` approximates the Exchange Online message queue using **Message Trace data**. It
+retrieves messages for a time range and reports how deep the queue is, how old it is, and which
+destinations it is going to.
+
+> **This is an approximation, not the transport queue.** Exchange Online exposes no queue object, so
+> there is nothing to read directly. Every run prints a disclaimer saying so. Please repeat that to
+> customers — a message trace row is not a queue entry.
+
+**Current version: 1.6.5.** This supersedes `Get-ExoQueue_v1.4.2.ps1`, which is retained only for
+reference and should not be used: it under-reports on any tenant where the queue exceeds one page,
+and reports the run as complete while doing so.
 
 ---
 
-## **Features**
-- Query Exchange Online message trace data for the past **minutes**, **hours**, or **days**.
-- Filter results by:
-  - **JournalOnly** – Include only messages sent to a journal address.
-  - **JournalExclude** – Exclude messages sent to a journal address.
-- Display **Top Senders** and **Top Recipients**.
-- Output options:
-  - **GridView** (interactive)
-  - **CSV** (export to file)
-  - **XML** (export and auto-import into variables)
-- Logging of query parameters and message counts.
-- Optional inclusion of **Delivered** messages for testing/demos.
+## **Quick start**
+
+```powershell
+. .\Get-ExoQueue.ps1                       # dot-source it; running it does nothing useful
+
+Get-ExoQueue -AgeHours 6 -Status Pending,Failed -Output None -PassThru -Force
+```
+
+Two habits worth forming immediately, both explained below: **pass `-Status` explicitly**, and
+**check `Truncated` before quoting any number.**
+
+---
+
+## **The two things that catch people out**
+
+### **1. `-Status` defaults to `Pending` only**
+
+A tenant full of `Failed` or `Delivered` mail will report **zero**, correctly, and that looks like an
+empty queue when it is not. Since 1.6.5 the tool says so:
+
+```
+Number of messages in the queue: 0  (0 recipient deliveries)
+  Nothing matched Status=Pending in this window. That is a filter result, not necessarily an empty tenant.
+  -Status defaults to Pending only. Add -Status Pending,Failed or -IncludeDelivered to widen it.
+```
+
+### **2. A truncated run reports a floor, not the queue depth**
+
+```powershell
+$r = Get-ExoQueue -AgeHours 6 -Status Pending,Failed -PassThru -Force
+$r.Truncated          # did the run finish?
+$r.TruncationReason   # if not, why not
+```
+
+Reasons include reaching `-MaxQueryPages`, a failed page, or a cursor that could not make progress.
+The run also warns on screen. **Do not quote a queue number to a customer without checking this
+first.**
+
+---
+
+## **Reading the output**
+
+```
+Number of messages in the queue: 52  (154 recipient deliveries)
+Queue age: oldest 106.4 min, median 64.8 min, newest 14.1 min
+
+Domain                 Deliveries  AgeMinutes
+------                 ----------  ----------
+contoso-partner.com           154       106.5
+```
+
+- **Two counts, not one.** Messages and recipient deliveries differ whenever one message fans out to
+  many recipients. Conflating them makes a queue look far worse than it is.
+- **Age matters as much as depth.** A hundred thousand messages thirty seconds old is a burst; the
+  same hundred thousand six hours old is an outage. The count alone cannot tell them apart.
+- **Destination.** There is no real `NextHopDomain` in Exchange Online, so the recipient domain
+  stands in for it. When one destination defers, its domain rises to the top of this list.
+
+---
+
+## **Journal mail**
+
+In a regulated tenant this is usually the largest single distortion: journaling copies every message
+to an archive address, which doubles the delivery count.
+
+```powershell
+Get-ExoQueue -AgeHours 6 -JournalOnly      # size the journal backlog on its own
+Get-ExoQueue -AgeHours 6 -JournalExclude   # everything else
+```
+
+The journal address is discovered from the tenant's own journal rules (`Get-JournalRule`), so you do
+not need to know it. It falls back to a prompt and a saved value, which is now stored **per tenant** —
+before 1.6.1 one shared value meant working across tenants could silently filter on the wrong
+address.
+
+`-JournalOnly` filters inside the service and is much cheaper. `-JournalExclude` cannot: message
+trace has no "everything except this recipient" filter, so journal rows are retrieved and then
+discarded, and the page budget is spent either way. `$result.JournalExcluded` reports how many.
+
+---
+
+## **At incident scale**
+
+Measured, not estimated: roughly **24 seconds and 1.3 GB of managed memory for 100,000 recipient
+rows.**
+
+- `-ResultSize` maxes at **5,000** per page; the service allows **100 requests per rolling 5 minutes**.
+- `-ResultSize 5000 × -MaxQueryPages 20` is **exactly 100,000 rows**. If you expect more, raise
+  `-MaxQueryPages` *before* you need it.
+- Prefer `-Output CSV` over GridView at that size. GridView caps at 20,000 rows and warns.
+
+---
+
+## **What it cannot do**
+
+Set this expectation before the customer does:
+
+- No `Suspend`, `Resume`, `Retry`, `Remove` or `Export` — Exchange Online exposes **no queue control
+  surface at all**.
+- No true `NextHopDomain`, no per-message `LastError`, no `ExpirationTime`.
+- Outbound-shaped: it sees what message trace sees.
+
+It is a diagnostic, not a control plane.
 
 ---
 
 ## **Prerequisites**
+
 - PowerShell 5.1 or later.
-- Exchange Online Management Module installed:
-  ```powershell
-  Install-Module ExchangeOnlineManagement
-  ```
-- Permissions to run `Get-MessageTraceV2` in Exchange Online.
-- Access to create folders under `C:\Temp` for output.
+- `ExchangeOnlineManagement` 3.7.0 or later (`Install-Module ExchangeOnlineManagement`), which must
+  provide `Get-MessageTraceV2`.
+- Permission to run `Get-MessageTraceV2`. Journal discovery additionally needs `Get-JournalRule`; it
+  degrades gracefully without it.
 
 ---
 
-## **Installation**
-1. Download `Get-ExoQueue.ps1` to a local folder (e.g., `C:\Scripts`).
-2. Open **PowerShell** as Administrator (recommended for registry access if using Journal filters).
+## **Output**
+
+- `-Output` accepts `GridView`, `CSV`, `XML` or `None`, and more than one at a time.
+- Files are written under `C:\Temp\ExoQueueResults\<Date>\` by default; `-OutputPath` overrides.
+- A trend log, `ExoQueueLog--<Date>.txt`, is appended on every run, including empty ones — an empty
+  queue is the single most useful point in a queue trend.
+- `-PassThru` returns the result object. `-Quiet` suppresses console output for scheduled runs; use
+  it with `-Force`, or the run will stop on a prompt you cannot see.
 
 ---
 
-## **How to Load the Function**
-To load the function into your **current PowerShell session** without permanently installing it:
+## **Tests**
 
 ```powershell
-# Navigate to the folder where the script is saved
-Set-Location C:\Scripts
-
-# Dot-source the script
-. .\Get-ExoQueue.ps1
-
-# OR use the call operator (&)
-& "C:\Scripts\Get-ExoQueue.ps1"
+Import-Module Pester -MinimumVersion 6.0.0
+Invoke-Pester -Path .\Get-ExoQueue.Tests.ps1 -Output Detailed
 ```
 
-After loading, you can run the function directly:
-```powershell
-Get-ExoQueue -AgeMinutes 30 -Output GridView
-```
+138 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
+
+`Test-ExoQueueTenantAssumption.ps1` is different: it runs **seven read-only queries against your own
+connected tenant** and reports whether the service behaves the way this script assumes. Worth running
+once in an unfamiliar tenant. `Test-ExoQueuePagingFidelity.ps1` proves the paging loop retrieves a
+known corpus exactly, offline.
 
 ---
 
-## **Usage Examples**
-### **1. Default (last 30 minutes, GridView)**
-```powershell
-Get-ExoQueue
-```
+## **What changed since 1.4.2**
 
-### **2. Last 2 hours, CSV output**
-```powershell
-Get-ExoQueue -AgeHours 2 -Output CSV
-```
+The headline is that **1.4.2 silently under-reports.** Highlights of the rebuild:
 
-### **3. Include Delivered messages for testing**
-```powershell
-Get-ExoQueue -AgeMinutes 15 -IncludeDelivered
-```
+- **Paging.** 1.4.2 stops after one page, so a queue deeper than `-ResultSize` is reported at the cap
+  and called complete. Paging now follows the documented cursor, and every exit path sets `Truncated`
+  and `TruncationReason`. A separate defect — the service floors `EndDate` to whole seconds, so a
+  cursor seeded with a sub-second timestamp silently skipped every row in that second — was found
+  against a live tenant and fixed in 1.6.4.
+- **Journal filtering was inverted.** `-JournalOnly` and `-JournalExclude` filtered on the *sender*,
+  so `-JournalOnly` matched only mail the journal mailbox itself sent (in practice, almost nothing).
+  They filter on the recipient now. **Expect counts to move.**
+- **Time basis.** Page 1 used a local `EndDate` while later pages used the UTC value, so west of UTC
+  the window moved the wrong way. Reconciled, and verified against a live tenant.
+- **Multi-recipient messages** lost every recipient but one on export. `RecipientCount` and
+  `Recipients` are now reported, and Top Recipients counts deliveries rather than deduplicated
+  messages.
+- **Added** queue age, the destination-domain breakdown, throttle pacing and retry against the
+  documented request budget, UTF-8 output, and `-Force`, `-PassThru`, `-Quiet`, `-Status`,
+  `-StartDate`/`-EndDate`, `-OutputPath`, `-JournalSmtp`, `-TimeBasis`.
 
-### **4. Show Top 10 senders and recipients**
-```powershell
-Get-ExoQueue -AgeMinutes 60 -TopSenders 10 -TopRecipients 10
-```
-
-### **5. Journal filtering**
-```powershell
-Get-ExoQueue -AgeHours 1 -JournalOnly
-```
-
----
-
-## **Output Details**
-- **GridView**: Interactive table in a separate window.
-- **CSV/XML**: Files saved under:
-  ```
-  C:\Temp\ExoQueueResults\<Date>\
-  ```
-- **Log File**: `ExoQueueLog--<Date>.txt` in the same folder.
-
----
-
-## **Important Notes**
-- This script uses **Message Trace data**, which is **not real-time** and may lag by several minutes.
-- Large queries (e.g., `-AgeDays`) can cause timeouts in large environments.
-- Journal address is stored in the registry under:
-  ```
-  HKCU:\Software\Microsoft\Exchange\ExoQueue
-  ```
+Full version history is in the comment block at the end of `Get-ExoQueue.ps1`.
 
 ---
 
 ## **Disclaimer**
-This script is provided **“as is”** without warranties or guarantees. Use at your own risk. Test thoroughly before using in production.
 
----
+Provided **"as is"** without warranties or guarantees. Use at your own risk, and test before relying
+on it in production.
