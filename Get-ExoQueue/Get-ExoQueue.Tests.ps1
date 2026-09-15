@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
 <#
     Tests for Get-ExoQueue v1.5.2.
@@ -22,7 +22,7 @@
     UTC offset.
 
     Run:
-      powershell.exe -NoProfile -Command "Import-Module Pester -MinimumVersion 6.0.0; Invoke-Pester -Path .\Get-ExoQueue.Tests.ps1 -Output Detailed"
+      powershell.exe -NoProfile -Command "Import-Module Pester -MinimumVersion 6.0.0; Invoke-Pester -Path C:\dev-scripts\Get-ExoQueue.Tests.ps1 -Output Detailed"
 #>
 
 BeforeAll {
@@ -516,6 +516,234 @@ Describe 'Get-ExoQueue v1.5.x' {
             $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
                 if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
             $text | Should -Not -Match 'filter result'
+        }
+    }
+
+    Context '1.6.6: the console does not promise a query it will not make' {
+
+        BeforeEach {
+            $script:Loud = @{} + $script:Common
+            $script:Loud.Remove('Quiet')
+        }
+
+        It 'never prints "Querying next page" - the old line was emitted before the loop decided' {
+            # The progress callback fires BEFORE every stop condition is evaluated, so the page that
+            # returned zero rows - the page that ENDS the run - still announced a next query. That
+            # was the last line on screen at the end of every multi-page run.
+            1..4 | ForEach-Object { $global:ExoPages.Add((New-FullPage -Count 5 -Tag "p$_")) }
+            $global:ExoPages.Add(@())
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -ResultSize 5 -MaxQueryPages 10 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Not -Match 'Querying next page'
+            $text | Should -Not -Match 'message trace rows on page'
+        }
+
+        It 'keeps the per-page trail on the verbose stream for anyone debugging paging' {
+            # $VerbosePreference has to be read in Get-ExoQueue's scope and passed into the callback:
+            # the callback runs inside Get-ExoQueueTraceResult, an advanced function called WITHOUT
+            # -Verbose, which sets its own SilentlyContinue and shadows the caller's preference.
+            1..2 | ForEach-Object { $global:ExoPages.Add((New-FullPage -Count 5 -Tag "v$_")) }
+            $global:ExoPages.Add(@())
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -ResultSize 5 -Verbose 4>&1 |
+                ForEach-Object { [string]$_ }) -join "`n"
+
+            $text | Should -Match 'Page 1: 5 rows returned, 5 new, 5 total'
+            $text | Should -Match 'Page 3: 0 rows returned, 0 new, 10 total'
+        }
+
+        It 'reports run time and page count once paging actually happened' {
+            1..2 | ForEach-Object { $global:ExoPages.Add((New-FullPage -Count 5 -Tag "e$_")) }
+            $global:ExoPages.Add(@())
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -ResultSize 5 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Retrieved in .+ over 3 pages\.'
+        }
+
+        It 'stays quiet about run time on a fast single-page run' {
+            # Commentary on a query that took a quarter of a second is the clutter, not the cure.
+            $global:ExoPages.Add(@(New-Row -MessageId 'm1' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))))
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -ResultSize 100 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Not -Match 'Retrieved in'
+        }
+    }
+
+    Context '1.6.6: the answer comes before the housekeeping' {
+
+        BeforeEach {
+            $script:Loud = @{} + $script:Common
+            $script:Loud.Remove('Quiet')
+        }
+
+        It 'prints the count before any file path' {
+            # The trend log used to be announced in three lines BETWEEN "Please wait.." and the
+            # count, so the first thing on screen after the wait was housekeeping.
+            $global:ExoPages.Add(@(New-Row -MessageId 'm1' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))))
+
+            $lines = @(Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } })
+
+            $countAt = [array]::FindIndex($lines, [Predicate[string]] { param($l) $l -like '*Number of messages in the queue*' })
+            $filesAt = [array]::FindIndex($lines, [Predicate[string]] { param($l) $l -like '*Files written*' })
+
+            $countAt | Should -BeGreaterThan -1
+            $filesAt | Should -BeGreaterThan $countAt
+        }
+
+        It 'gathers the trend log and the exports into one block' {
+            $script:Loud.Output = 'CSV'
+            $global:ExoPages.Add(@(New-Row -MessageId 'm1' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))))
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -TopSenders 5 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Files written:'
+            $text | Should -Match 'Trend log'
+            $text | Should -Match 'All results \(CSV\)'
+            $text | Should -Match 'Top senders \(CSV\)'
+            # The old lines aligned their colons with spaces baked into the string literal.
+            $text | Should -Not -Match 'saved to\s+:'
+        }
+
+        It 'still shows the trend log when the queue is empty' {
+            # The empty path returns early, before the export block, so it needs its own call.
+            $global:ExoPages.Add(@())
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Files written:'
+            $text | Should -Match 'Trend log'
+        }
+
+        It 'states a zero once, not twice' {
+            # "Number of messages in the queue: 0", then the filter explanation, then a separate
+            # "No messages found in the queue." underneath it - three statements of one fact, with
+            # the explanation squeezed in the middle.
+            $global:ExoPages.Add(@())
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Not -Match 'No messages found in the queue'
+            $text | Should -Match 'Number of messages in the queue'
+            $text | Should -Match 'filter result, not necessarily an empty tenant'
+        }
+
+        It 'drops the recipient-delivery count when it only restates the message count' {
+            $global:ExoPages.Add(@(
+                New-Row -MessageId 'm1' -Recipient 'a@contoso.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))
+                New-Row -MessageId 'm2' -Recipient 'b@contoso.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-3))
+            ))
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Not -Match 'recipient deliveries'
+        }
+
+        It 'keeps the recipient-delivery count when a message fans out' {
+            # Here the two numbers differ, and the gap between them IS the information.
+            $global:ExoPages.Add(@(
+                New-Row -MessageId 'm1' -Recipient 'a@contoso.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))
+                New-Row -MessageId 'm1' -Recipient 'b@contoso.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))
+                New-Row -MessageId 'm1' -Recipient 'c@contoso.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))
+            ))
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match '\(3 recipient deliveries\)'
+        }
+    }
+
+    Context '1.6.6: durations read in the unit that suits them' {
+
+        It 'renders under a minute as seconds' {
+            Format-ExoQueueDuration -Minutes 0.25 | Should -Be '15.0 s'
+        }
+
+        It 'renders ordinary queue ages as minutes' {
+            Format-ExoQueueDuration -Minutes 41   | Should -Be '41.0 min'
+            Format-ExoQueueDuration -Minutes 89.9 | Should -Match 'min'
+        }
+
+        It 'steps up to hours where minutes stop being readable' {
+            # The outage case, and the one the old format read worst at: "404.0 min".
+            Format-ExoQueueDuration -Minutes 404 | Should -Be '6.7 hr'
+            Format-ExoQueueDuration -Minutes 90  | Should -Be '1.5 hr'
+        }
+
+        It 'steps up to days past two of them' {
+            Format-ExoQueueDuration -Minutes 4320 | Should -Be '3.0 d'
+        }
+
+        It 'reports an absent duration rather than rendering null as zero' {
+            Format-ExoQueueDuration -Minutes $null | Should -Be 'n/a'
+        }
+
+        It 'clamps a negative duration instead of printing a negative age' {
+            # Received can sit a shade in the future relative to the local clock.
+            Format-ExoQueueDuration -Minutes -5 | Should -Be '0.0 s'
+        }
+
+        It 'uses the scaled unit on the queue age line' {
+            $script:Loud = @{} + $script:Common
+            $script:Loud.Remove('Quiet')
+            $global:ExoPages.Add(@(New-Row -MessageId 'm1' -ReceivedUtc ([datetime]::UtcNow.AddHours(-7))))
+
+            $text = (Get-ExoQueue @script:Loud -StartDate ([datetime]::UtcNow.AddHours(-9)) 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Queue age: oldest 7\.0 hr'
+        }
+    }
+
+    Context '1.6.6: the destination heading says how much is hidden' {
+
+        BeforeEach {
+            $script:Loud = @{} + $script:Common
+            $script:Loud.Remove('Quiet')
+
+            $script:ThreeDomains = @(
+                New-Row -MessageId 'd1' -Recipient 'a@one.com'   -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-2))
+                New-Row -MessageId 'd2' -Recipient 'b@two.com'   -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-3))
+                New-Row -MessageId 'd3' -Recipient 'c@three.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-4))
+            )
+        }
+
+        It 'carries the total on the returned rows' {
+            $rows = Get-ExoQueueDestination -Row $script:ThreeDomains -First 2
+            @($rows).Count            | Should -Be 2
+            @($rows)[0].TotalDomains  | Should -Be 3
+        }
+
+        It 'names the total when nothing is hidden, instead of claiming a top 10' {
+            $global:ExoPages.Add($script:ThreeDomains)
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Queued by destination domain \(3\):'
+            $text | Should -Not -Match 'top 10'
+        }
+
+        It 'says how many domains it is hiding when the list IS cut' {
+            # Ten rows under a "top 10" heading looks identical whether ten domains exist or four
+            # hundred do, and those are different incidents.
+            $global:ExoPages.Add($script:ThreeDomains)
+
+            $text = (Get-ExoQueue @script:Loud -AgeMinutes 30 -TopDestinations 2 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match 'Queued by destination domain \(top 2 of 3\):'
         }
     }
 

@@ -10,7 +10,7 @@
 #>
 
 
-$script:ExoQueueVersion = '1.6.5'
+$script:ExoQueueVersion = '1.6.6'
 
 # Documented service limit: 100 query requests per rolling 5 minutes. Tracked at script scope so
 # two runs in the same session share one budget rather than each believing it has the whole of it.
@@ -1604,10 +1604,49 @@ function Get-ExoQueueDestination {
             Deliveries = $entry.Value
             OldestUtc  = $old
             AgeMinutes = if ($null -eq $old) { $null } else { [math]::Round(([datetime]::UtcNow - $old).TotalMinutes, 1) }
+
+            # Repeated on every row because the function returns a collection and there is nowhere
+            # else to hang it. Without it neither the console nor a -PassThru caller can tell a
+            # complete list from a truncated one: ten rows under a "top 10" heading looks the same
+            # whether ten domains exist or four hundred do, and those are different incidents.
+            TotalDomains = $counts.Count
         }
     }
 
     @($output)
+}
+
+function Format-ExoQueueDuration {
+    <#
+    .SYNOPSIS
+    Renders a number of minutes as the largest unit that still reads at a glance.
+
+    .DESCRIPTION
+    Queue age is the first number an operator reads and the one that decides whether this is a burst
+    or an outage. Reported only in minutes, the outage case arrives as "404.0 min" - a figure that
+    has to be divided before it means anything, at the exact moment nobody wants to be dividing.
+
+    Under a minute the unit drops to seconds, which is also what makes this usable for elapsed run
+    time. Minutes hold up to 90 because that is the resolution that matters while a queue is still
+    draining; beyond that it steps to hours, and past two days to days.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$Minutes
+    )
+
+    if ($null -eq $Minutes) { return 'n/a' }
+
+    $value = [double]$Minutes
+    if ($value -lt 0) { $value = 0 }
+
+    if ($value -lt 1)    { return ('{0:N1} s'   -f ($value * 60)) }
+    if ($value -lt 90)   { return ('{0:N1} min' -f $value) }
+    if ($value -lt 2880) { return ('{0:N1} hr'  -f ($value / 60)) }
+    return ('{0:N1} d' -f ($value / 1440))
 }
 
 function Get-ExoQueueAge {
@@ -1797,7 +1836,7 @@ function Get-ExoQueue {
     EndDate are documented as the machine's regional short date format. Paging feeds an output
     timestamp back in as EndDate, so the two have to be reconciled explicitly. -TimeBasis Local is
     the default, and that is now a measurement rather than a guess: against a live tenant
-    (a live lab tenant, 14 Sep 2026) an anchor message returned at 03:13:07Z was findable only by
+    (M365CPI80491961, 14 Sep 2026) an anchor message returned at 03:13:07Z was findable only by
     querying 22:11:07..22:15:07 - the request window had to be shifted by the machine's UTC offset,
     which is exactly what "the parameters are read in local time" looks like. It also matches the
     documentation. The default was Utc until 1.5.3, and was wrong. Re-measured independently on
@@ -2049,7 +2088,7 @@ function Get-ExoQueue {
                        with no losses and no duplicates. See _probe-exoqueue3.ps1.
     9/14/26 | 1.5.3 - BEHAVIOR CHANGE: -TimeBasis now defaults to Local, not Utc. This was the one
                        default the offline work could not settle, and it was wrong. Measured against
-                       a live lab tenant: an anchor message returned at
+                       a live tenant (M365CPI80491961): an anchor message returned at
                        2026-09-12T03:13:07.178Z was findable only by querying 22:11:07..22:15:07 -
                        the request window had to be shifted by the machine's UTC offset to reach it,
                        which is what "the service reads its parameters in local time" looks like.
@@ -2232,6 +2271,36 @@ function Get-ExoQueue {
                        treats every unroutable smart host as a PERMANENT failure, so synthetic
                        traffic lands as Failed and a bare Get-ExoQueue will correctly report 0. Pass
                        -Status Pending,Failed.
+    9/15/26 | 1.6.6 - Console clean-up, and one thing that was not cosmetic. The per-page progress
+                      line read "Retrieved N message trace rows on page P .. Querying next page..",
+                      and it was emitted from a callback that fires BEFORE any of the loop's stop
+                      conditions are evaluated. A page returning zero rows therefore printed
+                      "Querying next page.." and then stopped - so the last line on screen at the
+                      end of every long run announced a query that was never made. Per-page detail
+                      moved to Write-Progress (live, no scrollback, promises nothing) plus
+                      Write-Verbose for anyone debugging paging. $VerbosePreference is read in
+                      Get-ExoQueue's scope and passed in, because the callback executes inside
+                      Get-ExoQueueTraceResult, which is called without -Verbose and shadows it.
+                      The trend log path was announced in three lines BETWEEN "Please wait.." and the
+                      count, putting housekeeping ahead of the answer and separating the log path
+                      from the export paths. Every path this run writes is now one "Files written"
+                      block at the end, with labels padded to a computed width - the old lines
+                      aligned their colons with spaces baked into the string literals.
+                      Queue age is unit-scaled. The outage case is where that line earns its keep and
+                      was exactly where it read worst: "oldest 404.0 min" is a division away from
+                      meaning anything, at the moment nobody wants to divide. Now seconds, minutes,
+                      hours or days as appropriate.
+                      The destination heading said "top 10" whether ten domains existed or four
+                      hundred did. It now names the total and only calls itself a top-N when
+                      something is actually hidden; Get-ExoQueueDestination carries TotalDomains so
+                      a -PassThru caller can tell a complete list from a truncated one too.
+                      Smaller: "(N recipient deliveries)" is suppressed when it equals the message
+                      count it sits beside; the redundant "No messages found in the queue." after a
+                      zero that had already explained itself is gone; the pre-emptive "if there is a
+                      timeout, reduce -AgeMinutes" advice no longer prints on every healthy run; a
+                      stray "}        if (" that put a closing brace and the next statement on one
+                      line is split; and run time over pages is reported when the run was slow
+                      enough or long enough to matter.
 #>
     [CmdletBinding(DefaultParameterSetName = 'AgeMinutes', SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
     [OutputType([pscustomobject])]
@@ -2349,6 +2418,64 @@ function Get-ExoQueue {
             if ($PSBoundParameters.ContainsKey('ForegroundColor')) { $splat.ForegroundColor = $ForegroundColor }
             if ($NoNewline) { $splat.NoNewline = $true }
             Write-Host @splat
+        }
+
+        # Every path this run writes, printed once at the end instead of announced where it happens.
+        # The trend log used to be announced in three lines between "Please wait.." and the count,
+        # which put housekeeping ahead of the answer and separated the log path from the export
+        # paths it belongs with. Labels are padded to a width computed from the set, not to a
+        # hand-counted literal - the old lines aligned their colons with runs of spaces baked into
+        # the string, which only lined up for the three labels that existed when they were written.
+        function Show-ExoQueueFileList {
+            param([object[]]$Entry)
+
+            if ($null -eq $Entry -or $Entry.Count -eq 0) { return }
+
+            $width = 0
+            foreach ($item in $Entry) { if ($item.Label.Length -gt $width) { $width = $item.Label.Length } }
+
+            Write-Ui "Files written:" -ForegroundColor Cyan
+            foreach ($item in $Entry) {
+                Write-Ui ("  {0}   " -f $item.Label.PadRight($width)) -NoNewline
+                Write-Ui $item.Path -ForegroundColor Cyan
+            }
+            Write-Ui ""
+        }
+
+        # Format-Table piped to Out-Host frames a table with ONE blank line above it and TWO below,
+        # so a footnote under a table sat in a double gap while the heading above it sat in a single,
+        # and a run showing three tables accumulated three stray lines. Rendering to a string and
+        # trimming gives every table the same single blank line on each side, which is what makes
+        # the sections read as sections.
+        #
+        # Width is taken from the host for the same reason Out-Host does it: -AutoSize with no width
+        # produces lines wider than the console and the terminal soft-wraps them mid-column. The
+        # fallback covers hosts with no RawUI at all, which is what a remoting or CI host looks like.
+        function Show-ExoQueueTable {
+            param([object[]]$Row, [string[]]$Property)
+
+            if ($Quiet -or $null -eq $Row -or $Row.Count -eq 0) { return }
+
+            $width = 200
+            try {
+                $raw = $Host.UI.RawUI
+                if ($null -ne $raw -and $null -ne $raw.BufferSize -and $raw.BufferSize.Width -gt 20) {
+                    $width = $raw.BufferSize.Width - 1
+                }
+            }
+            catch {
+                # Hosts without a screen buffer throw on RawUI rather than returning null. The
+                # fallback width is already set, so this is genuinely nothing to report.
+                Write-Debug "No usable RawUI buffer width; falling back to $width columns."
+            }
+
+            $text = ($Row | Format-Table -AutoSize -Property $Property | Out-String -Width $width)
+            $text = $text.Trim([char]13, [char]10)
+            if ($text) {
+                Write-Host ''
+                Write-Host $text
+                Write-Host ''
+            }
         }
 
         function Confirm-Ui {
@@ -2511,23 +2638,41 @@ function Get-ExoQueue {
             }
             'AgeHours' {
                 $unit = if ($AgeHours -eq 1) { 'hour' } else { 'hours' }
-                $tail = if ($AgeHours -eq 1) { '' } else { ' If the queue is large and there is a timeout, attempt to reduce the -AgeHours setting.' }
-                Write-Ui "Getting the message queue for the past $AgeHours $unit.$tail Please wait.." -ForegroundColor Cyan
+                Write-Ui "Getting the message queue for the past $AgeHours $unit. Please wait.." -ForegroundColor Cyan
             }
             'AgeMinutes' {
                 $unit = if ($AgeMinutes -eq 1) { 'minute' } else { 'minutes' }
-                $tail = if ($AgeMinutes -eq 1) { '' } else { ' If the queue is large and there is a timeout, attempt to reduce the -AgeMinutes setting.' }
-                Write-Ui "Getting the message queue for the past $AgeMinutes $unit.$tail Please wait.." -ForegroundColor Cyan
+                Write-Ui "Getting the message queue for the past $AgeMinutes $unit. Please wait.." -ForegroundColor Cyan
             }
             default {
                 Write-Ui ("Getting the message queue from {0:yyyy-MM-dd HH:mm:ss}Z to {1:yyyy-MM-dd HH:mm:ss}Z. Please wait.." -f $window.StartUtc, $window.EndUtc) -ForegroundColor Cyan
             }
         }
 
+        # Read here rather than inside the callback. The callback is invoked from inside
+        # Get-ExoQueueTraceResult, which is an advanced function called without -Verbose, so it sets
+        # $VerbosePreference to SilentlyContinue in its own scope and shadows the caller's. Binding
+        # the decision to this scope and passing it explicitly is what makes -Verbose work at all.
+        $verboseOn = ($VerbosePreference -ne [System.Management.Automation.ActionPreference]::SilentlyContinue)
+
+        # Per-page detail moved off the console. It scrolled one line per page - twenty of them on a
+        # run that reaches the default -MaxQueryPages - and the wording promised a query the loop had
+        # not yet decided to make. The progress callback fires before every stop condition is
+        # evaluated, so a page returning zero rows still printed "Querying next page..", and that was
+        # the last line on screen when a long run ended: the one moment the operator is watching, the
+        # tool said it was about to do something it had just decided not to do.
+        #
+        # Write-Progress shows the same activity live, costs no scrollback, and promises nothing;
+        # -Verbose keeps the per-page trail for anyone debugging the paging itself.
         $progress = {
             param($Page, $Returned, $New, $Total)
-            if ($Page -gt 1 -or $Returned -ge $ResultSize) {
-                Write-Ui ("Retrieved {0} message trace rows on page {1} ({2} new, {3} total). Querying next page.." -f $Returned, $Page, $New, $Total) -ForegroundColor Cyan
+            if ($verboseOn) {
+                Write-Verbose ("Page {0}: {1} rows returned, {2} new, {3} total." -f $Page, $Returned, $New, $Total) -Verbose
+            }
+            if (-not $Quiet) {
+                Write-Progress -Id 1 -Activity 'Querying message trace' `
+                    -Status ("Page {0} - {1:N0} rows retrieved" -f $Page, $Total) `
+                    -CurrentOperation ("{0:N0} on this page, {1:N0} new" -f $Returned, $New)
             }
         }
 
@@ -2543,6 +2688,13 @@ function Get-ExoQueue {
             -MaxRetryCount $MaxRetryCount `
             -RetryDelaySeconds $RetryDelaySeconds `
             -ProgressAction $progress
+
+        # Cleared as soon as the querying is over. A Write-Progress bar that is never completed stays
+        # on screen underneath the results until the host decides to redraw, which puts a stale
+        # "Page 4 - 400 rows retrieved" beneath the final numbers.
+        if (-not $Quiet) { Write-Progress -Id 1 -Activity 'Querying message trace' -Completed }
+
+        $elapsed = [datetime]::UtcNow - $runStartUtc
 
         $recipientRows = @($trace.Rows)
 
@@ -2691,10 +2843,6 @@ function Get-ExoQueue {
         if ($PSCmdlet.ShouldProcess($logPath, 'Append the queue count to the trend log')) {
             try {
                 Add-Content -Path $logPath -Value $logEntry -Encoding UTF8 -ErrorAction Stop
-                Write-Ui "Log File:" -ForegroundColor Cyan
-                Write-Ui "A log file with the number of messages in queue has saved/updated to: " -NoNewline
-                Write-Ui "$logPath" -ForegroundColor Cyan
-                Write-Ui ""
             }
             catch {
                 Write-Warning "Unable to write the log entry to ${logPath}: $($_.Exception.Message)"
@@ -2708,9 +2856,24 @@ function Get-ExoQueue {
             $logPath = $null
         }
 
+        # Collected now, printed once at the very end next to the exports. The log path used to be
+        # announced right here, which put three lines of housekeeping between "Please wait.." and
+        # the number the operator was waiting for.
+        $reportedFiles = [System.Collections.Generic.List[object]]::new()
+        if ($logPath) { $reportedFiles.Add([pscustomobject]@{ Label = 'Trend log'; Path = $logPath }) }
+
         Write-Ui "Number of messages in the queue: " -NoNewline
         Write-Ui ("{0:N0}" -f $messages.Count) -ForegroundColor Cyan -NoNewline
-        Write-Ui ("  ({0:N0} recipient deliveries)" -f $recipientRows.Count)
+
+        # Shown only when it differs from the message count. One recipient per message is the common
+        # shape, and "40  (40 recipient deliveries)" restates the number it sits beside. When the two
+        # DO differ the gap is the fan-out, which is worth a whole line.
+        if ($recipientRows.Count -ne $messages.Count) {
+            Write-Ui ("  ({0:N0} recipient deliveries)" -f $recipientRows.Count)
+        }
+        else {
+            Write-Ui ""
+        }
 
         # A bare zero is ambiguous: it looks like "nothing is queued" when it can equally mean
         # "nothing matched the filter". -Status defaults to Pending alone, so a tenant full of Failed
@@ -2725,13 +2888,29 @@ function Get-ExoQueue {
         # Age before anything else. A hundred thousand messages thirty seconds old is a burst; the
         # same hundred thousand six hours old is an outage, and the count alone cannot tell them
         # apart. On-premises this is the first thing Get-Message is asked for.
+        #
+        # Unit-scaled rather than always minutes. The outage case is where this line earns its keep
+        # and it was exactly the case that read worst: "oldest 404.0 min" is a division away from
+        # meaning anything.
         if ($null -ne $queueAge -and $queueAge.Counted -gt 0) {
-            Write-Ui ("Queue age: oldest {0:N1} min, median {1:N1} min, newest {2:N1} min" -f `
-                $queueAge.OldestMinutes, $queueAge.MedianMinutes, $queueAge.NewestMinutes) -ForegroundColor Cyan
+            Write-Ui ("Queue age: oldest {0}, median {1}, newest {2}" -f `
+                (Format-ExoQueueDuration -Minutes $queueAge.OldestMinutes),
+                (Format-ExoQueueDuration -Minutes $queueAge.MedianMinutes),
+                (Format-ExoQueueDuration -Minutes $queueAge.NewestMinutes)) -ForegroundColor Cyan
             if ($queueAge.Undated -gt 0) {
                 Write-Ui ("           {0:N0} message(s) had no readable received time and are not counted above." -f $queueAge.Undated)
             }
         }
+
+        # Only when it is worth knowing. A one-page run that finished in under five seconds needs no
+        # commentary; a run that took four minutes or walked twenty pages is the one where the
+        # operator is deciding whether to narrow the window, and that decision needs both numbers.
+        if ($trace.PagesQueried -gt 1 -or $elapsed.TotalSeconds -ge 5) {
+            $pageWord = if ($trace.PagesQueried -eq 1) { 'page' } else { 'pages' }
+            Write-Ui ("Retrieved in {0} over {1} {2}." -f `
+                (Format-ExoQueueDuration -Minutes $elapsed.TotalMinutes), $trace.PagesQueried, $pageWord)
+        }
+
         if ($trace.Truncated) {
             Write-Warning ("These results are INCOMPLETE ({0}). The count above is a floor, not the queue depth." -f $trace.TruncationReason)
         }
@@ -2773,24 +2952,39 @@ function Get-ExoQueue {
         Add-Member -InputObject $result -MemberType MemberSet -Name PSStandardMembers -Value $standard -Force
 
         if ($messages.Count -eq 0) {
-            Write-Ui "No messages found in the queue."
+            # No "No messages found in the queue." here any more. The count line four lines up has
+            # already said 0 and then explained which filter produced it; repeating it underneath
+            # added a third statement of the same fact and pushed the explanation off the bottom.
+            Show-ExoQueueFileList -Entry $reportedFiles.ToArray()
             if ($PassThru) { return $result }
             return
         }
 
         if ($topSenderResults.Count -gt 0) {
             Write-Ui ("Top {0} senders (by unique message, {1:N0} messages):" -f $TopSenders, $messages.Count) -ForegroundColor Cyan
-            if (-not $Quiet) { $topSenderResults | Format-Table -AutoSize -Property Name, Count | Out-Host }
-        }        if ($topRecipientResults.Count -gt 0) {
+            Show-ExoQueueTable -Row $topSenderResults -Property 'Name', 'Count'
+        }
+
+        if ($topRecipientResults.Count -gt 0) {
             Write-Ui ("Top {0} recipients (by recipient delivery, {1:N0} deliveries):" -f $TopRecipients, $recipientRows.Count) -ForegroundColor Cyan
-            if (-not $Quiet) { $topRecipientResults | Format-Table -AutoSize -Property Name, Count | Out-Host }
+            Show-ExoQueueTable -Row $topRecipientResults -Property 'Name', 'Count'
         }
 
         # The nearest available answer to "which next hop is backing up". Always shown, because it
         # is the question an incident opens with and nobody thinks to ask for it by parameter.
         if ($destinations.Count -gt 0) {
-            Write-Ui ("Queued by destination domain (top {0}):" -f $TopDestinations) -ForegroundColor Cyan
-            if (-not $Quiet) { $destinations | Format-Table -AutoSize -Property Domain, Deliveries, AgeMinutes | Out-Host }
+            # "top 10" was printed whether ten domains existed or four hundred did, and those are
+            # different incidents: one destination deferring looks nothing like the whole world
+            # deferring. Name the total, and only call it a top-N when something is actually hidden.
+            $totalDomains = [int]$destinations[0].TotalDomains
+            $heading = if ($totalDomains -gt $destinations.Count) {
+                "Queued by destination domain (top {0} of {1}):" -f $destinations.Count, $totalDomains
+            }
+            else {
+                "Queued by destination domain ({0}):" -f $totalDomains
+            }
+            Write-Ui $heading -ForegroundColor Cyan
+            Show-ExoQueueTable -Row $destinations -Property 'Domain', 'Deliveries', 'AgeMinutes'
             Write-Ui "  Recipient domain, not the actual next hop - a connector can route several domains to one host."
             Write-Ui ""
         }
@@ -2825,6 +3019,10 @@ function Get-ExoQueue {
             if ($csvWritten) {
                 $messages | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
                 $outputFiles.Add($csvPath)
+                # Listed in the order they were written. The old lines printed the Top-N paths first
+                # and the All Results path underneath them, which is neither write order nor
+                # importance order.
+                $reportedFiles.Add([pscustomobject]@{ Label = 'All results (CSV)'; Path = $csvPath })
             }
 
             if ($topSenderResults.Count -gt 0) {
@@ -2832,8 +3030,7 @@ function Get-ExoQueue {
                 if ($PSCmdlet.ShouldProcess($tsPath, 'Export top senders')) {
                     $topSenderResults | Export-Csv -Path $tsPath -NoTypeInformation -Encoding UTF8
                     $outputFiles.Add($tsPath)
-                    Write-Ui "CSV file for Top Senders saved to     :  " -NoNewline
-                    Write-Ui "$tsPath" -ForegroundColor Cyan
+                    $reportedFiles.Add([pscustomobject]@{ Label = 'Top senders (CSV)'; Path = $tsPath })
                 }
             }
             if ($topRecipientResults.Count -gt 0) {
@@ -2841,15 +3038,8 @@ function Get-ExoQueue {
                 if ($PSCmdlet.ShouldProcess($trPath, 'Export top recipients')) {
                     $topRecipientResults | Export-Csv -Path $trPath -NoTypeInformation -Encoding UTF8
                     $outputFiles.Add($trPath)
-                    Write-Ui "CSV file for Top Recipients saved to  :  " -NoNewline
-                    Write-Ui "$trPath" -ForegroundColor Cyan
+                    $reportedFiles.Add([pscustomobject]@{ Label = 'Top recipients (CSV)'; Path = $trPath })
                 }
-            }
-            # Inside the guard, unlike the Top-N lines it sits beside: -WhatIf used to print a path
-            # and a "saved to" for a file it had just declined to write.
-            if ($csvWritten) {
-                Write-Ui "CSV file with All Results saved to    :  " -NoNewline
-                Write-Ui "$csvPath" -ForegroundColor Cyan
             }
         }
 
@@ -2859,11 +3049,7 @@ function Get-ExoQueue {
             if ($xmlWritten) {
                 $messages | Export-Clixml -Path $xmlPath
                 $outputFiles.Add($xmlPath)
-            }
-            if ($xmlWritten) {
-                Write-Ui "XML File(s):" -ForegroundColor Cyan
-                Write-Ui "XML file saved to: " -NoNewline
-                Write-Ui "$xmlPath" -ForegroundColor Cyan
+                $reportedFiles.Add([pscustomobject]@{ Label = 'All results (XML)'; Path = $xmlPath })
             }
 
             if ($topSenderResults.Count -gt 0) {
@@ -2872,8 +3058,7 @@ function Get-ExoQueue {
                 if ($PSCmdlet.ShouldProcess($tsPath, 'Export top senders')) {
                     $topSenderResults | Export-Clixml -Path $tsPath
                     $outputFiles.Add($tsPath)
-                    Write-Ui "Top senders saved to: " -NoNewline
-                    Write-Ui "$tsPath" -ForegroundColor Cyan
+                    $reportedFiles.Add([pscustomobject]@{ Label = 'Top senders (XML)'; Path = $tsPath })
                 }
             }
             if ($topRecipientResults.Count -gt 0) {
@@ -2881,12 +3066,13 @@ function Get-ExoQueue {
                 if ($PSCmdlet.ShouldProcess($trPath, 'Export top recipients')) {
                     $topRecipientResults | Export-Clixml -Path $trPath
                     $outputFiles.Add($trPath)
-                    Write-Ui "Top recipients saved to: " -NoNewline
-                    Write-Ui "$trPath" -ForegroundColor Cyan
+                    $reportedFiles.Add([pscustomobject]@{ Label = 'Top recipients (XML)'; Path = $trPath })
                 }
             }
-            Write-Ui ""
         }
+
+        # Every path this run produced, in one block, after the results rather than around them.
+        Show-ExoQueueFileList -Entry $reportedFiles.ToArray()
 
         $result.OutputFiles = @($outputFiles)
 

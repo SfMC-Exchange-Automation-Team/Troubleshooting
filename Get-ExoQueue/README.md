@@ -10,7 +10,7 @@ destinations it is going to.
 > there is nothing to read directly. Every run prints a disclaimer saying so. Please repeat that to
 > customers — a message trace row is not a queue entry.
 
-**Current version: 1.6.5.** This supersedes `Get-ExoQueue_v1.4.2.ps1`, which is retained only for
+**Current version: 1.6.6.** This supersedes `Get-ExoQueue_v1.4.2.ps1`, which is retained only for
 reference and should not be used: it under-reports on any tenant where the queue exceeds one page,
 and reports the run as complete while doing so.
 
@@ -37,7 +37,7 @@ A tenant full of `Failed` or `Delivered` mail will report **zero**, correctly, a
 empty queue when it is not. Since 1.6.5 the tool says so:
 
 ```
-Number of messages in the queue: 0  (0 recipient deliveries)
+Number of messages in the queue: 0
   Nothing matched Status=Pending in this window. That is a filter result, not necessarily an empty tenant.
   -Status defaults to Pending only. Add -Status Pending,Failed or -IncludeDelivered to widen it.
 ```
@@ -60,7 +60,10 @@ first.**
 
 ```
 Number of messages in the queue: 52  (154 recipient deliveries)
-Queue age: oldest 106.4 min, median 64.8 min, newest 14.1 min
+Queue age: oldest 1.8 hr, median 64.8 min, newest 14.1 min
+Retrieved in 8.2 s over 3 pages.
+
+Queued by destination domain (top 10 of 37):
 
 Domain                 Deliveries  AgeMinutes
 ------                 ----------  ----------
@@ -68,11 +71,18 @@ contoso-partner.com           154       106.5
 ```
 
 - **Two counts, not one.** Messages and recipient deliveries differ whenever one message fans out to
-  many recipients. Conflating them makes a queue look far worse than it is.
+  many recipients. Conflating them makes a queue look far worse than it is. The bracketed delivery
+  count is shown only when it differs from the message count — when they match, it would be
+  restating the number beside it.
 - **Age matters as much as depth.** A hundred thousand messages thirty seconds old is a burst; the
-  same hundred thousand six hours old is an outage. The count alone cannot tell them apart.
+  same hundred thousand six hours old is an outage. The count alone cannot tell them apart. The unit
+  scales — seconds, minutes, hours, days — so the outage case does not arrive as `404.0 min`.
 - **Destination.** There is no real `NextHopDomain` in Exchange Online, so the recipient domain
-  stands in for it. When one destination defers, its domain rises to the top of this list.
+  stands in for it. When one destination defers, its domain rises to the top of this list. The
+  heading names the total number of domains, so `top 10 of 37` tells you a tail is hidden and
+  `(4)` tells you it is not.
+- **Paging is quiet.** Per-page detail goes to a progress bar rather than scrollback. Add `-Verbose`
+  for the page-by-page trail when you are diagnosing paging itself.
 
 ---
 
@@ -150,7 +160,7 @@ Import-Module Pester -MinimumVersion 6.0.0
 Invoke-Pester -Path .\Get-ExoQueue.Tests.ps1 -Output Detailed
 ```
 
-138 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
+158 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
 
 `Test-ExoQueueTenantAssumption.ps1` is different: it runs **seven read-only queries against your own
 connected tenant** and reports whether the service behaves the way this script assumes. Worth running
@@ -179,6 +189,12 @@ The headline is that **1.4.2 silently under-reports.** Highlights of the rebuild
 - **Added** queue age, the destination-domain breakdown, throttle pacing and retry against the
   documented request budget, UTF-8 output, and `-Force`, `-PassThru`, `-Quiet`, `-Status`,
   `-StartDate`/`-EndDate`, `-OutputPath`, `-JournalSmtp`, `-TimeBasis`.
+- **The console lied about paging.** The per-page line ended `Querying next page..`, and it was
+  printed from a callback that fires *before* the loop evaluates any stop condition — so the page
+  that returned zero rows and ended the run still announced a next query. The last thing on screen
+  at the end of every long run was a promise it did not keep, which reads exactly like a hang.
+  Fixed in 1.6.6, along with a general tidy: the answer now comes before the housekeeping, file
+  paths are collected into one block at the end, and durations scale to a readable unit.
 
 Full version history is in the comment block at the end of `Get-ExoQueue.ps1`.
 
