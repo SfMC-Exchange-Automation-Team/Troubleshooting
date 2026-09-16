@@ -203,7 +203,6 @@ else {
     }
 
     $startedAt = Get-Date
-    $registered = $false
     try {
         # A task name prefixed BFGATE so it can never collide with a production
         # registration, and -TaskStartTime far enough out that only the forced run
@@ -218,7 +217,6 @@ else {
         Write-Check 'registration exits 0' ($regExit -eq 0) ('exit ' + $regExit)
 
         $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        $registered = $true
 
         # THE GATE ITSELF.
         Write-Measured 'LogonType' $task.Principal.LogonType
@@ -249,6 +247,27 @@ else {
         Write-Host '  Forcing one run. This is a REAL collection and takes minutes.' -ForegroundColor Yellow
         Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 
+        # WAIT FOR IT TO START BEFORE WAITING FOR IT TO FINISH, because the two
+        # look identical and the gate's whole verdict turns on telling them apart.
+        # Start-ScheduledTask returns as soon as the request is queued, and the
+        # scheduler takes a second or two more to move the task to Running. Poll
+        # straight into the finish loop and a slow transition reads as Ready on the
+        # first pass, the loop exits immediately, and LastTaskResult is still the
+        # 0x41303 the task was registered with - so a task that was about to run
+        # correctly gets reported as exactly the never-ran failure this gate exists
+        # to detect. A false FAIL here is worse than a missed one: it condemns the
+        # feature on evidence that is really just impatience.
+        $startDeadline = (Get-Date).AddSeconds(90)
+        $everRan = $false
+        do {
+            Start-Sleep -Seconds 2
+            $state = (Get-ScheduledTask -TaskName $TaskName).State
+            if ($state -eq 'Running') { $everRan = $true }
+        } while (-not $everRan -and (Get-Date) -lt $startDeadline)
+
+        Write-Check 'the scheduler actually started the task' $everRan `
+            $(if ($everRan) { 'observed Running' } else { 'never left Ready in 90s - the run below measured nothing' })
+
         $deadline = (Get-Date).AddMinutes($RunTimeoutMinutes)
         do {
             Start-Sleep -Seconds 10
@@ -264,11 +283,13 @@ else {
         Write-Measured 'LastTaskResult' ('0x{0:X} ({0})' -f $info.LastTaskResult)
         Write-Check 'LastTaskResult is not 0x41303 (never ran)' `
             ($info.LastTaskResult -ne 0x41303) `
-            'that value is exactly the Interactive-logon failure this gate exists for'
+            $(if ($everRan) { 'that value is exactly the Interactive-logon failure this gate exists for' }
+              else { 'and the task was never seen Running, so read this as the start failure above, NOT as the logon-type finding' })
         Write-Check 'LastTaskResult is a documented monitor exit code (0-7)' `
             ($info.LastTaskResult -ge 0 -and $info.LastTaskResult -le 7) `
             'anything else came from the scheduler, not the script'
         $results['GateB_LastTaskResult'] = ('0x{0:X}' -f $info.LastTaskResult)
+        $results['GateB_ObservedRunning'] = $everRan
 
         # Did the run event actually land?
         try {
@@ -308,10 +329,25 @@ else {
             $results['GateB_EmitErrors'] = $(if ($obj.EmitErrors) { $obj.EmitErrors -join '; ' } else { '' })
         }
     }
+    catch {
+        # WITHOUT THIS, ONE THROW COSTS THE WHOLE TRIP. $ErrorActionPreference is
+        # Stop, so any cmdlet in Gate B can terminate the script - and a bare
+        # try/finally lets that propagate straight past the RESULTS block at the
+        # bottom. The operator is running this on a server they had to RDP into,
+        # and the measurement is the only thing they came back with; losing Gate A's
+        # results to a Gate B exception is the worst outcome available here.
+        Write-Check 'Gate B ran to completion' $false $_.Exception.Message
+        $results['GateB_Exception'] = $_.Exception.Message
+    }
     finally {
         # ALWAYS, even on a failed assertion above: this created a real task on a real
-        # server and leaving it behind is worse than any gate it failed.
-        if ($registered) {
+        # server and leaving it behind is worse than any gate it failed. Ask the
+        # SCHEDULER whether a task is there rather than trusting a flag set partway
+        # through the try - if registration succeeded and the very next call threw,
+        # the flag is still $false and the task is still on the box.
+        $present = $false
+        try { Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop | Out-Null; $present = $true } catch { }
+        if ($present) {
             Write-Host ''
             Write-Host '  Unregistering.' -ForegroundColor Yellow
             try {
