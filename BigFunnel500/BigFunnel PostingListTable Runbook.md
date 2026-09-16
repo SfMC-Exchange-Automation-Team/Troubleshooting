@@ -14,7 +14,7 @@ The core operational model separates two remediation patterns:
 |---|---|---|
 | Users actively blocked; mail delivery queuing with `432 4.3.2 STOREDRV.Storage; mailbox server is too busy` | Database switchover using `Move-ActiveMailboxDatabase` | Restores user access by moving the active database copy to another server, but does not reduce `BigFunnelPostingListTableTotalSize` |
 | `BigFunnelPostingListTableTotalSize` at an elevated threshold with no active user impact | Collect diagnostics, reduce mailbox content, then schedule a mailbox move | A mailbox move may rebuild search metadata structures on the destination, potentially reducing the table size |
-| Many mailboxes above threshold | Monitor, prioritize, and batch moves under change control | Exchange Server 2019 workload management (WLM) throttling defaults to 10 simultaneous mailbox moves from the same source or to the same target; batching and automation are required at scale |
+| Many mailboxes above threshold | Monitor, prioritize, and batch moves under change control | Exchange Server 2019 and Exchange Server SE workload management (WLM) throttling defaults to 10 simultaneous mailbox moves from the same source or to the same target; batching and automation are required at scale |
 
 > [!IMPORTANT]
 > Database switchover is a **database-scoped** operation. Exchange Server does not support failing over an individual mailbox; all failover actions occur at the database level.
@@ -124,7 +124,7 @@ This changes how a `0 B` reading must be read. Below the allocation point, `0 B`
 | `0 B`, indexed, and holding well above ~16 MB | The mailbox is indexed but the size is not accounted for in this counter | Do not read this as healthy. Check `BigFunnelTotalPOISize`, `BigFunnelLargePOITableTotalSize`, and `BigFunnelFilterTableTotalSize` for where the index size actually is |
 
 > [!IMPORTANT]
-> If every mailbox on a database reports `0 B` while reporting a non-zero `BigFunnelIndexedCount`, **and those mailboxes are large enough to have allocated a table**, threshold alerting on this metric cannot fire there. A clean monitoring run then says nothing about posting list growth - it says only that nothing could have been found. Validate the counter against at least one mailbox known to exhibit the problem before treating an absence of alerts as evidence of health. The monitoring script in the next section reports this case as a distinct `NotPopulated` status rather than as `Normal`, precisely so that it cannot be mistaken for a pass. The size qualifier is load-bearing: without it, an estate of small mailboxes - a lab, a new deployment, a small tenant - reports a total metric outage on every run, and an alert that always fires is an alert that gets muted.
+> If every mailbox on a database reports `0 B` while reporting a non-zero `BigFunnelIndexedCount`, **and those mailboxes are large enough to have allocated a table**, threshold alerting on this metric cannot fire there. A clean monitoring run then says nothing about posting list growth - it says only that nothing could have been found. Validate the counter against at least one mailbox known to exhibit the problem before treating an absence of alerts as evidence of health. The monitoring script in the next section refuses to record this as a pass at either level: each affected mailbox is classified `NotPopulated` rather than `Normal`, and the run as a whole reports `Status = MetricUnavailable` rather than `OK`. The size qualifier is load-bearing: without it, an estate of small mailboxes - a lab, a new deployment, a small tenant - reports a total metric outage on every run, and an alert that always fires is an alert that gets muted.
 
 When you judge how widespread the condition is, count it against the mailboxes that could actually exhibit it: indexed, and above the allocation point. Two separate populations have to come out of the denominator. Health, arbitration, system and archive mailboxes hold no BigFunnel index at all; on the lab server above they were 44 of 66 rows. Mailboxes below roughly 16 MB read `0 B` correctly and are not evidence of anything. A ratio taken over all rows understates the problem badly and can never reach 100%; a ratio that counts small mailboxes as witnesses overstates it and reaches 100% on a perfectly healthy small estate.
 
@@ -1000,7 +1000,7 @@ Two things follow that are easy to get wrong while triaging any in-process store
 - **Not every cross-node Exchange call fails, so a working call proves nothing.** `Get-MailboxDatabaseCopyStatus` and `Get-ServerHealth` against the same peer succeed from the same failing session, because neither touches the store. Only store admin calls fail: `Get-MailboxStatistics -Database`, `Get-MailboxStatistics -Identity`, and `Get-LogonStatistics -Database`.
 - **`Test-MAPIConnectivity -Server <peer>` is not a valid second opinion.** Run from the same session it fails the same way, which reads like a store outage on the peer and sends the investigation to the wrong host. It is measuring the invocation, not the peer.
 
-For scheduled monitoring, still leave `-Scope` at its default. `Local` on every node covers the DAG, survives a switchover with no reconfiguration, and spreads the collection across the members that own the data instead of funnelling every store call through one runspace. Reserve `-Scope All` for an ad-hoc estate-wide sweep from one place:
+For scheduled monitoring, pass `-Scope Local` explicitly on every node. It is **not** the default - the default is `All` - and this is the one place in this article where the default is the wrong choice. `Local` on every node covers the DAG, survives a switchover with no reconfiguration, and spreads the collection across the members that own the data instead of funnelling every store call through one runspace. Leaving it off registers a task on each member that sweeps the whole organization, so every node writes a full set of files describing the same estate; `-RegisterScheduledTask` warns when `-Scope` was not passed explicitly for exactly this reason, and that warning is described in [What the script refuses to do](#what-the-script-refuses-to-do). Reserve `-Scope All` for an ad-hoc estate-wide sweep from one place:
 
 ```powershell
 & 'C:\Scripts\Monitor-BigFunnelPostingList.ps1' -Scope All -OutputPath 'C:\Temp\Sweep'
@@ -1274,7 +1274,7 @@ Results vary. The degree of `BigFunnelPostingListTableTotalSize` reduction depen
 
 ### Search index retry for unindexed items
 
-The `Start-MailboxAssistant` cmdlet is available only in Exchange Server 2019 Cumulative Update 11 (CU11) or later. It starts the `BigFunnelRetryFeederTimeBasedAssistant` assistant, which indexes mailbox items that were not indexed previously.
+The `Start-MailboxAssistant` cmdlet is available in Exchange Server 2019 Cumulative Update 11 (CU11) or later, and in every build of Exchange Server SE, which continues that servicing line. It starts the `BigFunnelRetryFeederTimeBasedAssistant` assistant, which indexes mailbox items that were not indexed previously.
 
 > [!CAUTION]
 > Before using `Start-MailboxAssistant`, you must first create a setting override as described in [Incomplete search results after installing an Exchange Server 2019 update](https://support.microsoft.com/topic/incomplete-search-results-after-installing-an-exchange-server-2019-update-96ae2ef0-4569-4327-8d0c-8a3c1abdc1f6). Incorrect usage of the setting override cmdlets can cause serious damage to your Exchange organization. This damage could require you to reinstall Exchange. Only use these cmdlets as instructed by product documentation or under the direction of Microsoft Customer Service and Support.
@@ -1309,7 +1309,7 @@ This strategy allows targeted switchovers that minimize impact on other users an
 
 ## Concurrency and WLM throttling
 
-Exchange Server 2019 implements workload management (WLM) throttling. By default, WLM applies a limit of 10 simultaneous mailbox moves from the same source or to the same target. WLM throttling overrides Mailbox Replication Service (MRS) throttling.
+Exchange Server 2019 and Exchange Server SE implement workload management (WLM) throttling. By default, WLM applies a limit of 10 simultaneous mailbox moves from the same source or to the same target. WLM throttling overrides Mailbox Replication Service (MRS) throttling.
 
 A stalled status such as `StalledDueToTarget_MdbReplication`, `StalledDueToTarget_MdbAvailability`, or `StalledDueToTarget_DiskLatency` is typical during migration and does not mean the migration has a problem. The purpose of throttling is to maintain the performance of higher-priority Exchange Server workloads.
 
@@ -1479,7 +1479,7 @@ Focus on `BigFunnelNotIndexedCount`, `BigFunnelCorruptedCount`, and `BigFunnelSt
 If anomalies are found:
 
 1. Re-run `Troubleshoot-ModernSearch.ps1`.
-2. Consider invoking `Start-MailboxAssistant` with `BigFunnelRetryFeederTimeBasedAssistant` if running Exchange Server 2019 CU11 or later and the required setting override is in place.
+2. Consider invoking `Start-MailboxAssistant` with `BigFunnelRetryFeederTimeBasedAssistant` if running Exchange Server 2019 CU11 or later, or any build of Exchange Server SE, and the required setting override is in place.
 
 ### Step 9: Document outcome
 
