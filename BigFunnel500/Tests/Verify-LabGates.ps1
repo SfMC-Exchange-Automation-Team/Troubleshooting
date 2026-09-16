@@ -97,14 +97,30 @@ Write-Check 'monitor script found' (Test-Path -LiteralPath $monitor) $monitor
 if (-not (Test-Path -LiteralPath $monitor)) { exit 1 }
 
 # THE MIRROR OF T54, and the reason it is here: the suite asserts the MOCK won, so
-# this has to assert the REAL cmdlets did. run-tests.ps1 prepends _mockmodules to
+# this has to assert the REAL module did. run-tests.ps1 prepends _mockmodules to
 # PSModulePath, and a lab gate that ran against the mock would report a clean pass
 # having proved nothing at all about this machine.
+#
+# DISCRIMINATE ON THE PATH, NEVER ON CommandType. ScheduledTasks is a CDXML module,
+# so PowerShell generates its commands as FUNCTIONS: measured 2026-09-16 on both
+# MEGAPIG and w25-ex01, Get-Command Register-ScheduledTask reports
+# Function / ScheduledTasks with a path under %SystemRoot%. The mock is a .psm1 and
+# therefore also exports functions, so CommandType cannot tell the two apart at all.
+# The first version of this check demanded CommandType -eq 'Cmdlet' and so failed on
+# every real machine while passing on none - it cost a lab trip. T54 gets this right
+# at run-tests.ps1:2353 by testing Module.Path alone; this is its mirror image.
 $reg = Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue
-$realCmdlets = $reg -and $reg.CommandType -eq 'Cmdlet' -and
-               ($reg.Module.Path -notlike '*_mockmodules*')
-Write-Check 'Register-ScheduledTask is the REAL cmdlet' $realCmdlets `
-    ('{0} / {1}' -f $reg.CommandType, $reg.ModuleName)
+$regPath = if ($reg) { [string]$reg.Module.Path } else { '' }
+# AN EMPTY PATH IS NOT A PASS. -notlike '*_mockmodules*' is TRUE for the empty
+# string, so excluding the mock without also requiring a known-good location would
+# report success for a module it could not identify at all - a false clean in the
+# one direction this check exists to prevent.
+$realCmdlets = [bool]$reg -and [bool]$regPath -and
+               ($regPath -notlike '*_mockmodules*') -and
+               ($regPath -like (Join-Path $env:SystemRoot '*'))
+Write-Check 'Register-ScheduledTask is the REAL module' $realCmdlets `
+    $(if ($regPath) { $regPath } elseif ($reg) { 'found, but no module path to identify it by' }
+      else { 'Register-ScheduledTask not found at all' })
 if (-not $realCmdlets) {
     Write-Host '  The mock module is shadowing the real one. Open a fresh session.' -ForegroundColor Red
     exit 1
