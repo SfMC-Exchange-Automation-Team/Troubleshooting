@@ -14,6 +14,18 @@
 [CmdletBinding()]
 param(
     [string]$ComputerName = 'w25-ex01',
+
+    # NOT optional in practice, and the first version of this script omitted it.
+    # Measured 2026-09-16: this workstation is Entra-joined, NOT domain-joined
+    # (dsregcmd: AzureAdJoined YES / DomainJoined NO), so an implicit connection
+    # offers a NORTHAMERICA\ token over NTLM pass-through. A box with a matching
+    # LOCAL account accepts that - littlepig does - but w25-ex01 is in the lab AD
+    # forest, which has never heard of that domain, and refuses with a bare
+    # "Access is denied" that reads like a WinRM fault and is not one. The
+    # TrustedHosts entry for this host only takes effect WHEN CREDENTIALS ARE
+    # PASSED, so without this parameter it was never doing anything.
+    [System.Management.Automation.PSCredential]$Credential,
+
     [string]$EventLogSource = 'BigFunnelPostingListMonitor'
 )
 
@@ -70,13 +82,34 @@ Write-Host ("Read-only Event Log probe -> {0}" -f $ComputerName) -ForegroundColo
 Write-Host ('-' * 46) -ForegroundColor DarkGray
 
 try {
-    $r = Invoke-Command -ComputerName $ComputerName -ScriptBlock $probe `
-            -ArgumentList $EventLogSource -ErrorAction Stop
+    $icm = @{
+        ComputerName = $ComputerName
+        ScriptBlock  = $probe
+        ArgumentList = $EventLogSource
+        ErrorAction  = 'Stop'
+    }
+    if ($Credential) { $icm['Credential'] = $Credential }
+    $r = Invoke-Command @icm
 }
 catch {
     Write-Host '  COULD NOT CONNECT' -ForegroundColor Red
     Write-Host ('  ' + $_.Exception.Message) -ForegroundColor Red
     Write-Host ''
+    if (-not $Credential -and $_.Exception.Message -match 'Access is denied') {
+        # Name the likely cause rather than leaving the operator with the raw
+        # message. "Access is denied" from an implicit connection is far more
+        # often the wrong IDENTITY than the wrong RIGHTS, and the two want
+        # opposite fixes - one needs a -Credential, the other needs a group
+        # membership change on the target.
+        Write-Host '  NO -Credential WAS PASSED, and this is the failure that produces.' -ForegroundColor Yellow
+        Write-Host '  An implicit connection offers THIS machine''s logon identity. If this box is' -ForegroundColor Yellow
+        Write-Host '  Entra-joined or in a workgroup and the target is in its own AD forest, the' -ForegroundColor Yellow
+        Write-Host '  target cannot resolve that identity at all. Re-run with:' -ForegroundColor Yellow
+        Write-Host ('    .\Probe-EventLogRights.ps1 -ComputerName {0} -Credential (Get-Credential LABDOMAIN\Administrator)' -f $ComputerName) -ForegroundColor Gray
+        Write-Host '  Check the TrustedHosts entry exists too - it is ONLY consulted for explicit creds:' -ForegroundColor Yellow
+        Write-Host '    Get-Item WSMan:\localhost\Client\TrustedHosts' -ForegroundColor Gray
+        Write-Host ''
+    }
     Write-Host '  The gate stays open. This is a connectivity/rights result, not a measurement' -ForegroundColor Yellow
     Write-Host '  of the Event Log behaviour - do not read it as either outcome.' -ForegroundColor Yellow
     exit 2
