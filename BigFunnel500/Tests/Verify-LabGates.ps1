@@ -297,9 +297,18 @@ else {
         # 0x41303 is "has not run"; anything non-zero that is not a documented monitor
         # exit code is a scheduler fault rather than a finding.
         Write-Measured 'LastTaskResult' ('0x{0:X} ({0})' -f $info.LastTaskResult)
-        Write-Check 'LastTaskResult is not 0x41303 (never ran)' `
-            ($info.LastTaskResult -ne 0x41303) `
-            $(if ($everRan) { 'that value is exactly the Interactive-logon failure this gate exists for' }
+        # THE DETAIL MUST BRANCH ON THE RESULT, not only on $everRan. Measured
+        # 2026-09-16 on w25-ex01: a clean run printed
+        #   PASS  LastTaskResult is not 0x41303 ... that value is exactly the
+        #   Interactive-logon failure this gate exists for
+        # next to a LastTaskResult of 0x0 - a sentence describing the exact
+        # opposite of what had just been measured, sitting beside the word PASS.
+        # These lines are the only thing an operator reading the log afterwards
+        # has, so a detail that contradicts its own verdict is worse than none.
+        $neverRan = $info.LastTaskResult -eq 0x41303
+        Write-Check 'LastTaskResult is not 0x41303 (never ran)' (-not $neverRan) `
+            $(if (-not $neverRan) { 'the task ran and reported a real exit code' }
+              elseif ($everRan) { 'that value is exactly the Interactive-logon failure this gate exists for' }
               else { 'and the task was never seen Running, so read this as the start failure above, NOT as the logon-type finding' })
         Write-Check 'LastTaskResult is a documented monitor exit code (0-7)' `
             ($info.LastTaskResult -ge 0 -and $info.LastTaskResult -le 7) `
