@@ -26,6 +26,40 @@ if ([string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) { $env:COMPUTERNAME = 'EXCH
 # its exit codes are the process exit codes.
 $env:PSModulePath = (Join-Path $PSScriptRoot '_mockmodules') + ';' + $env:PSModulePath
 
+# The same mechanism shadows the real ScheduledTasks module, and here it is
+# load-bearing rather than convenient: without it the task cases would create
+# real scheduled tasks on whatever machine ran the suite. Verified rather than
+# assumed - in a child powershell.exe with no explicit import, Get-ScheduledTask
+# resolves to a Function out of _mockmodules, not to the system cmdlet.
+#
+# The store is a file because the monitor runs as a child process: the suite
+# registers in one powershell.exe and asserts in another. Scoped to the scratch
+# directory so a run cannot inherit a previous run's tasks.
+$env:MOCK_TASKSTORE = Join-Path $scratch 'mock-scheduledtasks.json'
+Remove-Item -LiteralPath $env:MOCK_TASKSTORE -Force -ErrorAction SilentlyContinue
+
+function Reset-TaskStore {
+    Remove-Item -LiteralPath $env:MOCK_TASKSTORE -Force -ErrorAction SilentlyContinue
+    # Left over from a case that injected one and failed before its cleanup.
+    foreach ($v in 'MOCK_TASK_DENY', 'MOCK_TASK_LOGONTYPE', 'MOCK_TASK_RUNLEVEL', 'MOCK_TASK_STICKY') {
+        Remove-Item -Path ('env:' + $v) -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-MockTask {
+    # Reads the store directly rather than through the mock module, so an
+    # assertion about what was registered cannot be satisfied by the same code
+    # path that registered it.
+    param([Parameter(Mandatory = $true)][string]$Name)
+    if (-not (Test-Path -LiteralPath $env:MOCK_TASKSTORE)) { return $null }
+    $raw = Get-Content -LiteralPath $env:MOCK_TASKSTORE -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $obj = $raw | ConvertFrom-Json
+    $prop = $obj.PSObject.Properties | Where-Object { $_.Name -eq $Name }
+    if (-not $prop) { return $null }
+    return $prop.Value
+}
+
 function Invoke-Monitor {
     param(
         [Parameter(Mandatory = $true)][string]$OutputPath,
@@ -138,7 +172,29 @@ function Get-Stdout {
 }
 
 function Assert {
-    param([string]$Name, [bool]$Condition, [string]$Detail = '')
+    param([string]$Name, $Condition, [string]$Detail = '')
+
+    # $Condition was typed [bool] until 2026-09-16, and that turned a malformed
+    # assertion into a parameter-binding ERROR rather than a failure: PowerShell
+    # cannot cast a multi-element array to bool, so the call threw, the run
+    # carried on, and the assertion disappeared from the tally altogether. A
+    # suite that reports "0 failed" while quietly not running one of its checks
+    # is worse than one that reports the failure.
+    #
+    # The easy way to write one is with a helper that returns a collection:
+    # Get-Log returns a string[], so `$log -notmatch 'x'` evaluates to the
+    # non-matching LINES rather than to $false, and a 0- or 1-element result
+    # would even cast successfully and pass for the wrong reason. Rejected by
+    # type rather than coerced, because coercion is what makes that a silent
+    # pass. Join the collection first: `($log -join "`n") -notmatch 'x'`.
+    if ($Condition -isnot [bool]) {
+        $script:fail++
+        $what = if ($null -eq $Condition) { '$null' } else { $Condition.GetType().Name }
+        Write-Host ('  FAIL  ' + $Name + '  [malformed assertion: condition is ' + $what +
+                    ', not a boolean - join collections before matching]') -ForegroundColor Red
+        return
+    }
+
     if ($Condition) { $script:pass++; Write-Host ('  PASS  ' + $Name) -ForegroundColor Green }
     else { $script:fail++; Write-Host ('  FAIL  ' + $Name + '  ' + $Detail) -ForegroundColor Red }
 }
@@ -1568,14 +1624,20 @@ if ($fnAst.Count -eq 1) {
     $bound['OutputPath']         = 'C:\Program Files\bf out\'
     $bound['ExitNonZeroOnAlert'] = [System.Management.Automation.SwitchParameter]::Present
     $bound['NoElevate']          = [System.Management.Automation.SwitchParameter]::Present
-    $line = ConvertTo-RelaunchArguments $bound
+    $line = ConvertTo-RelaunchArguments $bound -Exclude 'NoElevate'
 
     Assert 'a threshold crosses intact, so the child judges by the same numbers' `
         ($line -match '-CriticalGB "2\.5"') $line
     Assert 'a value with a space stays one argument' `
         ($line -match '-Scope "All"') $line
-    Assert 'an array crosses as a list, not as its first element' `
-        ($line -match '-Databases "DB one","DB two"') $line
+    # Deliberately ONE quoted token, not -Databases "DB one","DB two". The
+    # earlier spelling reads better and does not work: powershell.exe -File does
+    # not split comma lists, so the child received the whole thing as a single
+    # element either way. Joining first and quoting once is the honest spelling
+    # of what actually crosses, and the only form that survives a value with a
+    # space in it. The round trip below is what proves it.
+    Assert 'an array crosses as one argument, because -File cannot carry more' `
+        ($line -match '-Databases "DB one,DB two"') $line
     # A trailing backslash would escape the closing quote when Windows splits
     # the child's command line, swallowing whatever argument came next.
     Assert 'a path ending in a separator cannot escape its own closing quote' `
@@ -1584,9 +1646,58 @@ if ($fnAst.Count -eq 1) {
         (($line -match '-ExitNonZeroOnAlert(\s|$)') -and ($line -notmatch '-ExitNonZeroOnAlert "')) $line
     # Passing it on would be harmless but dishonest: the child is elevated, so
     # the gate never runs there, and the line should describe what it does.
+    # Excluded by the caller now rather than hardcoded here, because the task
+    # registration reuses this builder and excludes a different set.
     Assert 'and -NoElevate is not passed on to a child that is already elevated' `
         ($line -notmatch 'NoElevate') $line
+
+    # And the half that reads the line back. Lifted the same way, because the
+    # two are one mechanism: the builder writes an argument string and this
+    # re-splits it, and testing either alone proves nothing about the pair.
+    $splitAst = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null).
+                FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                                      $n.Name -eq 'Split-BoundList' }, $true)
+    Assert 'the list splitter is there to test too' ($splitAst.Count -eq 1) ('found ' + $splitAst.Count)
+    if ($splitAst.Count -eq 1) {
+        . ([scriptblock]::Create($splitAst[0].Extent.Text))
+        Assert 'it recovers both names from what -File actually delivers' `
+            (((Split-BoundList 'DB one,DB two') -join '/') -eq 'DB one/DB two')
+        Assert 'splitting a real array is a no-op, so an interactive caller is unaffected' `
+            (((Split-BoundList @('DB one', 'DB two')) -join '/') -eq 'DB one/DB two')
+        Assert 'an unbound parameter stays empty rather than becoming one blank entry' `
+            ((Split-BoundList $null).Count -eq 0)
+        Assert 'and stray whitespace around a separator does not become a database name' `
+            (((Split-BoundList 'DB one , DB two ,') -join '/') -eq 'DB one/DB two')
+    }
 }
+
+Write-Host ''
+Write-Host 'T43b a list parameter survives the process boundary it is sent across' -ForegroundColor Cyan
+# T43 checks the two halves. This checks the whole thing, through a real
+# Start-Process -File, which is how BOTH the elevation relaunch and the
+# registered scheduled task invoke this script.
+#
+# It exists because the assertion it replaces passed for four versions while the
+# defect was live. That assertion checked the SHAPE of the generated string and
+# never handed it to a child, so it could not distinguish an encoding that reads
+# correctly from one that survives. Measured, the old encoding did not: the
+# child bound -Databases to a single element, the string 'DB one,DB two', found
+# no database by that name, and fell through to discovering every database
+# instead - a silently wrong scope on an otherwise clean-looking run.
+#
+# Two nonexistent names, because the monitor logs one line per requested
+# database it cannot find. Two lines means the list was split; one line naming
+# them both together means it was not.
+$d43b  = Reset-Dir '_t43b'
+$rc43b = Invoke-Monitor -OutputPath $d43b -Extra '-Databases "No Such DB one,No Such DB two"'
+$log43b = (Get-Log $d43b) -join "`n"
+
+Assert 'both names arrive as separate databases, not as one string containing a comma' `
+    (($log43b -match 'Database \[No Such DB one\]') -and ($log43b -match 'Database \[No Such DB two\]')) $log43b
+Assert 'and neither is reported under the joined name the command line carried' `
+    ($log43b -notmatch 'No Such DB one,No Such DB two') $log43b
+Assert 'a name with a space in it still arrives intact' `
+    ($log43b -notmatch 'Database \[No\]') $log43b
 
 Write-Host ''
 Write-Host 'T44  what a run says on screen when nobody asked it to say anything' -ForegroundColor Cyan
@@ -2188,6 +2299,678 @@ Assert 'and replays it after the child exits, then deletes it' `
 # A relay that never arrived must not leave the operator with nothing at all.
 Assert 'and falls back to the exit code and log path when nothing came back' `
     ($src52 -match '(?s)if \(\$replayed -eq 0\)\s*\{\s*Write-Report \(.The elevated run exited') 'no fallback'
+
+Write-Host ''
+Write-Host 'T53  a registration run refuses rather than leaving a task that never runs' -ForegroundColor Cyan
+# End to end, in a child process, the way a scheduled task would invoke it. The
+# harness is not elevated, which is not a limitation here - it is the case the
+# refusal exists for, and it is the one an operator hits first.
+Reset-TaskStore
+$d53  = Reset-Dir '_t53'
+$rc53 = Invoke-Monitor -OutputPath $d53 -Extra '-RegisterScheduledTask -Scope Local'
+$log53 = (Get-Log $d53) -join "`n"
+$out53 = (Get-Stdout) -join "`n"
+
+Assert 'an unelevated registration exits 7, its own code, not 0 and not 3' `
+    ($rc53 -eq 7) ('got exit ' + $rc53)
+# The assertion that matters more than the exit code. A refusal that still left
+# a task behind would be the exact failure the feature exists to prevent.
+Assert 'and nothing at all was registered' `
+    ($null -eq (Get-MockTask 'Exchange BigFunnel PostingListTable Monitor')) 'a task was created anyway'
+Assert 'the log names the missing elevated token as the reason' `
+    ($log53 -match 'needs an elevated token') $log53
+# The three things that each suppress the automatic relaunch are the three ways
+# an operator arrives here by accident, so the message has to list them.
+Assert 'and names -NoElevate, -Credential and -TaskCredential as the suppressors' `
+    (($log53 -match '-NoElevate') -and ($log53 -match '-TaskCredential')) $log53
+Assert 'the console gets the short form, not the paragraph' `
+    ($out53 -match 'Cannot register the task: this run is not elevated\.') $out53
+
+# A registration run is local work against the scheduler. Binding a runspace
+# first would make it fail on a node where Exchange is not reachable yet, for a
+# reason that has nothing to do with the task.
+Assert 'the run reports itself as a task operation, not as a collection' `
+    ($out53 -match 'scheduled task operation on') $out53
+Assert 'and collects nothing: no CSV' (@(Get-Csv $d53).Count -eq 0) 'a CSV was written'
+Assert 'and no run summary either' ($null -eq (Get-Summary $d53)) 'a summary was written'
+# The directory and the log ARE created, deliberately: every refusal above is a
+# diagnosis, and a diagnosis nobody can read afterwards is not one.
+Assert 'but the log is still written, because the refusal is the output' `
+    ($log53.Length -gt 0) 'no log'
+Assert 'and the exit code is printed where the operator is looking' `
+    ($out53 -match 'Exit code 7') $out53
+
+Write-Host ''
+Write-Host 'T54  removal is confirmed rather than assumed' -ForegroundColor Cyan
+# The mock is imported here by explicit path rather than left to auto-loading.
+# The child processes above resolve it by PSModulePath, which is verified; this
+# process needs it too, to seed a task for the cases below, and an explicit
+# import is the difference between "the mock won" and "something won". From here
+# on the real ScheduledTasks cmdlets are shadowed in this process as well, which
+# is the safe direction: the suite cannot touch the machine's own scheduler.
+Import-Module (Join-Path $PSScriptRoot '_mockmodules\ScheduledTasks\ScheduledTasks.psm1') -Force
+Assert 'the suite talks to the mock scheduler, never the real one' `
+    ((Get-Command Register-ScheduledTask).Module.Path -like '*_mockmodules*') `
+    ([string](Get-Command Register-ScheduledTask).Module.Path)
+
+function New-MockTask {
+    # Seeds through the mock's own writer rather than by hand, so what a test
+    # seeds cannot drift from the shape Get-ScheduledTask reads back.
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Arguments = '-NoProfile -File "C:\Scripts\Monitor-BigFunnelPostingList.ps1" -Scope Local',
+        [string]$RunLevel  = 'Highest'
+    )
+    $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $Arguments
+    Register-ScheduledTask -TaskName $Name -Action $a -User 'CONTOSO\svc-bf' `
+        -Password 'pw' -RunLevel $RunLevel -Force | Out-Null
+}
+
+$tn54 = 'Exchange BigFunnel PostingListTable Monitor'
+
+Reset-TaskStore
+$d54  = Reset-Dir '_t54'
+$rc54 = Invoke-Monitor -OutputPath $d54 -Extra '-UnregisterScheduledTask'
+Assert 'removing a task that is not there exits 0, so a teardown can run twice' `
+    ($rc54 -eq 0) ('got exit ' + $rc54)
+Assert 'and says there was nothing to remove, rather than reporting a removal' `
+    (((Get-Log $d54) -join "`n") -match 'No scheduled task named') ((Get-Log $d54) -join "`n")
+
+Reset-TaskStore
+New-MockTask -Name $tn54
+$d54b  = Reset-Dir '_t54b'
+$rc54b = Invoke-Monitor -OutputPath $d54b -Extra '-UnregisterScheduledTask'
+Assert 'removing one that is there exits 0' ($rc54b -eq 0) ('got exit ' + $rc54b)
+Assert 'and it is gone from the store, checked outside the code that removed it' `
+    ($null -eq (Get-MockTask $tn54)) 'still registered'
+Assert 'and the removal is reported to the operator' `
+    (((Get-Stdout) -join "`n") -match ('Removed: ' + [regex]::Escape($tn54))) ((Get-Stdout) -join "`n")
+
+# Unregister-ScheduledTask cannot be taken at its word. Without an injector this
+# branch is unreachable, and an unreachable branch is one nobody has ever run.
+Reset-TaskStore
+New-MockTask -Name $tn54
+$d54c  = Reset-Dir '_t54c'
+$rc54c = Invoke-Monitor -OutputPath $d54c -Extra '-UnregisterScheduledTask' -WithEnv @{ MOCK_TASK_STICKY = '1' }
+Assert 'a removal that reports success and removes nothing is caught, and exits 7' `
+    ($rc54c -eq 7) ('got exit ' + $rc54c)
+Assert 'and the log says success was reported but the task is still registered' `
+    (((Get-Log $d54c) -join "`n") -match 'reported success but .* is still registered') ((Get-Log $d54c) -join "`n")
+Assert 'the task really is still there, so the check was not a false alarm' `
+    ($null -ne (Get-MockTask $tn54)) 'the task went after all'
+
+# Estates that reserve task creation to a management layer usually reserve
+# removal too, so the diagnosis has to be available on this side as well.
+Reset-TaskStore
+New-MockTask -Name $tn54
+$d54d  = Reset-Dir '_t54d'
+$rc54d = Invoke-Monitor -OutputPath $d54d -Extra '-UnregisterScheduledTask' -WithEnv @{ MOCK_TASK_DENY = '1' }
+Assert 'a removal blocked by policy exits 7' ($rc54d -eq 7) ('got exit ' + $rc54d)
+Assert 'and is named as policy rather than passed through as a raw HRESULT' `
+    (((Get-Log $d54d) -join "`n") -match 'Policy in this estate may reserve scheduled task changes') ((Get-Log $d54d) -join "`n")
+Reset-TaskStore
+
+Write-Host ''
+Write-Host 'T55  the registration itself, lifted out of the script by name' -ForegroundColor Cyan
+# Registering needs an elevated token, and the event source below needs one too.
+# Neither gate can be passed from a test run, so the choice is between testing
+# these the way T52 tests the relay replay - parsed out by name and run for real
+# with its dependencies stubbed - and not testing them at all.
+
+function Get-MonitorPartText {
+    # Returns the source text of named functions and named script-scope
+    # assignments, to be dot-sourced by the CALLER. Deliberately not dot-sourced
+    # in here: a definition dot-sourced inside a function lands in that
+    # function's scope and vanishes when it returns, which would leave every
+    # assertion below silently exercising nothing.
+    #
+    # Parsed rather than matched with a regex. A brace inside one of this
+    # script's comments would defeat any pattern; the AST cannot be fooled by
+    # one, and a name that is not found is reported rather than skipped.
+    param([Parameter(Mandatory = $true)][string[]]$Name)
+
+    $ast   = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null)
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($n in $Name) {
+        $hit = @($ast.FindAll({ param($x)
+            ($x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $n) -or
+            ($x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left.Extent.Text -eq $n)
+        }, $true))
+        if ($hit.Count -ne 1) {
+            Assert ('lifting [' + $n + '] out of the monitor finds exactly one definition') `
+                ($hit.Count -eq 1) ('found ' + $hit.Count)
+            continue
+        }
+        $parts.Add($hit[0].Extent.Text)
+    }
+    return ($parts -join [Environment]::NewLine)
+}
+
+$lifted = Get-MonitorPartText -Name @(
+    'Test-TaskCommandLine', 'ConvertTo-RelaunchArguments',
+    'Register-MonitorScheduledTask', 'Test-MonitorScheduledTaskRegistration',
+    '$script:RunEventMap', '$script:MailboxEventMap',
+    'ConvertTo-KeyValueText', 'Write-EmitEventChannel'
+)
+Assert 'all eight parts come out of the monitor' ($lifted.Length -gt 0) 'nothing lifted'
+. ([scriptblock]::Create($lifted))
+
+# The two console channels, captured instead of printed, so a test can read what
+# a refusal actually said rather than watch it scroll past.
+$script:Logged   = New-Object System.Collections.ArrayList
+$script:Reported = New-Object System.Collections.ArrayList
+function Write-RunLog {
+    param([string]$Message, [string]$Level = 'INFO', [switch]$RowDetail, [string[]]$ConsoleText)
+    $null = $script:Logged.Add($Level + '|' + $Message + '|' + ($ConsoleText -join ' '))
+}
+function Write-Report {
+    param([string]$Text = '', [string]$Style = 'Plain')
+    $null = $script:Reported.Add($Style + '|' + $Text)
+}
+
+$script:Elevated = $true
+$MaxRunMinutes   = 45
+$tc55 = New-Object System.Management.Automation.PSCredential(
+            'CONTOSO\svc-bf', (ConvertTo-SecureString 'pw' -AsPlainText -Force))
+$tn55 = 'BF Test Registration'
+
+# -Command collapses every non-zero exit to 1 at the scheduler, so 2 to 6 arrive
+# indistinguishable. This is the one assertion about a registered action that
+# cannot be allowed to drift.
+Assert 'a -File action passes the command line check' `
+    (Test-TaskCommandLine -Arguments '-NoProfile -File "C:\x.ps1" -Scope Local') 'rejected a -File action'
+Assert 'a -Command action is rejected' `
+    (-not (Test-TaskCommandLine -Arguments '-NoProfile -Command "& C:\x.ps1"')) 'accepted -Command'
+Assert 'and -Command loses even when -File is also present' `
+    (-not (Test-TaskCommandLine -Arguments '-File "C:\x.ps1" -Command "& x"')) 'accepted a mixed line'
+Assert 'a parameter that merely starts with -File is not mistaken for it' `
+    (-not (Test-TaskCommandLine -Arguments '-FilePath "C:\x.ps1"')) 'matched -FilePath'
+Assert 'and an empty command line is not a -File one' `
+    (-not (Test-TaskCommandLine -Arguments '')) 'accepted an empty line'
+
+Reset-TaskStore
+$script:Logged.Clear()
+$b55 = @{
+    RegisterScheduledTask = [switch]$true
+    TaskName              = $tn55
+    TaskIntervalHours     = 6
+    Scope                 = 'Local'
+    WarningGB             = 3.5
+    CriticalGB            = 4.25
+    Credential            = $tc55
+    ConsoleRelayPath      = 'C:\Temp\bf-relay.txt'
+}
+$r55 = Register-MonitorScheduledTask -Bound $b55 -Name $tn55 -IntervalHours 6 `
+           -StartTime '02:15' -TaskCred $tc55
+$t55 = Get-MockTask $tn55
+
+Assert 'a registration with a credential returns 0' ($r55 -eq 0) ('got ' + $r55)
+Assert 'and the task is in the store' ($null -ne $t55) 'nothing registered'
+if ($null -ne $t55) {
+    # Interactive never runs; S4U runs and then cannot open the runspace. Only
+    # Password is a working monitor, and the script reads it back to check.
+    Assert 'registered with LogonType Password, the only one that works' `
+        ([string]$t55.LogonType -eq 'Password') ([string]$t55.LogonType)
+    Assert 'and RunLevel Highest, which the counters need' `
+        ([string]$t55.RunLevel -eq 'Highest') ([string]$t55.RunLevel)
+    Assert 'the action invokes the script with -File' `
+        (Test-TaskCommandLine -Arguments ([string]$t55.Arguments)) ([string]$t55.Arguments)
+    Assert 'and never with -Command' `
+        ([string]$t55.Arguments -notmatch '(?i)(^|\s)-Command(\s|$)') ([string]$t55.Arguments)
+    Assert 'it runs non-interactively, because a task has no desktop to prompt on' `
+        ([string]$t55.Arguments -match '(?i)-NonInteractive') ([string]$t55.Arguments)
+
+    # The reason the argument line is rebuilt from PSBoundParameters rather than
+    # from a hand-maintained list: a task that schedules a different run from the
+    # one that was typed is worse than no task.
+    Assert 'the run that was typed round-trips into the task: -Scope' `
+        ([string]$t55.Arguments -match '-Scope "Local"') ([string]$t55.Arguments)
+    Assert 'and its thresholds come across too' `
+        (([string]$t55.Arguments -match '-WarningGB "3\.5"') -and
+         ([string]$t55.Arguments -match '-CriticalGB "4\.25"')) ([string]$t55.Arguments)
+
+    # The exclusions. Each of these means something to the registration and
+    # nothing inside the task, and two of them cannot cross into one at all.
+    Assert 'the switch that asked for the registration does not go into the task' `
+        ([string]$t55.Arguments -notmatch '(?i)-RegisterScheduledTask') ([string]$t55.Arguments)
+    Assert 'nor do the parameters that describe how to build it' `
+        (([string]$t55.Arguments -notmatch '(?i)-TaskName') -and
+         ([string]$t55.Arguments -notmatch '(?i)-TaskIntervalHours')) ([string]$t55.Arguments)
+    # A PSCredential does not survive a command line, and the relay belongs to a
+    # parent process that will not exist when the scheduler starts this.
+    Assert 'and neither -Credential nor -ConsoleRelayPath is written into it' `
+        (([string]$t55.Arguments -notmatch '(?i)-Credential') -and
+         ([string]$t55.Arguments -notmatch '(?i)-ConsoleRelayPath')) ([string]$t55.Arguments)
+}
+Assert 'an explicit -Scope draws no warning' `
+    ((($script:Logged) -join "`n") -notmatch '-Scope was not given') (($script:Logged) -join "`n")
+
+# The default is All, and on a DAG that means every node sweeping the whole
+# organisation and writing several full sets of files describing one estate.
+# Loud rather than fatal: -Scope All on exactly one node is a legitimate thing
+# to want.
+Reset-TaskStore
+$script:Logged.Clear()
+$b55b = @{ RegisterScheduledTask = [switch]$true; TaskName = $tn55 }
+$r55b = Register-MonitorScheduledTask -Bound $b55b -Name $tn55 -IntervalHours 4 `
+            -StartTime '00:05' -TaskCred $tc55
+Assert 'omitting -Scope still registers, because a deliberate -Scope All is valid' `
+    ($r55b -eq 0) ('got ' + $r55b)
+Assert 'but it warns, naming the default it silently inherited' `
+    ((($script:Logged) -join "`n") -match 'WARN\|-Scope was not given.*default, All') (($script:Logged) -join "`n")
+Assert 'and tells the operator which one they probably wanted' `
+    ((($script:Logged) -join "`n") -match '-Scope Local') (($script:Logged) -join "`n")
+
+# A credential object with no user name reaches the second guard. The first one
+# tests [Environment]::UserInteractive, which a test run cannot make false and
+# must not try: on an interactive harness that branch falls through to
+# Get-Credential and the suite would sit on a prompt until somebody answered it.
+# Asserted against the source instead, below.
+Reset-TaskStore
+$script:Logged.Clear()
+$r55c = Register-MonitorScheduledTask -Bound @{ Scope = 'Local' } -Name $tn55 `
+            -IntervalHours 4 -StartTime '00:05' -TaskCred ([pscustomobject]@{ UserName = '' })
+Assert 'a blank user name is refused rather than registered' ($r55c -eq 7) ('got ' + $r55c)
+Assert 'and nothing was written to the scheduler' ($null -eq (Get-MockTask $tn55)) 'a task was created'
+Assert 'the refusal says why: a task with no password never runs' `
+    ((($script:Logged) -join "`n") -match 'registered without a password never runs') (($script:Logged) -join "`n")
+
+$src55 = Get-Content -LiteralPath $monitor -Raw
+Assert 'a session that cannot prompt refuses instead of hanging on Get-Credential' `
+    ($src55 -match '(?s)if \(-not \[Environment\]::UserInteractive\)\s*\{.{0,1200}?return 7.{0,120}?\}.{0,300}?Get-Credential') `
+    'the non-interactive refusal does not precede the prompt'
+
+# Policy refusal. The most likely reason this call fails in a managed estate,
+# and the reason the whole emit half of this work exists.
+Reset-TaskStore
+$script:Logged.Clear()
+$env:MOCK_TASK_DENY = '1'
+$r55d = Register-MonitorScheduledTask -Bound @{ Scope = 'Local' } -Name $tn55 `
+            -IntervalHours 4 -StartTime '00:05' -TaskCred $tc55
+Reset-TaskStore
+Assert 'a registration blocked by policy exits 7 rather than throwing' ($r55d -eq 7) ('got ' + $r55d)
+Assert 'and is diagnosed as policy, not passed through as a bare HRESULT' `
+    ((($script:Logged) -join "`n") -match 'policy prevents local administrators from creating scheduled tasks') (($script:Logged) -join "`n")
+Assert 'the operator is pointed at the runbook command to hand over' `
+    ((($script:Logged) -join "`n") -match 'runbook') (($script:Logged) -join "`n")
+Assert 'and the underlying error is still recorded, not swallowed' `
+    ((($script:Logged) -join "`n") -match '0x80070005') (($script:Logged) -join "`n")
+
+# Verification reads the task back from the scheduler rather than trusting what
+# was sent to it, which is the only way to catch a management layer rewriting
+# the registration. Each injector below is a rewrite that reports success.
+Reset-TaskStore
+$script:Logged.Clear()
+$env:MOCK_TASK_LOGONTYPE = 'Interactive'
+New-MockTask -Name $tn55
+$v55i = Test-MonitorScheduledTaskRegistration -Name $tn55
+Remove-Item -Path 'env:MOCK_TASK_LOGONTYPE' -ErrorAction SilentlyContinue
+Assert 'a task that came back Interactive fails verification' ($v55i -eq 7) ('got ' + $v55i)
+Assert 'and is named as one that sits at Ready reporting 0x41303' `
+    ((($script:Logged) -join "`n") -match '0x41303') (($script:Logged) -join "`n")
+Assert 'leaving it in place is called out as worse than having no task' `
+    ((($script:Logged) -join "`n") -match 'worse than having no task') (($script:Logged) -join "`n")
+
+Reset-TaskStore
+$script:Logged.Clear()
+$env:MOCK_TASK_LOGONTYPE = 'S4U'
+New-MockTask -Name $tn55
+$v55s = Test-MonitorScheduledTaskRegistration -Name $tn55
+Remove-Item -Path 'env:MOCK_TASK_LOGONTYPE' -ErrorAction SilentlyContinue
+Assert 'S4U fails verification too, though the task does run' ($v55s -eq 7) ('got ' + $v55s)
+# The distinction is the whole point: S4U is the one that looks healthy in the
+# scheduler and fails at the runspace every time.
+Assert 'and it is named as the runspace failure, not as a task that never starts' `
+    (((($script:Logged) -join "`n") -match '0x8009030e') -and
+     ((($script:Logged) -join "`n") -notmatch '0x41303')) (($script:Logged) -join "`n")
+
+Reset-TaskStore
+$script:Logged.Clear()
+$env:MOCK_TASK_RUNLEVEL = 'Limited'
+New-MockTask -Name $tn55
+$v55r = Test-MonitorScheduledTaskRegistration -Name $tn55
+Remove-Item -Path 'env:MOCK_TASK_RUNLEVEL' -ErrorAction SilentlyContinue
+Assert 'a task that came back Limited fails verification' ($v55r -eq 7) ('got ' + $v55r)
+Assert 'and says the monitor needs an elevated token to read the counters' `
+    ((($script:Logged) -join "`n") -match 'RunLevel is Limited, not Highest') (($script:Logged) -join "`n")
+
+Reset-TaskStore
+$script:Logged.Clear()
+New-MockTask -Name $tn55 -Arguments '-NoProfile -Command "& C:\x.ps1"'
+$v55c = Test-MonitorScheduledTaskRegistration -Name $tn55
+Assert 'an action rewritten to -Command fails verification' ($v55c -eq 7) ('got ' + $v55c)
+Assert 'and says why: exit codes 2 to 6 become indistinguishable' `
+    ((($script:Logged) -join "`n") -match 'collapses every non-zero exit code to 1') (($script:Logged) -join "`n")
+
+Reset-TaskStore
+$script:Logged.Clear()
+$v55m = Test-MonitorScheduledTaskRegistration -Name 'BF No Such Task'
+Assert 'a task that cannot be read back afterwards is an error, not a pass' `
+    ($v55m -eq 7) ('got ' + $v55m)
+Assert 'and it is reported as a failed read-back, not as a failed registration' `
+    ((($script:Logged) -join "`n") -match 'could not read it back') (($script:Logged) -join "`n")
+Reset-TaskStore
+
+Write-Host ''
+Write-Host 'T56  the event channel maps a status to one published id and entry type' -ForegroundColor Cyan
+# These numbers are a contract. They go in the runbook, and a customer's Splunk
+# alerts are written against them, so renumbering one silently is a broken
+# dashboard on somebody else's estate. Pinned here as literals rather than read
+# out of the same table the script uses.
+$script:EmitErrors   = New-Object System.Collections.Generic.List[string]
+$script:EmitWritten  = New-Object System.Collections.ArrayList
+$script:MockSourceOk = $true
+$script:MockWriteOk  = $true
+
+function Initialize-EmitEventSource {
+    param([string]$Source)
+    return $script:MockSourceOk
+}
+function Write-EmitEvent {
+    param([string]$Source, [int]$EventId, [string]$EntryType, [string]$Message)
+    $null = $script:EmitWritten.Add([pscustomobject]@{
+        Source = $Source; EventId = $EventId; EntryType = $EntryType; Message = $Message })
+    return $script:MockWriteOk
+}
+
+function New-EmitPayload {
+    param([string]$Status, [bool]$Completed = $true)
+    [ordered]@{
+        RunId                = '20260916-120000-4242'
+        ScriptVersion        = '1.11.0'
+        Timestamp            = '2026-09-16T12:00:00'
+        Server               = 'EXCH-01'
+        Status               = $Status
+        Completed            = $Completed
+        ConfiguredWarningGB  = 3.5
+        ConfiguredCriticalGB = 4.25
+    }
+}
+
+function Invoke-EmitChannel {
+    param($Payload, $AtRisk = @(), $Emerging = @(), [int]$MaxDetail = 25)
+    $script:EmitWritten.Clear()
+    $script:EmitErrors.Clear()
+    $script:Logged.Clear()
+    Write-EmitEventChannel -Source 'BFTest' -Payload $Payload `
+        -AtRisk $AtRisk -Emerging $Emerging -MaxDetail $MaxDetail
+    # The leading comma is load-bearing. PowerShell unrolls a returned array, so
+    # a plain @(...) holding ONE event arrives at the caller as a bare object
+    # with no .Count - and every case here that emits exactly one event is a
+    # case worth getting right. The comma wraps it, the unroll takes the wrapper
+    # off, and the array survives at any length including zero.
+    return ,@($script:EmitWritten)
+}
+
+# Findings are Warnings and monitor faults are Errors, mirroring the exit-code
+# philosophy: a full posting list table is the estate's problem, and a monitor
+# that could not measure one is this script's.
+$expect56 = @(
+    @{ Status = 'OK';                 Id = 1000; Type = 'Information' }
+    @{ Status = 'Emerging';           Id = 1001; Type = 'Warning'     }
+    @{ Status = 'Alert';              Id = 1002; Type = 'Warning'     }
+    @{ Status = 'Partial';            Id = 1003; Type = 'Error'       }
+    @{ Status = 'MetricUnavailable';  Id = 1004; Type = 'Error'       }
+    @{ Status = 'MetricInconclusive'; Id = 1005; Type = 'Information' }
+    @{ Status = 'PublishFailed';      Id = 1006; Type = 'Error'       }
+)
+foreach ($e in $expect56) {
+    $w = Invoke-EmitChannel -Payload (New-EmitPayload -Status $e.Status)
+    Assert ('status ' + $e.Status + ' writes exactly one run event') `
+        ($w.Count -eq 1) ('wrote ' + $w.Count)
+    if ($w.Count -eq 1) {
+        Assert ('  as event ' + $e.Id + ', ' + $e.Type) `
+            (($w[0].EventId -eq $e.Id) -and ($w[0].EntryType -eq $e.Type)) `
+            ('got ' + $w[0].EventId + '/' + $w[0].EntryType)
+    }
+}
+Assert 'the seven mapped statuses are the whole table, with nothing extra in it' `
+    ($script:RunEventMap.Count -eq 7) ('table has ' + $script:RunEventMap.Count + ' entries')
+
+# The abort path's Status is a free-form reason by design, so it is never in the
+# table. That is not an unknown status - it is the single most important event
+# this channel carries, because a monitor that stopped reporting looks exactly
+# like an estate with nothing wrong.
+$w56a = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Aborted: the run exceeded -MaxRunMinutes' -Completed $false)
+Assert 'an aborted run is emitted as 1007, an Error' `
+    (($w56a.Count -eq 1) -and ($w56a[0].EventId -eq 1007) -and ($w56a[0].EntryType -eq 'Error')) `
+    ((($w56a | ForEach-Object { [string]$_.EventId + '/' + $_.EntryType }) -join ','))
+Assert 'and the free-form reason travels with it, so the event says what happened' `
+    (($w56a.Count -eq 1) -and ($w56a[0].Message -match 'exceeded -MaxRunMinutes')) `
+    ((($w56a | ForEach-Object { $_.Message }) -join ' '))
+Assert 'an abort is not counted as a mapping gap' `
+    ($script:EmitErrors.Count -eq 0) ((($script:EmitErrors) -join ' | '))
+
+# A completed run carrying a status the table has never heard of means the
+# precedence chain grew and this map did not. Emitted under a reserved id rather
+# than dropped: a missing event and a run that never happened look the same to a
+# forwarder.
+$w56u = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Sideways')
+Assert 'an unmapped status on a completed run is emitted as 1099, a Warning' `
+    (($w56u.Count -eq 1) -and ($w56u[0].EventId -eq 1099) -and ($w56u[0].EntryType -eq 'Warning')) `
+    ((($w56u | ForEach-Object { [string]$_.EventId + '/' + $_.EntryType }) -join ','))
+Assert 'and the gap is recorded, so it reaches the summary rather than only the log' `
+    (((($script:EmitErrors) -join ' ')) -match 'status \[Sideways\] has no event id mapping') ((($script:EmitErrors) -join ' | '))
+
+# Per-mailbox events: the reason an alert can name a mailbox rather than a count.
+$rows56 = @(
+    [pscustomobject]@{ Status = 'Critical'; Database = 'MDB01'; DisplayName = 'Ana Ilic'
+                       MailboxGuid = '11111111-1111-1111-1111-111111111111'
+                       PostingListGB = 5.2; TotalItemSize = '12 GB'; ItemCount = 90000
+                       BigFunnelIndexedCount = 89000; Trend = 'Growing'
+                       GrowthGBPerDay = 0.4; DaysToCritical = '' }
+    [pscustomobject]@{ Status = 'Warning'; Database = 'MDB02'; DisplayName = 'Bo Persson'
+                       MailboxGuid = '22222222-2222-2222-2222-222222222222'
+                       PostingListGB = 3.9; TotalItemSize = '8 GB'; ItemCount = 40000
+                       BigFunnelIndexedCount = 39000; Trend = 'Flat'
+                       GrowthGBPerDay = 0; DaysToCritical = '' }
+)
+$emg56 = @(
+    [pscustomobject]@{ Status = 'OK'; Database = 'MDB01'; DisplayName = 'Emerging Mbx'
+                       MailboxGuid = '33333333-3333-3333-3333-333333333333'
+                       PostingListGB = 2.1; TotalItemSize = '5 GB'; ItemCount = 20000
+                       BigFunnelIndexedCount = 19000; Trend = 'Growing'
+                       GrowthGBPerDay = 1.0; DaysToCritical = 2.1 }
+)
+$w56m = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Alert') -AtRisk $rows56 -Emerging $emg56
+Assert 'a run event plus one per named mailbox' ($w56m.Count -eq 4) ('wrote ' + $w56m.Count)
+Assert 'Critical is 1010, Warning is 1011, Emerging is 1012' `
+    ((@($w56m | Where-Object { $_.EventId -eq 1010 }).Count -eq 1) -and
+     (@($w56m | Where-Object { $_.EventId -eq 1011 }).Count -eq 1) -and
+     (@($w56m | Where-Object { $_.EventId -eq 1012 }).Count -eq 1)) `
+    ((($w56m | ForEach-Object { [string]$_.EventId }) -join ','))
+# All three are findings about the estate, not faults in the monitor, however
+# bad the number is.
+Assert 'and all three are Warnings, whatever the number says' `
+    (@($w56m | Where-Object { $_.EventId -ge 1010 -and $_.EntryType -ne 'Warning' }).Count -eq 0) `
+    ((($w56m | ForEach-Object { [string]$_.EventId + '/' + $_.EntryType }) -join ','))
+# Emerging is a trend verdict, not a row Status. The emerging row above carries
+# Status OK on purpose: taking its own Status would emit it as nothing at all.
+Assert 'an emerging mailbox is emitted on its trend, not on its row status' `
+    (@($w56m | Where-Object { $_.EventId -eq 1012 -and $_.Message -match 'Finding=Emerging' }).Count -eq 1) `
+    ((($w56m | ForEach-Object { $_.Message }) -join ' | '))
+Assert 'each mailbox event names the mailbox, which is the point of having them' `
+    (@($w56m | Where-Object { $_.Message -match 'DisplayName="Ana Ilic"' }).Count -eq 1) `
+    ((($w56m | ForEach-Object { $_.Message }) -join ' | '))
+Assert 'and carries the run id, so it correlates with the run event' `
+    (@($w56m | Where-Object { $_.Message -match 'RunId=20260916-120000-4242' }).Count -eq 4) `
+    ((($w56m | ForEach-Object { $_.Message }) -join ' | '))
+Assert 'and the thresholds it was judged against' `
+    (@($w56m | Where-Object { $_.EventId -eq 1010 -and $_.Message -match 'CriticalGB=4\.25' }).Count -eq 1) `
+    ((($w56m | ForEach-Object { $_.Message }) -join ' | '))
+
+# A badly affected server holding thousands of at-risk mailboxes would otherwise
+# make the monitor its own Event Log problem. The lists are already sorted
+# worst-first, so the detail that survives the cap is the detail worth having.
+$many56 = @(1..8 | ForEach-Object {
+    [pscustomobject]@{ Status = 'Critical'; Database = 'MDB01'; DisplayName = ('Mbx ' + $_)
+                       MailboxGuid = ('00000000-0000-0000-0000-00000000000' + $_)
+                       PostingListGB = 5.0; TotalItemSize = '10 GB'; ItemCount = 1
+                       BigFunnelIndexedCount = 1; Trend = 'Flat'; GrowthGBPerDay = 0; DaysToCritical = '' }
+})
+$w56c = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Alert') -AtRisk $many56 -MaxDetail 3
+Assert '-MaxAlertDetail bounds the mailbox events, run event aside' `
+    ($w56c.Count -eq 4) ('wrote ' + $w56c.Count)
+Assert 'and the ones that were dropped are counted in the log rather than lost quietly' `
+    ((($script:Logged) -join "`n") -match '5 further at-risk mailbox\(es\) were not emitted') (($script:Logged) -join "`n")
+
+# There is no value in several hundred mailbox events with no run event to
+# correlate them against, and every one of them would fail the same way.
+$script:MockWriteOk = $false
+$w56f = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Alert') -AtRisk $rows56 -Emerging $emg56
+$script:MockWriteOk = $true
+Assert 'a run event that could not be written stops the mailbox events too' `
+    ($w56f.Count -eq 1) ('wrote ' + $w56f.Count)
+
+$script:MockSourceOk = $false
+$w56s = Invoke-EmitChannel -Payload (New-EmitPayload -Status 'Alert') -AtRisk $rows56
+$script:MockSourceOk = $true
+Assert 'and a source that could not be prepared writes nothing at all' `
+    ($w56s.Count -eq 0) ('wrote ' + $w56s.Count)
+
+Write-Host ''
+Write-Host 'T57  the key=value payload a forwarder reads with no configuration' -ForegroundColor Cyan
+# Splunk extracts key=value with no configuration, and Event Viewer renders it
+# with no parser. Both matter: the operator triaging at 3am is reading the
+# event, not the index.
+$kv57 = ConvertTo-KeyValueText ([ordered]@{
+    Status    = 'OK'
+    Server    = 'EXCH-01'
+    Name      = 'Ana Ilic'
+    Note      = "line one`r`nline two"
+    Quoted    = 'he said "no"'
+    Elevated  = $true
+    Missing   = $null
+    Number    = 4.25
+})
+$lines57 = @($kv57 -split '\r?\n')
+
+Assert 'one line per field, and no field split across two' ($lines57.Count -eq 8) ('got ' + $lines57.Count)
+Assert 'a value with no whitespace is left unquoted, the way Splunk prefers it' `
+    (($lines57 -contains 'Status=OK') -and ($lines57 -contains 'Server=EXCH-01')) ($kv57)
+# An unquoted value containing a space is where field extraction stops - and it
+# stops silently, taking every later field on the line with it.
+Assert 'a value containing a space is quoted' `
+    ($lines57 -contains 'Name="Ana Ilic"') ($kv57)
+# A value carrying a line break splits one record into two at the forwarder, and
+# the second half arrives as an event with no timestamp and no context.
+Assert 'a newline inside a value is folded to a space, not left to split the record' `
+    ($lines57 -contains 'Note="line one line two"') ($kv57)
+# Backslash-escaping is what a JSON reader expects and not what Event Viewer
+# renders, and these two readers see the same string.
+Assert 'an embedded double quote becomes a single one rather than a backslash escape' `
+    ($lines57 -contains 'Quoted="he said ''no''"') ($kv57)
+Assert 'a boolean is rendered lower case, the way a search language compares it' `
+    ($lines57 -contains 'Elevated=true') ($kv57)
+Assert 'a null is an empty value, not the word null and not a missing key' `
+    ($lines57 -contains 'Missing=') ($kv57)
+Assert 'and a number keeps its own text, unquoted' `
+    ($lines57 -contains 'Number=4.25') ($kv57)
+
+# The stubs and the pretend elevated token stop here: everything below runs in a
+# child process, and anything left defined would be a trap for the next case
+# appended to this file rather than a convenience.
+foreach ($f in 'Write-Report', 'Write-RunLog', 'Initialize-EmitEventSource', 'Write-EmitEvent') {
+    Remove-Item -Path ('function:' + $f) -Force -ErrorAction SilentlyContinue
+}
+$script:Elevated = $false
+
+Write-Host ''
+Write-Host 'T58  the per-run JSON, its sweep, and an emit failure that moves nothing' -ForegroundColor Cyan
+# Back to full runs in a child process. The claim under test is the one rule the
+# whole emit region is built around: these are additional channels, never the
+# stable contract, so turning one on cannot start failing a scheduler on day one.
+$d58  = Reset-Dir '_t58'
+$rc58 = Invoke-Monitor -OutputPath $d58 -Extra '-Databases MDB01'
+$sum58 = Get-Summary $d58
+Assert 'the baseline run, with no -EmitTo at all, completes' ($rc58 -eq 0) ('got exit ' + $rc58)
+Assert 'and writes no per-run JSON, so the default behaviour is unchanged' `
+    (@(Get-ChildItem -LiteralPath $d58 -Filter 'BigFunnelPostingListMonitor-*.json' -ErrorAction SilentlyContinue).Count -eq 0) `
+    'a per-run JSON appeared without being asked for'
+
+$d58b  = Reset-Dir '_t58b'
+$rc58b = Invoke-Monitor -OutputPath $d58b -Extra '-Databases MDB01 -EmitTo RunJson'
+$runJson58 = @(Get-ChildItem -LiteralPath $d58b -Filter 'BigFunnelPostingListMonitor-*.json' -ErrorAction SilentlyContinue)
+Assert '-EmitTo RunJson exits the same as the run without it' ($rc58b -eq $rc58) ('got exit ' + $rc58b)
+Assert 'and writes exactly one per-run JSON' ($runJson58.Count -eq 1) ('got ' + $runJson58.Count)
+
+if ($runJson58.Count -eq 1) {
+    $per58  = Get-Content -LiteralPath $runJson58[0].FullName -Raw | ConvertFrom-Json
+    $stab58 = Get-Summary $d58b
+    Assert 'it carries the same schema as the stable summary, field for field' `
+        (@($per58.PSObject.Properties).Count -eq @($stab58.PSObject.Properties).Count) `
+        ('per-run ' + @($per58.PSObject.Properties).Count + ' vs stable ' + @($stab58.PSObject.Properties).Count)
+    Assert 'and describes the same run' `
+        ([string]$per58.RunId -eq [string]$stab58.RunId) ([string]$per58.RunId + ' vs ' + [string]$stab58.RunId)
+    Assert 'with the same verdict' `
+        ([string]$per58.Status -eq [string]$stab58.Status) ([string]$per58.Status + ' vs ' + [string]$stab58.Status)
+    # The reason it carries an exit code at all: latest-summary.json cannot
+    # describe a run whose own publish failed, and this one can.
+    Assert 'and the exit code the run actually returned' `
+        ([int]$per58.ExitCode -eq $rc58b) ('json ' + $per58.ExitCode + ' vs process ' + $rc58b)
+    # Named INSIDE the pattern on purpose, which is the exact mirror of why the
+    # two stable files are named outside it.
+    Assert 'its name sits inside the retention pattern, so no new rotation code exists' `
+        ($runJson58[0].Name -like 'BigFunnelPostingListMonitor-*') $runJson58[0].Name
+}
+
+# The other half of that naming decision, proved rather than asserted: the sweep
+# takes the per-run file and leaves both stable files alone.
+$aged58 = $runJson58 | Select-Object -First 1
+if ($aged58) {
+    # Retention reads LastWriteTime, not the name - unlike the baseline lookup,
+    # which reads the name. Aging it the wrong way would test nothing.
+    (Get-Item -LiteralPath $aged58.FullName).LastWriteTime = (Get-Date).AddDays(-3)
+    $rc58c = Invoke-Monitor -OutputPath $d58b -Extra '-Databases MDB01 -EmitTo RunJson -RetentionDays 1'
+    Assert 'the second run completes' ($rc58c -eq 0) ('got exit ' + $rc58c)
+    Assert 'and the aged per-run JSON is swept by the existing retention pass' `
+        (-not (Test-Path -LiteralPath $aged58.FullName)) $aged58.Name
+    Assert 'while latest-summary.json survives it, being named outside the pattern' `
+        (Test-Path -LiteralPath (Join-Path $d58b 'latest-summary.json')) 'latest-summary.json was swept'
+    Assert 'and so does latest.csv' `
+        (Test-Path -LiteralPath (Join-Path $d58b 'latest.csv')) 'latest.csv was swept'
+    Assert 'the second run left its own per-run JSON behind, unaged' `
+        (@(Get-ChildItem -LiteralPath $d58b -Filter 'BigFunnelPostingListMonitor-*.json').Count -eq 1) `
+        ('got ' + @(Get-ChildItem -LiteralPath $d58b -Filter 'BigFunnelPostingListMonitor-*.json').Count)
+}
+
+# A forced Event Log failure, and one that is forced the same way on every
+# machine. MEASURED on PS 5.1.26100: a source name over 255 characters fails the
+# registry key name check in SourceExists AND in Write-EventLog, before either
+# one reaches a rights check - so this behaves identically elevated or not, and
+# it can never create a source or write an event on the machine running the
+# suite. A short made-up name would not do: elevated, the script would create it
+# for real.
+$badSrc58 = 'BFTestSource' + ('x' * 250)
+$d58d  = Reset-Dir '_t58d'
+$rc58d = Invoke-Monitor -OutputPath $d58d -Extra ('-Databases MDB01 -EmitTo EventLog -EventLogSource {0}' -f $badSrc58)
+$sum58d = Get-Summary $d58d
+$log58d = (Get-Log $d58d) -join "`n"
+
+Assert 'an Event Log channel that fails outright does not move the exit code' `
+    ($rc58d -eq $rc58) ('emit run exited ' + $rc58d + ', the same run without it exited ' + $rc58)
+Assert 'and does not change the verdict either' `
+    ([string]$sum58d.Status -eq [string]$sum58.Status) ([string]$sum58d.Status + ' vs ' + [string]$sum58.Status)
+# A customer whose only channel is the Event Log cannot read a summary field
+# explaining why the Event Log is empty - so it is WARNed in the log as well.
+Assert 'the failure is recorded in EmitErrors rather than lost' `
+    (-not [string]::IsNullOrWhiteSpace([string]$sum58d.EmitErrors)) 'EmitErrors is empty'
+Assert 'and names what actually went wrong' `
+    ([string]$sum58d.EmitErrors -match 'Registry key names') ([string]$sum58d.EmitErrors)
+Assert 'and is WARNed in the log too, which is the one place certain to exist' `
+    ($log58d -match 'Could not write event \d+ to source') $log58d
+# PublishErrors is the stable contract and exits 3. EmitErrors is not, and must
+# never leak into it.
+Assert 'an emit failure never reaches PublishErrors' `
+    ([string]::IsNullOrWhiteSpace([string]$sum58d.PublishErrors)) ([string]$sum58d.PublishErrors)
+# Invoke-RunEmit has to run AFTER the summary is written, so the field that
+# describes an emit failure is written before the failure happens. The second,
+# best-effort write is what closes that gap, and this is the assertion that
+# proves it ran.
+Assert 'EmitErrors reaches the stable summary despite being filled in after it was written' `
+    ([string]$sum58d.EmitErrors -match 'EventLog:') ([string]$sum58d.EmitErrors)
+
+Reset-TaskStore
 
 Write-Host ''
 

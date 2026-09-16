@@ -242,7 +242,7 @@ Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchan
 > Run the file, not a copy assembled out of this article. Earlier revisions of this runbook carried the whole script inline, and a copy taken from one of those has no `-Scope`, `-ThresholdMode`, `-MaxRunMinutes` or `-ExitNonZeroOnAlert`, writes neither `latest.csv` nor `latest-summary.json`, and has neither the `MetricUnavailable` status nor exit code `5`. Every exit code, contract and lab result described in this article refers to the file in this folder. The excerpts below are quoted from it for reading, and are not a substitute for it.
 
 > [!NOTE]
-> The script exports to CSV rather than sending mail. The `Send-MailMessage` cmdlet is obsolete and Microsoft recommends against using it because it does not guarantee a secure connection to the SMTP server. Integrate the CSV output with your organization's approved monitoring or alerting platform.
+> The script exports to CSV rather than sending mail. The `Send-MailMessage` cmdlet is obsolete and Microsoft recommends against using it because it does not guarantee a secure connection to the SMTP server. Where a log aggregator is the consumer rather than a person, `-EmitTo` writes the run to the Windows event log, to a per-run JSON file, or to both, in a shape a forwarder reads with no configuration. See [Feeding a log aggregator](#feeding-a-log-aggregator).
 
 ### Reading a run on screen
 
@@ -349,12 +349,13 @@ Everything lands under `-OutputPath`, which defaults to `%ProgramData%\ExchangeB
 |---|---|---|
 | `BigFunnelPostingListMonitor-<timestamp>.csv` | On any run that collected at least one mailbox | One row per mailbox: the size, the supporting counters, the status, and the trend fields once a baseline exists |
 | `BigFunnelPostingListMonitor-<timestamp>.log` | On every run | The run transcript, including the two `[ERROR]` lines a `MetricUnavailable` run emits |
+| `BigFunnelPostingListMonitor-<runid>.json` | Only when `-EmitTo` includes `RunJson` | The same summary object as `latest-summary.json`, kept per run instead of overwritten. See [Feeding a log aggregator](#feeding-a-log-aggregator) |
 | `latest.csv` | Refreshed only when a run produced detail | A copy of the newest per-run CSV at a stable path, for a monitoring agent that reads files |
 | `latest-summary.json` | On every run that gets far enough to have an output directory | The run verdict: `Completed`, `Status`, `ExitCode`, the status counts, and `TrendMetric` |
 
 Those last two are the stable pair, and they are the only files a scheduled consumer reads. A run that cannot refresh either one exits `3` and names the reason in `PublishErrors`, rather than returning success over a pair that still describes an earlier run. A `latest.csv` deliberately skipped because the run produced no detail is not that case and does not affect the exit code.
 
-Per-run files older than `-RetentionDays` are pruned at the end of each run. The retention sweep matches on the `BigFunnelPostingListMonitor-*` prefix only, so the two stable files are never candidates for it and an integration reading just those keeps working at any retention setting.
+Per-run files older than `-RetentionDays` are pruned at the end of each run. The retention sweep matches on the `BigFunnelPostingListMonitor-*` prefix only, so the two stable files are never candidates for it and an integration reading just those keeps working at any retention setting. The per-run JSON is named **inside** that prefix deliberately, so it is swept by the same pass with no second rotation mechanism to configure or forget — the exact mirror of why the stable pair is named outside it.
 
 ### Querying a run instead of reading it
 
@@ -377,6 +378,133 @@ Two things to know before wiring it into anything:
 
 - **Pair it with `-Quiet` when the caller wants data rather than a report.** Without `-Quiet` the report still prints - it goes out through `Write-Host`, so it will not contaminate `$r`, but it will still be on screen.
 - **It returns nothing across an elevation relaunch.** The rows are built in the elevated child process, and what crosses back to the parent is its exit code and a replay of its console report - not its pipeline. So a `-PassThru` run that elevates hands back an empty pipeline, which is indistinguishable from a run that found no mailboxes, even though the report on screen plainly says otherwise. The script warns before the consent prompt when both apply. Run it from an already-elevated session, or read the CSV the child writes.
+
+### Feeding a log aggregator
+
+The two stable files answer *what is true now*. A log aggregator asks *what happened over time*, and `latest-summary.json` structurally cannot answer that: every run destroys the previous answer. `-EmitTo` adds the channels that can.
+
+```powershell
+# Both channels. Add them to whatever the run already was.
+.\Monitor-BigFunnelPostingList.ps1 -Scope Local -EmitTo EventLog,RunJson
+```
+
+| Parameter | Effect |
+|---|---|
+| `-EmitTo` | `EventLog`, `RunJson`, or both. **Empty by default**, so a run that does not ask for them behaves exactly as it did before they existed |
+| `-EventLogSource` | The event source to write under. Defaults to `BigFunnelPostingListMonitor` |
+
+Neither channel replaces the stable pair, and neither is on unless asked for. Pick by what your forwarder can reach: an estate that cannot get a file path allowlisted takes `EventLog`; one that can, and would rather not touch the event log, takes `RunJson`. Taking both is the reason this is a list rather than a switch.
+
+> [!IMPORTANT]
+> **An emit failure never changes the exit code, and that is a deliberate contract.** These are additional channels, not the reporting contract, and adding this monitor to an existing scheduler must not start failing tasks on the day a channel is switched on. A channel that fails records its reason in the summary's `EmitErrors` field and `WARN`s it in the log - visible, never fatal. That cuts the other way too, and it is why the field exists: an estate whose *only* channel is the event log must not have it fail silently. A non-empty `EmitErrors` beside `Status OK` and `ExitCode 0` is the correct reading of a healthy run whose forwarder feed is broken. `EmitErrors` and `PublishErrors` are kept separate for the same reason - one collection would lose the distinction in the direction that breaks a customer's scheduler.
+
+#### `EventLog`
+
+One event for the run, then one per at-risk or emerging mailbox, written to the **Application** log. The run's `Status` selects the event ID and the entry type. Findings are Warnings and monitor faults are Errors, which is the exit-code philosophy applied to a second channel: a full posting list table is the estate's problem, and a monitor that could not measure one is this script's.
+
+| Event ID | Raised when | Entry type |
+|---:|---|---|
+| `1000` | `Status OK` | Information |
+| `1001` | `Status Emerging` | Warning |
+| `1002` | `Status Alert` | Warning |
+| `1003` | `Status Partial` | Error |
+| `1004` | `Status MetricUnavailable` | Error |
+| `1005` | `Status MetricInconclusive` | Information |
+| `1006` | `Status PublishFailed` | Error |
+| `1007` | **The run aborted before it finished.** `Status` carries the free-form reason | Error |
+| `1099` | A completed run whose `Status` this table does not cover | Warning |
+| `1010` | A mailbox at or above the critical threshold | Warning |
+| `1011` | A mailbox at or above the warning threshold | Warning |
+| `1012` | A mailbox projected to cross critical inside the lead-time window | Warning |
+
+Three of those need explaining before you build a search on them.
+
+**`1007` is the one to alert on hardest.** An aborted run leaves `latest.csv` untouched, so a consumer reading that file's timestamp sees only that nothing changed - which is exactly what a healthy estate looks like. A monitor that stopped reporting and an estate with nothing wrong are indistinguishable from the file side, and this event is the difference.
+
+**`1099` means this article is out of date, not that your estate is.** It fires when the script's status chain has grown a value the event table does not cover. It is emitted rather than dropped because a missing event and a run that never happened look identical to a forwarder. Treat it as a monitoring defect and report it.
+
+**`1006` can only be raised here.** `latest-summary.json` is built before it is written, so it can never report its own failure to be written - the file cannot describe its own absence. The emit runs after that attempt and after the exit code is final, so a run whose summary could not be published still emits `PublishFailed` with the reason in `PublishErrors`. For an estate collecting by forwarder that is not a detail; it is the reason to run this channel at all, because it is the only one that stays up when the file a poller reads goes stale.
+
+The payload is `key=value`, one field per line - Splunk extracts it with no configuration, and Event Viewer renders it with no parser, which matters because the person triaging at 3am is reading the event, not the index:
+
+```text
+RunId=20260916-120000-4242
+ScriptVersion=1.11.0
+Timestamp=2026-09-16T12:00:00.0000000+02:00
+Server=EXCH-01
+Scope=Local
+Status=Alert
+Completed=true
+ExitCode=0
+MetricValidation=Confirmed
+Critical=3
+Warning=3
+Emerging=0
+FailedDatabases=""
+PublishErrors=""
+```
+
+Four encoding rules, each of which exists because the alternative breaks a search silently:
+
+- A value with no whitespace is left **unquoted**, which is the form field extraction prefers.
+- A value containing a space is **quoted**, because an unquoted space is where extraction stops - silently, taking every later field on the line with it.
+- A newline inside a value is **folded to a space**. A line break splits one record into two at the forwarder, and the second half arrives with no timestamp and no context.
+- An embedded `"` becomes `'`. Backslash-escaping is what a JSON reader expects and not what Event Viewer renders, and here both read the same string.
+
+A boolean is rendered lower case, a null is an empty value rather than the word `null` or a missing key, and a payload approaching the event log's 32,766-character ceiling is clipped at 31,000 with a `[truncated]` marker - an event that silently stops mid-field is worse than one that says it was cut, because the missing fields read as absent rather than as elided.
+
+Per-mailbox events are bounded by `-MaxAlertDetail` (default `25`), the same cap that bounds the log and the console. The lists are already sorted worst-first, so the detail that survives the cap is the detail worth having, and the number held back is `WARN`ed in the log rather than dropped quietly. If the run event itself could not be written, the mailbox events are skipped entirely: several hundred mailbox events with no run event to correlate them against have no value, and every one of them would fail the same way.
+
+> [!IMPORTANT]
+> **Creating the event source needs administrator once; writing to it does not.** Measured on PowerShell 5.1.26100: `New-EventLog` and `CreateEventSource` both fail without an elevated token, while `WriteEntry` to a source that already exists succeeds whatever token the caller holds. The script self-elevates and the scheduled task runs elevated, so an ordinary deployment never meets the limit - but the first run on a new server has to be one of those two, not a `-NoElevate` run. There is a second measured trap behind that: for a non-administrator, `[System.Diagnostics.EventLog]::SourceExists()` **throws** for a source that does not exist (*"the source was not found, but some or all event logs could not be searched. Inaccessible logs: Security, State"*), and that is the same exception it throws when it simply cannot look. The script therefore treats a throw as *indeterminate* and lets the write be the test, rather than reading it as "absent" and calling `New-EventLog` - which would fail with a rights error describing a problem the caller does not have.
+
+#### `RunJson`
+
+`BigFunnelPostingListMonitor-<runid>.json`, in the output directory, carrying the same summary object as `latest-summary.json` - the same 47 fields, plus the run's real `ExitCode` - kept per run instead of overwritten. It is written **after** the event log channel on purpose, so that it records whatever the event log channel just failed with; written the other way round it would report an empty `EmitErrors` on precisely the runs where that channel broke.
+
+At a 4-hour cadence that is about 2,200 files a year, and they are swept by the existing `-RetentionDays` pass because the name sits inside the `BigFunnelPostingListMonitor-*` pattern. There is no second rotation setting to configure, and none to forget.
+
+#### A worked Splunk configuration
+
+Both channels, on a DAG member with the default output path:
+
+```ini
+# inputs.conf - the event log channel.
+# Filtering on the source rather than on the ID range: the source writes
+# nothing else, and an ID list is one more place for 1007 to be forgotten.
+[WinEventLog://Application]
+disabled = 0
+renderXml = 0
+index = exchange_bigfunnel
+whitelist1 = SourceName="^BigFunnelPostingListMonitor$"
+
+# inputs.conf - the per-run JSON channel.
+# The glob is deliberately the per-run prefix and NOT *.json. latest-summary.json
+# is rewritten in place on every run, and a monitored file that is overwritten
+# rather than appended to is the classic way to index the same event twice and
+# miss the next one. The per-run files are write-once, which is what a file
+# monitor is built for.
+[monitor://C:\ProgramData\ExchangeBigFunnelPostingListMonitor\BigFunnelPostingListMonitor-*.json]
+disabled = 0
+index = exchange_bigfunnel
+sourcetype = _json
+```
+
+Set `-RetentionDays` with the forwarder in mind. The sweep deletes per-run files on a schedule that knows nothing about whether they were collected, so a retention window shorter than the forwarder's worst-case backlog loses runs silently. The default of `30` is not close to that for any healthy forwarder.
+
+Searches worth having on day one, in that order:
+
+| Search | Catches |
+|---|---|
+| `EventCode IN (1003,1004,1006,1007)` | The monitor is not reporting on something. More urgent than a large posting list table, because it is the state in which one goes unseen |
+| No `EventCode=10*` from a server in 3× the task interval | The task stopped running altogether - the failure no event can report |
+| `EventCode=1002` grouped by `Database` | Where the estate is actually getting worse |
+| `EmitErrors!=""` | The feed you are reading this with is itself broken |
+
+That second one is the reason to alert on absence as well as on content: every other row here depends on an event arriving.
+
+> [!IMPORTANT]
+> **State plainly which fields leave the server.** Run events carry no mailbox identity at all - they are counts, thresholds, verdicts and paths. Per-mailbox events (`1010`, `1011`, `1012`) carry `DisplayName` and `MailboxGuid` alongside the measurements, because an alert that cannot name a mailbox is an alert somebody has to open a CSV to act on. That is ordinarily unremarkable for a customer's own estate and their own index, but it is a decision to make knowingly rather than to discover in a search result: those two fields, and no others, identify a person's mailbox. The same two fields are already in `latest.csv`. If they must not leave the box, use `RunJson` only, or leave `-EmitTo` unset and keep reading the files.
 
 ### Parameters
 
@@ -455,11 +583,42 @@ param(
     # an operator sets: empty on a run nobody relaunched.
     [string]$ConsoleRelayPath = '',
 
-    [switch]$ExitNonZeroOnAlert
+    [switch]$ExitNonZeroOnAlert,
+
+    # Additional channels for a log aggregator: EventLog, RunJson, or both.
+    # Empty by default, so a run that does not ask for them behaves exactly as it
+    # did before they existed. Deliberately NOT a [ValidateSet] - see below.
+    [string[]]$EmitTo = @(),
+
+    [ValidateNotNullOrEmpty()]
+    [string]$EventLogSource = 'BigFunnelPostingListMonitor',
+
+    # Register the scheduled task, verify it, and exit without collecting.
+    [switch]$RegisterScheduledTask,
+
+    # Remove it again, and confirm it is gone rather than assuming success.
+    [switch]$UnregisterScheduledTask,
+
+    [ValidateNotNullOrEmpty()]
+    [string]$TaskName = 'Exchange BigFunnel PostingListTable Monitor',
+
+    [ValidateRange(1, 168)]
+    [int]$TaskIntervalHours = 4,
+
+    # 24-hour clock. Stagger it across DAG members.
+    [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')]
+    [string]$TaskStartTime = '00:05',
+
+    # The account the task runs as. Deliberately NOT -Credential, which means
+    # the Exchange runspace. Prompted for when omitted.
+    [System.Management.Automation.PSCredential]$TaskCredential
 )
 ```
 
-The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Eight parameters exist mainly because a monitoring integration needs them:
+> [!NOTE]
+> **`-EmitTo` has no `[ValidateSet]` and that is not an oversight.** A set attribute fires at parameter-binding time, before any code in the script can run. `powershell.exe -File` cannot carry a multi-element array, so the value arriving from the scheduled task the script registers is the single string `EventLog,RunJson` and has to be re-split - which a set attribute would reject first. Measured, and the error message is worth seeing once: *the argument "EventLog,RunJson" does not belong to the set "EventLog,RunJson"*. The values are checked below the param block instead, and a bad one exits `3`. The cost is tab completion; the alternative was a registered task that failed every run. `-Databases` is re-split for the same reason - see [Register the task with `-File`](#other-points-that-matter-in-production).
+
+The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Ten parameters exist mainly because a monitoring integration needs them:
 
 | Parameter | Effect |
 |---|---|
@@ -471,6 +630,19 @@ The defaults are the values this runbook recommends, so a run with no arguments 
 | `-AllocationEvidenceMB` | The mailbox size, in MB, above which a `0 B` posting list table counts as evidence that the counter is not being populated. **A fallback only**: where any mailbox in scope has a populated table, the script measures the bar off the estate instead and ignores this value. Default `64`, roughly four times the upper bound of the measured allocation range, so a `Blind` verdict reached under it is close to unarguable. Lower it only if you have measured a lower allocation point on your own build; raising it makes the script slower to call a real outage |
 | `-ConnectionUri` | The Exchange runspace to bind through. Empty by default, which means this server's own PowerShell vdir, built from its FQDN at run time. Any Exchange server in the organization is a valid target - it does not have to be the node holding the databases being collected |
 | `-Credential` | Only needed where the account running the script cannot authenticate to that runspace on its own. Whether it can is decided by the task's `LogonType`, not by the account: measured on a lab DAG, a task registered with a stored password opened the runspace with Kerberos and no credential, and the same task registered `S4U` could not open it at all. Use this where a stored password is not permitted, and supply it from your own secret store. See [The logon type is load-bearing](#the-logon-type-is-load-bearing) |
+| `-EmitTo` | Additional channels for a log aggregator: `EventLog`, `RunJson`, or both. Empty by default, so this is fully backward compatible. Neither channel replaces `latest.csv` and `latest-summary.json`, and a failure in either one never changes the exit code - it lands in `EmitErrors` instead. See [Feeding a log aggregator](#feeding-a-log-aggregator) |
+| `-EventLogSource` | The event source `-EmitTo EventLog` writes under. Defaults to `BigFunnelPostingListMonitor`. Configurable because event source names are one of the things large estates standardise on |
+
+Six more exist only to register the scheduled task, and are described in [Scheduling](#scheduling):
+
+| Parameter | Effect |
+|---|---|
+| `-RegisterScheduledTask` | Register the task from whatever else is on the same command line, verify it, and exit. Does not collect, so it works on a node where Exchange is not reachable yet |
+| `-UnregisterScheduledTask` | Remove the task and confirm it is gone. Exits `0` when there was nothing to remove |
+| `-TaskName` | Defaults to `Exchange BigFunnel PostingListTable Monitor`. Configurable for estates with task naming standards |
+| `-TaskIntervalHours` | Repetition interval, `1` to `168`. Default `4` |
+| `-TaskStartTime` | First run, on a 24-hour clock. Default `00:05`. **Stagger this across DAG members** |
+| `-TaskCredential` | The account the task runs as. **Not** `-Credential`, which is the Exchange runspace - the two are not interchangeable. Prompted for when omitted, so it reaches neither source control nor shell history |
 
 ### How a mailbox is classified
 
@@ -565,24 +737,70 @@ The eight states are `Healthy`, `Warning`, `Critical`, `Emerging`, `Shrinking`, 
 
 Two cautions. **The thresholds it computes are demonstration values, not production values** - they are scaled to whatever your dev estate holds, so a lab with a 30 MB posting list table produces thresholds three orders of magnitude below the shipped defaults. Use it to exercise the alerting path, never to choose thresholds. And `Emerging` and `Shrinking` are statements about change over time, so they need an earlier reading to difference against; the script writes a clearly marked synthetic baseline CSV into its own run directory, with a `SYNTHETIC-BASELINE.txt` beside it. **Never copy one into a real monitor output directory** - the monitor cannot tell it from a genuine earlier run, which is exactly why it works here.
 
-### Scheduling example
+### Scheduling
 
-Use this example to run every 4 hours. Run from an elevated Exchange Management Shell. Replace the script path, output path, and account with environment-specific values.
+The script registers its own task. It is already running as administrator at that point - it self-elevates - which makes it the right place to do this, and it builds the task out of the run you typed rather than out of a second set of parameters that can disagree with it.
 
 ```powershell
-# -Scope Local, and no -Databases. The script then discovers the databases whose
-# active copy is mounted on this node, which is what makes the same registration
-# correct on every DAG member and correct again after a switchover. -Scope is
-# load-bearing here: the default is All, so leaving it off registers a task that
-# sweeps the whole organization from every node and writes a full set of files
-# describing the same estate several times over. Name databases explicitly only
-# when you deliberately want a fixed subset, and expect that task to start
-# collecting nothing the first time the copy moves.
+# From an elevated shell, on each DAG member. Write the run you want, then add
+# the switch. -Scope Local and no -Databases: the script then discovers the
+# databases whose active copy is mounted on this node, which is what makes one
+# registration correct on every member and correct again after a switchover.
+.\Monitor-BigFunnelPostingList.ps1 `
+    -Scope Local -WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30 `
+    -EmitTo EventLog,RunJson `
+    -RegisterScheduledTask -TaskIntervalHours 4 -TaskStartTime 00:05
+```
+
+That prompts once for the account the task will run as, registers it, reads it back from the scheduler, and reports:
+
+```text
+  Registered and verified: Exchange BigFunnel PostingListTable Monitor
+    LogonType Password, RunLevel Highest, -File action.
+
+  Exit code 0
+```
+
+Everything on that command line becomes the task's own argument string, so the task runs the invocation you just described, minus the eight parameters that cannot mean anything inside it: `-RegisterScheduledTask`, `-UnregisterScheduledTask`, `-TaskName`, `-TaskIntervalHours`, `-TaskStartTime` and `-TaskCredential`, which describe how to build the task rather than how to run it; `-Credential`, because a `PSCredential` does not survive being written to a command line; and the internal `-ConsoleRelayPath`, which names a parent process that will not exist. The argument string is built from the same `PSBoundParameters` machinery the elevation relaunch uses, so a parameter added to the script later cannot be silently dropped from either one.
+
+Removing it again is the same shape, and confirms the removal rather than assuming it:
+
+```powershell
+.\Monitor-BigFunnelPostingList.ps1 -UnregisterScheduledTask
+```
+
+A registration run does not collect. It opens no Exchange runspace and runs no pre-flight, which makes it fast and means it works on a node where Exchange is not reachable yet.
+
+**Stagger `-TaskStartTime` across DAG members.** Every node registering the same task at the same minute puts the whole estate's collection into one window, which on `-Scope Local` is the one thing a per-node registration exists to avoid.
+
+#### What the script refuses to do
+
+Three registrations are refused rather than completed, each because the resulting task fails in a way nothing announces. All three exit `7` and register nothing.
+
+| Refusal | Why |
+|---|---|
+| No `-TaskCredential`, and no way to prompt | A task registered without a password gets `LogonType Interactive` and never runs. Refusing is the only honest answer; see below |
+| The run is not elevated | Creating a task needs an elevated token. `-NoElevate`, `-Credential` and `-TaskCredential` each suppress the automatic relaunch, so a registration run that passes one of the last two must already be elevated |
+| The generated command line is not `-File` based | Should be impossible, since the script builds it. Asserted anyway, because it is cheaper than the failure it prevents |
+
+One case is a loud warning rather than a refusal: **`-Scope` not passed explicitly**. The default is `All`, so leaving it off registers a task on every DAG member that sweeps the whole organization, writing several full sets of files describing the same estate. A deliberate `-Scope All` task on exactly one node is a legitimate thing to want, so this does not block - but pass `-Scope All` explicitly to say you meant it.
+
+**Where policy blocks registration**, the script says so rather than passing the exception through. A local administrator refused by a management policy gets `Access is denied` and no indication that the denial is an estate setting rather than a bug, so the script names it as a policy refusal, points at the manual registration below, and still records the underlying error. That is the common case in a locked-down estate, and the equivalent command exists precisely so it can be handed to whoever does hold the right.
+
+#### Registering it by hand
+
+Use this where policy reserves task creation to a management layer, or where the task is built by configuration management rather than on the box. It is the same registration the script performs, written out.
+
+```powershell
+# -Scope Local, and no -Databases, for the reason given above. Name databases
+# explicitly only when you deliberately want a fixed subset, and expect that
+# task to start collecting nothing the first time the copy moves.
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument (
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass ' +
     '-File "C:\Scripts\Monitor-BigFunnelPostingList.ps1" ' +
     '-OutputPath "C:\ProgramData\ExchangeBigFunnelPostingListMonitor" ' +
-    '-Scope Local -WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30')
+    '-Scope Local -WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30 ' +
+    '-EmitTo "EventLog,RunJson"')
 
 $trigger = New-ScheduledTaskTrigger -Once -At 00:05 `
     -RepetitionInterval (New-TimeSpan -Hours 4)
@@ -591,7 +809,11 @@ $trigger = New-ScheduledTaskTrigger -Once -At 00:05 `
 # script's own mutex prevents a slow run from being overlapped by the next
 # scheduled one, but it cannot interrupt a call already in progress, so the task
 # needs a hard ceiling of its own. MultipleInstances IgnoreNew is the same
-# protection at the scheduler level.
+# protection at the scheduler level. Set it ABOVE -MaxRunMinutes rather than
+# equal to it: -MaxRunMinutes is when the script gives up and writes its summary,
+# and a scheduler limit landing on the same minute can kill the process in the
+# middle of doing that, turning an orderly Partial into a run that published
+# nothing. The script's own registration uses -MaxRunMinutes plus 15.
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable
 
@@ -607,9 +829,11 @@ Register-ScheduledTask -TaskName "Exchange BigFunnel PostingListTable Monitor" `
     -RunLevel Highest -Force
 ```
 
+Note `-EmitTo "EventLog,RunJson"` as **one quoted token**. That is the honest spelling of what crosses `powershell.exe -File`, which cannot carry a multi-element array at all; the script re-splits it on arrival. The same applies to `-Databases`. See [Register the task with `-File`](#other-points-that-matter-in-production).
+
 #### The logon type is load-bearing
 
-`Register-ScheduledTask -User "DOMAIN\ServiceAccount"` **with no `-Password` registers a task that never runs.** It is not a syntax error and nothing warns you: PowerShell defaults that principal to `LogonType Interactive`, which means "run only when this user is logged on", and a service account never is. The task registers, sits at `Ready`, and reports `LastTaskResult 267011` (`0x41303`, `SCHED_S_TASK_HAS_NOT_RUN`) indefinitely. No log file is written, and the output directory is never created, so the usual places you would look for a fault are all empty.
+**`-User` with no `-Password` registers a task that never runs.** It is not a syntax error and nothing warns you: PowerShell defaults that principal to `LogonType Interactive`, which means "run only when this user is logged on", and a service account never is. The task registers, sits at `Ready`, and reports `LastTaskResult 267011` (`0x41303`, `SCHED_S_TASK_HAS_NOT_RUN`) indefinitely. No log file is written, and the output directory is never created, so the usual places you would look for a fault are all empty.
 
 The other way to get this wrong is the Task Scheduler UI's **Do not store password**, or `-LogonType S4U`. That task does run, and then cannot open the Exchange runspace: an S4U logon has no outbound network credential, and the runspace is a network logon even when the target is the same server. Every run fails identically at the binding step with `0x8009030e`, `A specified logon session does not exist`.
 
@@ -623,16 +847,20 @@ Measured on a lab DAG member, same account and same argument string, three regis
 
 Only the third is a working monitor. This is a consequence of binding through a runspace rather than the snap-in, so it is specific to `1.7.0` and later; the same registration under an older build ran, and quietly collected only the local node. **A gMSA cannot be used for this task**, for the same reason S4U cannot.
 
+`-RegisterScheduledTask` enforces all of this rather than asking you to remember it: it refuses to register without a password, it registers `-RunLevel Highest`, and it reads the task back and fails the registration if the resulting `LogonType` is anything but `Password` - naming which of the two failures you are looking at, because `Interactive` and `S4U` break in completely different ways. Registering by hand, you are the one checking; see below.
+
 Where a stored password is not permitted, pass `-Credential` to the script instead and supply it from whatever secret store your estate uses. That moves the credential out of the task definition without giving up the runspace.
 
 #### Verify the registration before trusting it
 
-Three things go wrong at registration and none of them announces itself, so check rather than assume. This takes about a minute:
+`-RegisterScheduledTask` performs the first of these three checks itself and refuses the registration if it fails. The other two need the task to have actually run, so they are yours either way - and all three are yours if the task was registered by hand.
 
 ```powershell
 $name = 'Exchange BigFunnel PostingListTable Monitor'
 
 # 1. Password, or the task will not run unattended.
+#    -RegisterScheduledTask already checked this one, along with RunLevel
+#    Highest and the -File action, and refused to leave a task that failed it.
 (Get-ScheduledTask -TaskName $name).Principal.LogonType
 
 # 2. Run it once on demand and read the code the scheduler recorded.
@@ -666,7 +894,17 @@ Do this on every member you register, not just the first. A passive-only member 
 - **The account needs Exchange RBAC, not just local administrator.** It must be able to run `Get-ExchangeServer`, `Get-MailboxDatabase`, and `Get-MailboxStatistics`. View-Only Organization Management is sufficient and is the least-privileged role that covers all three.
 - **It elevates itself.** If the script is not already running as administrator it relaunches itself with the same parameters under `-Verb RunAs`, waits for that run, and exits with its exit code. Start it from an elevated shell and no prompt appears — which includes every task registered with `-RunLevel Highest`. Two departures from the usual four-line version of this pattern are deliberate: it **waits** and propagates the child's exit code, because returning `0` the moment the child starts would report every run as clean; and it rebuilds the child's command line from `PSBoundParameters` rather than a hand-kept list, so a relaunch cannot quietly drop `-CriticalGB` and judge against the wrong threshold. Three cases do not prompt. A non-interactive session has no desktop to show consent on, so it warns that the task wants `-RunLevel Highest` rather than hanging on a prompt nobody can answer. A run with `-Credential` cannot relaunch, because a `PSCredential` does not cross a process boundary and dropping it would change how the runspace authenticates. And `-NoElevate` suppresses it outright — pass that when the output directory is somewhere the current account already owns, such as a scratch path under `%TEMP%`, and a prompt would be pure friction. In all three the run continues and, if it genuinely cannot publish, fails with exit `3` rather than silently. Refusing the prompt is also exit `3`, because a monitor that was not allowed to run has not run.
 - **Interpret the exit code.** See [Exit codes and the run summary](#exit-codes-and-the-run-summary) below. A run that is missing entirely leaves a log file with no `Monitor run complete` line; that is how a killed run is identified, since it has no exit code to report.
-- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed, and measured at the scheduler rather than in a shell: the same failing run, registered twice minutes apart with only the launcher changed, wrote `"ExitCode": 3` to `latest-summary.json` both times, and the scheduler recorded `LastTaskResult 3` under `-File` and `1` under `-Command`. That disagreement between the file and the scheduler is the signature, and step 3 of the verification above is how to catch it. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
+- **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed, and measured at the scheduler rather than in a shell: the same failing run, registered twice minutes apart with only the launcher changed, wrote `"ExitCode": 3` to `latest-summary.json` both times, and the scheduler recorded `LastTaskResult 3` under `-File` and `1` under `-Command`. That disagreement between the file and the scheduler is the signature, and step 3 of the verification above is how to catch it. `-RegisterScheduledTask` builds a `-File` action and then reads the registration back and asserts it, which also catches a management layer rewriting the action after the fact. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
+- **`-File` cannot carry a multi-element array, and every way it fails is silent.** This is the other half of the same launcher problem and it is worth knowing before you hand-write a task or a wrapper. Measured against a stub script that printed what it bound:
+
+  | Written as | What the script received | Exit |
+  |---|---|---:|
+  | `-Databases "DB01","DB02"` | **one** element, the string `DB01,DB02` | `0` |
+  | `-Databases DB01,DB02` | **one** element, the string `DB01,DB02` | `0` |
+  | `-Databases "DB01" "DB02"` | `DB01` to `-Databases`, and **`DB02` bound positionally to whatever parameter came next** | `0` |
+  | `-Databases "DB01" -Databases "DB02"` | hard error, and the error text recommends the comma form above | `1` |
+
+  Three of the four exit `0`, and the third is the dangerous one: a value lands on a different parameter than the one it was written beside. There is no command-line form that survives, so the fix is at the receiving end - the script re-splits `-Databases` and `-EmitTo` on arrival, and `ConvertTo-RelaunchArguments` emits one quoted token (`-Databases "DB one,DB two"`), which is the honest spelling of what actually crosses. Typing a genuine array interactively is unaffected. The limit that remains is that **a value containing a comma cannot round-trip**; Exchange database names do not contain commas and neither do the `-EmitTo` keywords. This affected the elevation relaunch too, and had done since v1.7.x: a `-Databases DB01,DB02` run from a non-elevated session collapsed to one database name that did not exist, matched nothing, and fell through to discovering every database instead - a silently wrong scope on a run that looked entirely normal.
 
 #### Exit codes and the run summary
 
@@ -681,6 +919,9 @@ The monitor reports through two independent channels: the process exit code, for
 | `4` | Another instance is already running | Yes, as a monitor fault |
 | `5` | Completed, but every mailbox large enough to have allocated a posting list table reported it as `0 B`. `-ExitNonZeroOnAlert` only | Yes, as a monitoring gap |
 | `6` | Completed, nothing over threshold, but at least one mailbox is projected to cross the critical threshold within 3 days. `-ExitNonZeroOnAlert` only | Yes, as a mailbox finding, but not as urgent as `1` |
+| `7` | A scheduled task operation failed. **Only ever returned by a run that passed `-RegisterScheduledTask` or `-UnregisterScheduledTask`** | Not from a collecting run - it cannot occur on one |
+
+Exit code `7` is safe to add to an existing integration precisely because of that restriction: a collecting run has no path to it, so no consumer watching a scheduled monitor can ever observe it. It means the registration was refused, the registration could not be verified, or the removal could not be confirmed - never that anything is wrong with the estate. The run that returns it collected nothing and wrote no CSV.
 
 Codes `2`, `3`, `4` and `5` all mean the monitor is not reporting on something, which is more urgent than a large posting list table because it is the state in which a large posting list table goes unseen. Route them differently from `1`.
 
@@ -720,6 +961,8 @@ Three further fields describe the run's confidence in its own instrument, indepe
 Alert on `Status` not in `OK, MetricInconclusive`, and read the counts beside it for what was found. `Completed = false` catches the abort reasons and nothing else, so it is a useful second condition but not a substitute: `PublishFailed`, `Alert`, `MetricUnavailable` and `Emerging` are all completed runs. `MetricInconclusive` is excluded deliberately - on a permanently small estate it fires on every run, and an alert that always fires gets muted; read it when triaging a clean result instead. If your alerting cannot express a set, `Status -ne 'OK'` is the safe simplification in the noisy direction. `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it - that deliberate skip is not a publish failure and does not affect the exit code.
 
 `Elevated` records whether the process that wrote the summary held an elevated token. It is there because it is the usual reason `PublishErrors` is not empty, and because it cannot be recovered from the files after the fact.
+
+`EmitErrors` names whatever went wrong on the `-EmitTo` channels, and is empty on every run that did not ask for them. It is deliberately **not** folded into `PublishErrors`: those two describe failures of different severity, and one field would lose the distinction in the direction that breaks a customer's scheduler. `PublishErrors` means the stable files no longer describe the newest run, and it exits `3`. `EmitErrors` means an additional channel is broken, and it changes nothing. Alert on it separately, and read a non-empty `EmitErrors` beside `Status OK` as what it is - a healthy estate whose forwarder feed needs fixing. One ordering consequence is worth knowing: the emit channels run *after* the summary is written, so `EmitErrors` is filled in by a second, best-effort rewrite of the same file. A summary that could not be written at all is therefore reported by `PublishErrors` and the exit code, never by this field.
 
 `TrendMetric` in the summary names the counter growth was measured on. On a mixed estate it reads `Mixed`, meaning both counters were in use in the one run: the mailboxes whose posting list table is readable were trended on it and carry projected dates, and the mailboxes still reading `0 B` were trended on `IndexPayloadBytes` and carry a ranking instead. `TrendedOnPayload` gives the size of that second group.
 

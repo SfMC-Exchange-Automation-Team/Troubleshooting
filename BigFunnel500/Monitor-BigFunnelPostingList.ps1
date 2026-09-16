@@ -605,11 +605,145 @@ param(
     # so that a child that dies mid-run still relays what it managed to say.
     [string]$ConsoleRelayPath = '',
 
-    [switch]$ExitNonZeroOnAlert
+    [switch]$ExitNonZeroOnAlert,
+
+    # Additional channels for a log aggregator. Empty by default, so a run that
+    # does not ask for them behaves exactly as it did before this existed.
+    #
+    # EventLog writes the run summary, and one event per at-risk mailbox, to the
+    # Windows event log. RunJson writes the same summary object the stable
+    # latest-summary.json carries, but to a per-run filename that is kept rather
+    # than overwritten.
+    #
+    # Neither replaces the two stable files. They exist because those two answer
+    # "what is true now" and a log aggregator asks "what happened over time" -
+    # latest-summary.json cannot answer the second, because every run destroys
+    # the previous answer. An estate that cannot get a file path allowlisted in
+    # its forwarder takes EventLog; one that can takes RunJson; an estate that
+    # wants both is why this is a list rather than a switch.
+    # Valid values are EventLog and RunJson, and they are checked below the param
+    # block rather than by a [ValidateSet] here. That is not a preference. A
+    # ValidateSet fires at parameter-binding time, which is before any code in
+    # this script can run, and the value arriving from a scheduled task needs
+    # re-splitting first - so a set attribute would reject the task's own
+    # invocation before the split could happen. Measured: under powershell.exe
+    # -File, -EmitTo EventLog,RunJson binds as one string and a set attribute
+    # rejects it with "the argument "EventLog,RunJson" does not belong to the set
+    # "EventLog,RunJson"", which is as confusing to read as it looks. The cost is
+    # tab completion; the alternative was a task that failed every run.
+    [string[]]$EmitTo = @(),
+
+    # Only read when -EmitTo includes EventLog. Configurable because event source
+    # names are one of the things large estates standardise on, and a monitor
+    # that cannot fit the standard does not get deployed.
+    [ValidateNotNullOrEmpty()]
+    [string]$EventLogSource = 'BigFunnelPostingListMonitor',
+
+    # Register the scheduled task described in the runbook, then verify it and
+    # exit. Does not collect: registration is a purely local operation and has no
+    # reason to open an Exchange runspace first, which also means it works on a
+    # node where Exchange is not reachable yet.
+    #
+    # The task is built from whatever else was passed on the same command line,
+    # so the way to register a task is to write the run you want and add this
+    # switch. That is deliberate - a registration built from a separate set of
+    # parameters is a registration that can disagree with the run it claims to
+    # schedule.
+    [switch]$RegisterScheduledTask,
+
+    # Remove it again, and confirm it is gone rather than assuming Unregister
+    # succeeded. Also exits without collecting.
+    [switch]$UnregisterScheduledTask,
+
+    [ValidateNotNullOrEmpty()]
+    [string]$TaskName = 'Exchange BigFunnel PostingListTable Monitor',
+
+    [ValidateRange(1, 168)]
+    [int]$TaskIntervalHours = 4,
+
+    # Stagger this across DAG members. Every node registering the same task at
+    # the same minute puts the whole estate's collection into one window, and on
+    # -Scope Local that is the one thing the per-node registration exists to
+    # avoid. 24-hour clock, validated at bind time so a typo is rejected here
+    # rather than by the scheduler hours later.
+    [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')]
+    [string]$TaskStartTime = '00:05',
+
+    # The account the task runs as. Deliberately NOT -Credential, which means
+    # something else entirely: -Credential is how this script authenticates to
+    # the Exchange runspace, and the two are not interchangeable. A task
+    # registered with a stored password opens the runspace with Kerberos and
+    # needs no -Credential at all; -Credential is the way out where a stored
+    # password is not permitted. Conflating them into one parameter would erase
+    # a distinction the runbook spends a section on.
+    #
+    # Prompted for when omitted, so it reaches neither source control nor shell
+    # history. A password is not optional here and the registration refuses
+    # without one - see Register-MonitorScheduledTask.
+    [System.Management.Automation.PSCredential]$TaskCredential
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+# powershell.exe -File cannot carry a multi-element array, and every way it
+# fails is silent. Measured on this machine against a stub script that printed
+# what it bound:
+#
+#   -Databases "DB01","DB02"    -> ONE element, the string 'DB01,DB02'   exit 0
+#   -Databases DB01,DB02        -> ONE element, the string 'DB01,DB02'   exit 0
+#   -Databases "DB01" "DB02"    -> DB01 to -Databases, and DB02 bound
+#                                  POSITIONALLY to the next parameter     exit 0
+#   -Databases "DB01" -Databases "DB02" -> hard error, and the error text
+#                                  recommends the comma syntax above      exit 1
+#
+# Three of those four exit 0. The third is the dangerous one: a value silently
+# lands on a different parameter than the one it was written next to.
+#
+# This matters because two things launch this script with -File - the elevation
+# relaunch, and the scheduled task the script registers - so both would quietly
+# collapse a -Databases list to a single database name that does not exist,
+# match nothing, and fall through to discovering every database instead. The run
+# would look entirely normal.
+#
+# There is no command-line form that survives, so the fix is at this end: the
+# list parameters are re-split here. A caller who typed a genuine array
+# interactively is unaffected, because splitting an array of comma-free values
+# is a no-op. Guarded on ContainsKey so an unbound [string[]] stays $null rather
+# than becoming @() - line 2353 distinguishes those, deliberately.
+#
+# A value containing a comma cannot round-trip. Exchange database names do not
+# contain commas and neither do the -EmitTo keywords, and every encoding that
+# would survive one costs more than that limit is worth.
+# A function rather than a scriptblock so a test can lift it out by name and
+# exercise it, the way T43 lifts the argument builder. The two are halves of one
+# mechanism - one writes the command line, the other reads it - and a test that
+# can only reach one half is how the defect above survived: the old T43 asserted
+# the SHAPE of the string the builder produced and never once handed it to a
+# child process to see what bound.
+function Split-BoundList {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()]$Value)
+
+    if ($null -eq $Value) { return @() }
+    return @(@($Value) | ForEach-Object { [string]$_ -split ',' } |
+             ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+if ($PSBoundParameters.ContainsKey('Databases')) { $Databases = @(Split-BoundList $Databases) }
+if ($PSBoundParameters.ContainsKey('EmitTo'))    { $EmitTo    = @(Split-BoundList $EmitTo) }
+
+# The check a [ValidateSet] on -EmitTo would have done, moved here so it runs
+# after the split rather than before it. Exit 3 rather than a thrown error,
+# because 3 is this script's code for "did not get far enough to collect
+# anything" and a parameter it cannot understand is exactly that.
+$script:ValidEmitTo = @('EventLog', 'RunJson')
+foreach ($e in $EmitTo) {
+    if ($script:ValidEmitTo -notcontains $e) {
+        Write-Warning ("-EmitTo value '{0}' is not recognised. Valid values are: {1}. Separate several with a comma." -f
+                       $e, ($script:ValidEmitTo -join ', '))
+        exit 3
+    }
+}
 
 $script:ScriptVersion   = '1.11.0'
 $script:OutputPath      = $OutputPath
@@ -1455,6 +1589,18 @@ function Write-RunSummary {
         # describe the newest run, so ExitCode is 3 even where collection itself
         # succeeded. Joined for the same reason FailedDatabases is.
         PublishErrors        = ''
+        # The emit channels' own failures, kept deliberately separate from
+        # PublishErrors because they mean something different. A value here NEVER
+        # implies a bad exit code: the two stable files are the contract and a
+        # failure on those exits 3, whereas -EmitTo is an additional channel and
+        # a failure on it is reported rather than escalated. Non-empty beside
+        # Status OK and ExitCode 0 is the correct reading of a healthy run whose
+        # forwarder feed is broken - and that is worth an alert of its own to an
+        # estate whose only channel is the Event Log.
+        #
+        # Filled in by a second, best-effort write. See
+        # Update-RunSummaryEmitErrors for why it cannot be set on the first one.
+        EmitErrors           = ''
         # Whether the process that produced this summary held an elevated token.
         # Worth recording because it is the usual reason PublishErrors is not
         # empty, and it is invisible after the fact from the files alone.
@@ -1471,6 +1617,11 @@ function Write-RunSummary {
         }
         $schema[$k] = $Values[$k]
     }
+
+    # Recorded before the write is attempted, not after, and that ordering is
+    # the point: the emit channels publish THIS object, so they can still carry
+    # the run's verdict on a run where the file itself could not be written.
+    $script:LastRunSummary = $schema
 
     try {
         # Written without a BOM. PowerShell 5.1's -Encoding UTF8 emits one, and
@@ -1490,6 +1641,405 @@ function Write-RunSummary {
         # summary 19 hours stale, reading Status OK, beside a CSV it had just
         # written, and exited 0.
         $script:StablePublishErrors.Add(('latest-summary.json: {0}' -f $_.Exception.Message))
+    }
+}
+
+#endregion
+
+#region emit ------------------------------------------------------------------
+#
+# Two extra channels for a log aggregator, both off by default and neither part
+# of the stable contract. latest.csv and latest-summary.json are what a consumer
+# is promised; these exist for estates that collect by forwarder rather than by
+# polling a file share, and for estates whose policy blocks the scheduled task
+# this script can otherwise register for itself.
+#
+# ONE RULE GOVERNS EVERYTHING BELOW: an emit failure must never move the exit
+# code. A customer adding this monitor to an existing scheduler has to be able
+# to turn a channel on without the risk that it starts failing tasks on day one.
+# Failures are collected in $script:EmitErrors, published in the summary's
+# EmitErrors field and WARNed in the log - visible, never fatal. That cuts the
+# other way too, and it is the reason the field exists: a customer whose ONLY
+# channel is the Event Log must not have it fail silently.
+
+# Status -> (event id, entry type). Findings are Warnings and monitor faults are
+# Errors, mirroring the exit-code philosophy: a full posting list table is the
+# estate's problem and a monitor that could not measure one is this script's.
+$script:RunEventMap = @{
+    'OK'                 = @{ Id = 1000; EntryType = 'Information' }
+    'Emerging'           = @{ Id = 1001; EntryType = 'Warning' }
+    'Alert'              = @{ Id = 1002; EntryType = 'Warning' }
+    'Partial'            = @{ Id = 1003; EntryType = 'Error' }
+    'MetricUnavailable'  = @{ Id = 1004; EntryType = 'Error' }
+    'MetricInconclusive' = @{ Id = 1005; EntryType = 'Information' }
+    'PublishFailed'      = @{ Id = 1006; EntryType = 'Error' }
+}
+
+# Per-mailbox. All three are Warnings: every one of them is a finding about the
+# estate, not a fault in the monitor, however bad the number is.
+$script:MailboxEventMap = @{
+    'Critical' = @{ Id = 1010; EntryType = 'Warning' }
+    'Warning'  = @{ Id = 1011; EntryType = 'Warning' }
+    'Emerging' = @{ Id = 1012; EntryType = 'Warning' }
+}
+
+function ConvertTo-KeyValueText {
+    # Splunk extracts key=value with no configuration, and Event Viewer shows it
+    # readably with no parser at all. Both matter: the operator triaging at 3am
+    # is reading the event, not the index.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Values)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($k in $Values.Keys) {
+        $v = $Values[$k]
+        if     ($null -eq $v)  { $v = '' }
+        elseif ($v -is [bool]) { $v = $(if ($v) { 'true' } else { 'false' }) }
+        else                   { $v = [string]$v }
+
+        # Newlines are folded before anything else. A value carrying a line
+        # break splits one record into two at the forwarder, and the second half
+        # arrives as an event with no timestamp and no context.
+        $v = $v -replace '\r?\n', ' '
+
+        # Quoted only when it needs to be, because an unquoted value containing
+        # a space is where field extraction stops - silently, taking every later
+        # field on the line with it. Embedded double quotes become single ones:
+        # backslash-escaping is what a JSON reader expects and not what Event
+        # Viewer renders, and these two readers see the same string.
+        if ($v -match '[\s"]') { $v = '"' + ($v -replace '"', "'") + '"' }
+        $lines.Add(('{0}={1}' -f $k, $v))
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Initialize-EmitEventSource {
+    # MEASURED, not assumed, because the two halves of this API carry different
+    # rights. On PowerShell 5.1.26100, non-elevated:
+    #
+    #   SourceExists(<a source that exists>)   -> True
+    #   SourceExists(<one that does not>)      -> THROWS. "The source was not
+    #                                             found, but some or all event
+    #                                             logs could not be searched.
+    #                                             Inaccessible logs: Security,
+    #                                             State."
+    #   WriteEntry to an EXISTING source       -> works. No elevation needed.
+    #   WriteEntry to a missing one            -> SecurityException (it tries to
+    #                                             create the source first)
+    #   CreateEventSource / New-EventLog       -> SecurityException / "Access is
+    #                                             denied. Try running the command
+    #                                             again in a session that has
+    #                                             been opened with elevated user
+    #                                             rights"
+    #
+    # So creating the source needs administrator ONCE, and every run afterwards
+    # can write whatever token it holds. This script self-elevates and the
+    # scheduled task runs elevated, so the ordinary deployment never meets the
+    # limit. The case that has to degrade well is -NoElevate on a machine where
+    # the source was never created.
+    #
+    # THE THROW IS THE TRAP. A non-admin caller cannot tell "absent" from "cannot
+    # look": both arrive as the same exception. So a throw is treated as
+    # INDETERMINATE and the write is allowed to be the test, which is the only
+    # test available to an account that cannot enumerate the log list. Reading it
+    # as "absent" would send the run into New-EventLog, which then fails with a
+    # rights error describing a problem the caller does not have.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Source)
+
+    $exists = $null   # $true, $false, or $null for "could not determine"
+    try   { $exists = [System.Diagnostics.EventLog]::SourceExists($Source) }
+    catch { $exists = $null }
+
+    if ($exists -eq $true) { return $true }
+
+    if ($exists -eq $false) {
+        if (-not $script:Elevated) {
+            $script:EmitErrors.Add(('EventLog: source [{0}] does not exist and this run is not elevated, so it could not be created.' -f $Source))
+            Write-RunLog ('Event source [{0}] does not exist and this run is not elevated, so no event was written. Creating a source requires administrator once; writing to one that already exists does not. Run this once elevated - or register the scheduled task, which runs elevated - and this channel starts working for every later run whatever token it holds.' -f $Source) 'WARN'
+            return $false
+        }
+        try {
+            New-EventLog -LogName Application -Source $Source -ErrorAction Stop
+            Write-RunLog ('Created event source [{0}] in the Application log.' -f $Source)
+            return $true
+        }
+        catch {
+            $script:EmitErrors.Add(('EventLog: could not create source [{0}]: {1}' -f $Source, $_.Exception.Message))
+            Write-RunLog ('Could not create event source [{0}]: {1}' -f $Source, $_.Exception.Message) 'WARN'
+            return $false
+        }
+    }
+
+    Write-RunLog ('Could not determine whether event source [{0}] exists - this account cannot read the whole log list, which is the documented behaviour for a non-administrator and not a fault. Writing anyway: if the source is present the write succeeds regardless of elevation, and if it is not, the failure is recorded in EmitErrors.' -f $Source) 'WARN'
+    return $true
+}
+
+function Write-EmitEvent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][int]$EventId,
+        [Parameter(Mandatory = $true)][string]$EntryType,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    # 32,766 characters is the hard ceiling on an event message, and past it the
+    # write throws and the event is lost entirely. Clipped well short of it with
+    # a marker, so a reader can tell a truncated payload from a complete one -
+    # an event that silently stops mid-field is worse than one that says it was
+    # cut, because the missing fields read as absent rather than as elided.
+    if ($Message.Length -gt 31000) {
+        $Message = $Message.Substring(0, 31000) + [Environment]::NewLine + '[truncated: the payload exceeded the Event Log message ceiling]'
+    }
+
+    try {
+        Write-EventLog -LogName Application -Source $Source -EventId $EventId `
+                       -EntryType $EntryType -Message $Message -ErrorAction Stop
+        return $true
+    }
+    catch {
+        $script:EmitErrors.Add(('EventLog: event {0}: {1}' -f $EventId, $_.Exception.Message))
+        # WARNed as well as collected. EmitErrors reaches the run summary, but a
+        # customer whose only channel is the Event Log cannot read the summary
+        # field describing why the Event Log is empty - the log file is the one
+        # place left that both says what failed and is certain to exist.
+        Write-RunLog ('Could not write event {0} to source [{1}]: {2}' -f $EventId, $Source, $_.Exception.Message) 'WARN'
+        return $false
+    }
+}
+
+function Write-EmitRunJson {
+    # Named INSIDE the BigFunnelPostingListMonitor-* pattern on purpose, so
+    # Remove-ExpiredOutput prunes it with no new rotation code. That is the exact
+    # mirror of why latest.csv and latest-summary.json are named OUTSIDE it: the
+    # two stable files have to survive a sweep, and these have to not. A 4-hour
+    # cadence writes about 2,200 of them a year.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RunId,
+        [Parameter(Mandatory = $true)]$Summary
+    )
+
+    # The abort path can reach here before a run id was assigned. A file called
+    # BigFunnelPostingListMonitor-.json would still be swept, but it would also
+    # be overwritten by the next such run, so the one case where two aborts
+    # happen in a row would keep only the second.
+    $id = $RunId
+    if ([string]::IsNullOrWhiteSpace($id)) { $id = 'norunid-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss') }
+
+    $file = Join-Path $Path ('BigFunnelPostingListMonitor-{0}.json' -f $id)
+    try {
+        $json = ([pscustomobject]$Summary) | ConvertTo-Json -Depth 4
+        [System.IO.File]::WriteAllText($file, $json, $script:Utf8NoBom)
+        Write-RunLog ('Wrote the per-run summary to [{0}].' -f $file)
+        return $file
+    }
+    catch {
+        $script:EmitErrors.Add(('RunJson: {0}' -f $_.Exception.Message))
+        Write-RunLog ('Could not write the per-run summary to [{0}]: {1}' -f $file, $_.Exception.Message) 'WARN'
+        return ''
+    }
+}
+
+function Invoke-RunEmit {
+    # Called from both the completed and the aborted paths, AFTER the stable
+    # summary has been attempted and after the exit code is final.
+    # NOTHING here is Mandatory, deliberately. -EmitTo is unbound on almost
+    # every run and $script:LastRunSummary is null on an abort early enough to
+    # precede the summary; a Mandatory parameter handed $null does not throw, it
+    # PROMPTS, and a prompt inside a scheduled task is a run that hangs until the
+    # execution time limit kills it. The checks below do the same job visibly.
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyCollection()][string[]]$Channels,
+        [AllowNull()][AllowEmptyString()][string]$Source,
+        [AllowNull()][AllowEmptyString()][string]$OutputDirectory,
+        [AllowNull()]$Summary,
+        [int]$ExitCode = 0,
+        [AllowNull()][AllowEmptyCollection()]$AtRisk,
+        [AllowNull()][AllowEmptyCollection()]$Emerging,
+        [int]$MaxDetail = 25
+    )
+
+    if ($null -eq $Channels -or $Channels.Count -eq 0) { return }
+    if ($null -eq $Summary) {
+        $script:EmitErrors.Add('No run summary was built, so there was nothing to emit.')
+        Write-RunLog 'The emit channels were requested but the run ended before a summary was built, so no event and no per-run file were written.' 'WARN'
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($Source)) { $Source = 'BigFunnelPostingListMonitor' }
+
+    # A working copy, so the emitted payload can carry a verdict the published
+    # summary structurally cannot. latest-summary.json is built before it is
+    # written, so it can never report its own failure to be written - the file
+    # cannot describe its own absence. This runs after that attempt, so when the
+    # summary could not be published the event says PublishFailed and names the
+    # reason. For an estate collecting by forwarder that is not a detail, it is
+    # the reason to run this channel at all: it is the only one that stays up
+    # when the file a poller reads goes stale.
+    $payload = [ordered]@{}
+    foreach ($k in $Summary.Keys) { $payload[$k] = $Summary[$k] }
+    $payload['ExitCode'] = $ExitCode
+    if ($script:StablePublishErrors.Count -gt 0) {
+        $payload['Status']        = 'PublishFailed'
+        $payload['PublishErrors'] = (($script:StablePublishErrors | Select-Object -Unique) -join ' | ')
+    }
+
+    # THE EVENT LOG GOES FIRST, and the order is not arbitrary. The per-run JSON
+    # is the durable artefact of the two, so it is written last in order to carry
+    # whatever the Event Log channel just failed with. Written first it would
+    # record an empty EmitErrors on precisely the runs where that channel broke.
+    if ($Channels -contains 'EventLog') {
+        Write-EmitEventChannel -Source $Source -Payload $payload `
+            -AtRisk $AtRisk -Emerging $Emerging -MaxDetail $MaxDetail
+    }
+
+    if ($Channels -contains 'RunJson') {
+        $payload['EmitErrors'] = (($script:EmitErrors | Select-Object -Unique) -join ' | ')
+        Write-EmitRunJson -Path $OutputDirectory -RunId ([string]$payload['RunId']) -Summary $payload | Out-Null
+    }
+}
+
+function Write-EmitEventChannel {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)]$Payload,
+        [AllowNull()][AllowEmptyCollection()]$AtRisk,
+        [AllowNull()][AllowEmptyCollection()]$Emerging,
+        [int]$MaxDetail = 25
+    )
+
+    if (-not (Initialize-EmitEventSource -Source $Source)) { return }
+
+    # $Payload and $payload are the same variable - PowerShell parameter names
+    # are case-insensitive - so the lower-case spelling below is the parameter,
+    # not a copy of it.
+    $status = [string]$payload['Status']
+    $map    = $script:RunEventMap[$status]
+    if ($null -eq $map) {
+        # The abort path's Status is a free-form reason string by design, so it
+        # is never in the table. That is not an unknown status, it is a run that
+        # did not finish, which is the single most important event this channel
+        # carries - a monitor that stopped reporting looks exactly like an estate
+        # with nothing wrong.
+        if ($payload.Contains('Completed') -and -not $payload['Completed']) {
+            $map = @{ Id = 1007; EntryType = 'Error' }
+        }
+        else {
+            # A status the table has never heard of on a run that completed
+            # means the precedence chain grew and this map did not. Emitted under
+            # a reserved id rather than dropped, because a missing event and a
+            # run that never happened are indistinguishable to a forwarder.
+            $map = @{ Id = 1099; EntryType = 'Warning' }
+            $script:EmitErrors.Add(('EventLog: status [{0}] has no event id mapping and was emitted as 1099.' -f $status))
+        }
+    }
+
+    $runWritten = Write-EmitEvent -Source $Source -EventId $map.Id -EntryType $map.EntryType `
+                      -Message (ConvertTo-KeyValueText $payload)
+
+    # Per-mailbox events, so an alert can name a mailbox rather than a count.
+    # Bounded by the same -MaxAlertDetail that bounds the log and the console: a
+    # badly affected server holding thousands of at-risk mailboxes would
+    # otherwise make the monitor its own Event Log problem, and the lists are
+    # already sorted worst-first so the detail that survives the cap is the
+    # detail worth having.
+    #
+    # Skipped entirely if the run event itself could not be written. There is no
+    # value in several hundred mailbox events with no run event to correlate
+    # them against, and every one of them would fail the same way.
+    if (-not $runWritten) { return }
+
+    $groups = @(
+        @{ Rows = @($AtRisk);   Label = '' }          # '' = take the row's own Status
+        @{ Rows = @($Emerging); Label = 'Emerging' }  # not a row Status; a trend verdict
+    )
+
+    foreach ($g in $groups) {
+        $shown = 0
+        foreach ($r in $g.Rows) {
+            if ($shown -ge $MaxDetail) { break }
+            $shown++
+
+            $kind = $(if ($g.Label) { $g.Label } else { [string]$r.Status })
+            $m    = $script:MailboxEventMap[$kind]
+            if ($null -eq $m) { continue }
+
+            # The fields that leave the box, listed in one place on purpose so
+            # the runbook can state plainly what a forwarder carries off this
+            # server. DisplayName and MailboxGuid are the two that identify a
+            # person's mailbox; everything else is a measurement.
+            $detail = [ordered]@{
+                RunId          = $payload['RunId']
+                ScriptVersion  = $payload['ScriptVersion']
+                Timestamp      = $payload['Timestamp']
+                Server         = $payload['Server']
+                Finding        = $kind
+                Database       = $r.Database
+                DisplayName    = $r.DisplayName
+                MailboxGuid    = $r.MailboxGuid
+                PostingListGB  = $r.PostingListGB
+                TotalItemSize  = $r.TotalItemSize
+                ItemCount      = $r.ItemCount
+                IndexedCount   = $r.BigFunnelIndexedCount
+                Trend          = $r.Trend
+                GrowthGBPerDay = $r.GrowthGBPerDay
+                DaysToCritical = $r.DaysToCritical
+                WarningGB      = $payload['ConfiguredWarningGB']
+                CriticalGB     = $payload['ConfiguredCriticalGB']
+            }
+            Write-EmitEvent -Source $Source -EventId $m.Id -EntryType $m.EntryType `
+                -Message (ConvertTo-KeyValueText $detail) | Out-Null
+        }
+
+        if ($g.Rows.Count -gt $shown) {
+            Write-RunLog ('{0} further {1} mailbox(es) were not emitted as events: -MaxAlertDetail is {2}.' -f
+                ($g.Rows.Count - $shown), $(if ($g.Label) { 'emerging' } else { 'at-risk' }), $MaxDetail) 'WARN'
+        }
+    }
+}
+
+function Update-RunSummaryEmitErrors {
+    # A second write of the same summary, and only ever when there is something
+    # to add.
+    #
+    # THE ORDERING FORCES THIS, and every alternative is worse. Invoke-RunEmit
+    # has to run after the stable summary so its payload can report a failure to
+    # publish that summary - the file cannot describe its own absence, which is
+    # the asymmetry that makes PublishFailed unreadable in latest-summary.json.
+    # But running last means the emit channels fail AFTER the field describing
+    # their failures has already been written, so a consumer polling
+    # latest-summary.json would find EmitErrors empty on exactly the runs where
+    # it was the thing they needed to see.
+    #
+    # THIS IS NOT THE CONTRACT WRITE. A failure here cannot reach
+    # $script:StablePublishErrors and cannot move the exit code. The first write
+    # already succeeded, so the verdict on disk is this run's and is complete;
+    # all this adds is detail about a channel that is explicitly non-fatal.
+    # Escalating on it would let a broken Event Log exit 3, which is the one
+    # thing every rule in this region exists to prevent.
+    [CmdletBinding()]
+    param([AllowNull()][AllowEmptyString()][string]$Path)
+
+    if ($script:EmitErrors.Count -eq 0)      { return }
+    if ($null -eq $script:LastRunSummary)    { return }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    # Nothing on disk to enrich, and the run already exits 3 for it. Writing here
+    # would replace a correctly-absent file with one reporting its own failure as
+    # a footnote to a channel error.
+    if (-not $script:SummaryWritten)         { return }
+
+    $script:LastRunSummary['EmitErrors'] = (($script:EmitErrors | Select-Object -Unique) -join ' | ')
+    try {
+        $json = ([pscustomobject]$script:LastRunSummary) | ConvertTo-Json -Depth 4
+        [System.IO.File]::WriteAllText($Path, $json, $script:Utf8NoBom)
+        Write-RunLog ('Recorded {0} emit failure(s) in the run summary.' -f $script:EmitErrors.Count) 'WARN'
+    }
+    catch {
+        Write-RunLog ('The run summary could not be updated with this run''s emit failures: {0}. The summary on disk is still this run''s and its verdict is still correct - only the EmitErrors field is empty when it should not be. The failures themselves are recorded above in this log.' -f $_.Exception.Message) 'WARN'
     }
 }
 
@@ -1518,17 +2068,34 @@ function Test-IsElevated {
 }
 
 function ConvertTo-RelaunchArguments {
-    # Rebuild the invocation for the elevated child. Driven off PSBoundParameters
-    # rather than a hand-maintained list, so a parameter added later cannot be
-    # silently dropped on the way across the process boundary - a relaunch that
-    # quietly discards -CriticalGB would report against the wrong threshold.
+    # Rebuild the invocation from PSBoundParameters rather than from a
+    # hand-maintained list, so a parameter added later cannot be silently dropped
+    # on the way across - a relaunch that quietly discards -CriticalGB would
+    # report against the wrong threshold.
+    #
+    # Two callers now, and they exclude different things. The elevation relaunch
+    # drops -NoElevate, because the child IS the elevated run and passing it
+    # would tell that run not to elevate. The scheduled-task registration drops
+    # rather more: the task parameters themselves, which describe how to build
+    # the task and mean nothing inside it, and -Credential and
+    # -ConsoleRelayPath, neither of which can cross into a task at all. The list
+    # is passed in rather than tested for here, so this function never has to
+    # know which caller it is serving - which is the same reason it reads
+    # PSBoundParameters instead of naming parameters one at a time.
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)]$Bound)
+    param(
+        [Parameter(Mandatory = $true)]$Bound,
+        [string[]]$Exclude = @()
+    )
 
     $parts = New-Object System.Collections.Generic.List[string]
     foreach ($k in $Bound.Keys) {
         $v = $Bound[$k]
-        if ($k -eq 'NoElevate') { continue }
+        # -contains is case-insensitive, which is what parameter names need:
+        # PowerShell binds -noelevate and -NoElevate to the same parameter, so an
+        # exclusion list that only matched one spelling would let the other
+        # through on a hand-typed command line.
+        if ($Exclude -contains $k) { continue }
         if ($v -is [System.Management.Automation.SwitchParameter]) {
             if ($v.IsPresent) { $parts.Add('-' + $k) }
             continue
@@ -1547,11 +2114,276 @@ function ConvertTo-RelaunchArguments {
         }
 
         $parts.Add('-' + $k)
-        if ($v -is [array]) { $parts.Add((($v | ForEach-Object { & $format $_ }) -join ',')) }
+        # One quoted token for an array, not a comma-joined run of separately
+        # quoted ones. The difference is invisible here and decisive at the other
+        # end: -Databases "DB01","DB02" reaches the child as the single string
+        # DB01,DB02 anyway, because powershell.exe -File does not split comma
+        # lists - so joining first and quoting once is simply the honest spelling
+        # of what actually crosses, and it is the only form that survives a value
+        # containing a space. The child re-splits; see the note above
+        # Split-BoundList.
+        if ($v -is [array]) { $parts.Add((& $format (($v | ForEach-Object { [string]$_ }) -join ','))) }
         else                { $parts.Add((& $format $v)) }
     }
     return ($parts -join ' ')
 }
+
+#region scheduled task ---------------------------------------------------------
+#
+# Registration lives in the script rather than in the runbook because the script
+# is already elevated at the moment it is needed, and because the manual version
+# has three ways to fail silently. Every refusal below is one of them, measured
+# rather than imagined - see "The logon type is load-bearing" in the runbook.
+
+function Test-TaskCommandLine {
+    # The single assertion that matters about a registered action: it must invoke
+    # the script with -File, never -Command.
+    #
+    # powershell.exe -Command collapses every non-zero exit code to 1. Codes 2,
+    # 3, 4, 5 and 6 then all reach the scheduler looking like "at-risk mailboxes
+    # found", so a metric outage, an uncollected database and a projection days
+    # out cannot be told apart from a threshold breach. Measured at the scheduler
+    # rather than in a shell: the same failing run, registered twice minutes
+    # apart with only the launcher changed, wrote ExitCode 3 to
+    # latest-summary.json both times while the scheduler recorded LastTaskResult
+    # 3 under -File and 1 under -Command.
+    #
+    # This script builds the action itself, so it cannot get this wrong by
+    # accident. It is asserted anyway, because the registration is read back from
+    # the scheduler rather than from the variable that was sent to it - which is
+    # the only way to catch a policy or a management layer rewriting it.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Arguments)
+
+    if ($Arguments -match '(?i)(^|\s)-Command(\s|$|:)') { return $false }
+    return ($Arguments -match '(?i)(^|\s)-File(\s|$|:)')
+}
+
+function Register-MonitorScheduledTask {
+    # Returns an exit code: 0 registered and verified, 7 not registered.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Bound,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][int]$IntervalHours,
+        [Parameter(Mandatory = $true)][string]$StartTime,
+        $TaskCred
+    )
+
+    if (-not $script:Elevated) {
+        Write-RunLog ('Cannot register [{0}]: creating a scheduled task needs an elevated token and this run does not have one. Re-run from an already-elevated session. Note that -NoElevate, -Credential and -TaskCredential each suppress the automatic relaunch, the last two because a PSCredential cannot cross a process boundary.' -f $Name) 'FATAL' `
+            -ConsoleText 'Cannot register the task: this run is not elevated.'
+        return 7
+    }
+
+    # Not fatal, because a deliberate -Scope All task is a legitimate thing to
+    # want on exactly one node. Loud, because the default makes it the thing you
+    # get by accident on every node.
+    if (-not $Bound.ContainsKey('Scope')) {
+        Write-RunLog ('-Scope was not given, so this task will run with the default, All. On a DAG that registers a task on every member which sweeps the whole organisation from every node, writing several full sets of files that describe the same estate. Pass -Scope Local explicitly for a per-node task, or -Scope All explicitly to say you meant it.') 'WARN' `
+            -ConsoleText @(
+                '-Scope was not given, so the task inherits the default: All.',
+                'For a task on each DAG member you almost certainly want -Scope Local.')
+    }
+
+    # A password is not optional and -User alone is not equivalent. Without one
+    # the principal defaults to LogonType Interactive - "run only when this user
+    # is logged on" - and a service account never is. The task registers, sits at
+    # Ready, and reports LastTaskResult 0x41303 indefinitely while writing no log
+    # and creating no output directory, so every place you would look for the
+    # fault is empty. Refusing is the only honest answer.
+    $cred = $TaskCred
+    if ($null -eq $cred) {
+        if (-not [Environment]::UserInteractive) {
+            Write-RunLog ('Cannot register [{0}]: no -TaskCredential was given and this session cannot prompt for one. Registering without a password would produce a LogonType of Interactive, which is a task that never runs - it would sit at Ready reporting 0x41303 forever, writing no log at all. Pass -TaskCredential.' -f $Name) 'FATAL' `
+                -ConsoleText @(
+                    'Cannot register the task: no -TaskCredential, and no way to prompt for one.',
+                    'Registering without a password creates a task that never runs. Refused.')
+            return 7
+        }
+        try { $cred = Get-Credential -Message ('Account for the scheduled task [{0}]' -f $Name) -ErrorAction Stop }
+        catch { $cred = $null }
+    }
+    if ($null -eq $cred -or [string]::IsNullOrWhiteSpace($cred.UserName)) {
+        Write-RunLog ('Cannot register [{0}]: no credential was supplied. A task registered without a password never runs.' -f $Name) 'FATAL' `
+            -ConsoleText 'Cannot register the task: no credential supplied. Refused.'
+        return 7
+    }
+
+    # Built from the same PSBoundParameters the elevation relaunch uses, so the
+    # task runs the invocation that was actually typed. The exclusions are the
+    # parameters that describe how to build the task and mean nothing inside it,
+    # plus the two that cannot cross into one: a PSCredential does not survive
+    # being written to a command line, and the relay path belongs to a parent
+    # process that will not exist.
+    $exclude = @(
+        'RegisterScheduledTask', 'UnregisterScheduledTask',
+        'TaskName', 'TaskIntervalHours', 'TaskStartTime', 'TaskCredential',
+        'Credential', 'ConsoleRelayPath'
+    )
+    $monitorArgs = ConvertTo-RelaunchArguments $Bound -Exclude $exclude
+    $argLine = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $PSCommandPath)
+    if ($monitorArgs) { $argLine = $argLine + ' ' + $monitorArgs }
+
+    if (-not (Test-TaskCommandLine -Arguments $argLine)) {
+        Write-RunLog ('Refusing to register [{0}]: the command line this script built does not invoke itself with -File. That should be impossible; report it rather than working around it.' -f $Name) 'FATAL' `
+            -ConsoleText 'Refusing to register: the generated command line is not -File based.'
+        return 7
+    }
+
+    try {
+        $exe     = Join-Path $PSHOME 'powershell.exe'
+        $action  = New-ScheduledTaskAction -Execute $exe -Argument $argLine -ErrorAction Stop
+
+        # Matches the registration measured on w25-ex01. If repetition is ever
+        # observed stopping after 24 hours, -RepetitionDuration is the thing to
+        # check first - it is omitted here because the measured registration
+        # omitted it, not because it was ruled out.
+        $at      = [datetime]::ParseExact($StartTime, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+        $trigger = New-ScheduledTaskTrigger -Once -At $at `
+                       -RepetitionInterval (New-TimeSpan -Hours $IntervalHours) -ErrorAction Stop
+
+        # The scheduler's ceiling is deliberately above the script's own budget
+        # rather than equal to it. -MaxRunMinutes is when the script gives up and
+        # writes its summary; if the scheduler's limit landed on the same minute
+        # it could kill the process in the middle of doing that, turning an
+        # orderly Partial into a run that published nothing.
+        $limit    = New-TimeSpan -Minutes ([int]$MaxRunMinutes + 15)
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+                       -ExecutionTimeLimit $limit -StartWhenAvailable -ErrorAction Stop
+
+        Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger -Settings $settings `
+            -User $cred.UserName -Password $cred.GetNetworkCredential().Password `
+            -RunLevel Highest -Force -ErrorAction Stop | Out-Null
+    }
+    catch {
+        $msg = $_.Exception.Message
+        # Named rather than passed through raw. A local administrator blocked by
+        # policy from creating tasks gets "Access is denied" and no indication
+        # that the denial is a deliberate estate setting rather than a bug in
+        # this script, which is the single most likely reason this call fails in
+        # a managed environment.
+        if ($msg -match '(?i)access is denied|0x80070005|not authorized|denied') {
+            Write-RunLog ('Could not register [{0}]: access denied. In a managed estate this usually means policy prevents local administrators from creating scheduled tasks rather than that anything is wrong with the registration. Ask whoever owns that policy to create the task, or hand them the equivalent registration printed in the runbook. Underlying error: {1}' -f $Name, $msg) 'FATAL' `
+                -ConsoleText @(
+                    'Could not register the task: access denied.',
+                    'In a managed estate this is usually policy blocking local admins from',
+                    'creating tasks, not a fault in the registration. The runbook has the',
+                    'equivalent command to hand to whoever owns that policy.')
+        }
+        else {
+            Write-RunLog ('Could not register [{0}]: {1}' -f $Name, $msg) 'FATAL' `
+                -ConsoleText ('Could not register the task: {0}' -f $msg)
+        }
+        return 7
+    }
+
+    Write-RunLog ('Registered scheduled task [{0}].' -f $Name)
+
+    # Read back from the scheduler rather than trusting what was sent to it.
+    return (Test-MonitorScheduledTaskRegistration -Name $Name)
+}
+
+function Test-MonitorScheduledTaskRegistration {
+    # Three things go wrong at registration and none of them announces itself, so
+    # the script checks rather than assuming. Returns 0 if every check passed.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    try { $task = Get-ScheduledTask -TaskName $Name -ErrorAction Stop }
+    catch {
+        Write-RunLog ('Registered [{0}] but could not read it back: {1}' -f $Name, $_.Exception.Message) 'ERROR' `
+            -ConsoleText 'Registered, but the task could not be read back to verify it.'
+        return 7
+    }
+
+    $failures = New-Object System.Collections.Generic.List[string]
+
+    $logonType = [string]$task.Principal.LogonType
+    if ($logonType -ne 'Password') {
+        # Interactive never runs at all. S4U runs and then cannot open the
+        # Exchange runspace, because an S4U logon carries no outbound network
+        # credential and the runspace is a network logon even against this same
+        # server - every run fails identically at the binding step with
+        # 0x8009030e. Only Password is a working monitor.
+        $failures.Add(('LogonType is {0}, not Password. {1}' -f $logonType, $(
+            if ($logonType -eq 'S4U') { 'An S4U task runs but cannot open the Exchange runspace, failing every run at the binding step with 0x8009030e.' }
+            else                      { 'A task with this logon type never runs unattended; it sits at Ready reporting 0x41303.' })))
+    }
+
+    $execArgs = ''
+    try { $execArgs = [string]$task.Actions[0].Arguments } catch { }
+    if (-not (Test-TaskCommandLine -Arguments $execArgs)) {
+        $failures.Add('The registered action does not invoke the script with -File. Under -Command the scheduler collapses every non-zero exit code to 1, so exit codes 2 to 6 become indistinguishable.')
+    }
+
+    $runLevel = [string]$task.Principal.RunLevel
+    if ($runLevel -ne 'Highest') {
+        $failures.Add(('RunLevel is {0}, not Highest. The monitor needs an elevated token to read the posting list counters and to refresh the stable files.' -f $runLevel))
+    }
+
+    if ($failures.Count -eq 0) {
+        Write-RunLog ('Verified [{0}]: LogonType Password, RunLevel Highest, action invokes -File.' -f $Name)
+        Write-Report ''
+        Write-Report ('  Registered and verified: {0}' -f $Name) 'Good'
+        Write-Report  '    LogonType Password, RunLevel Highest, -File action.'
+        return 0
+    }
+
+    foreach ($f in $failures) { Write-RunLog ('Verification failed for [{0}]: {1}' -f $Name, $f) 'ERROR' -ConsoleText $f }
+    Write-RunLog ('[{0}] is registered but will not work as configured. Fix it or remove it with -UnregisterScheduledTask; leaving it in place is worse than having no task, because the scheduler will report it as Ready.' -f $Name) 'ERROR' `
+        -ConsoleText 'The task is registered but will not work as configured.'
+    return 7
+}
+
+function Unregister-MonitorScheduledTask {
+    # Confirms removal rather than assuming Unregister-ScheduledTask succeeded.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $existed = $true
+    try { Get-ScheduledTask -TaskName $Name -ErrorAction Stop | Out-Null }
+    catch { $existed = $false }
+
+    if (-not $existed) {
+        Write-RunLog ('No scheduled task named [{0}] to remove.' -f $Name) 'WARN' `
+            -ConsoleText ('There is no scheduled task named "{0}".' -f $Name)
+        # Not an error. The state the caller asked for is the state on disk, and
+        # a teardown script that runs twice should not fail the second time.
+        return 0
+    }
+
+    try { Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction Stop }
+    catch {
+        $msg = $_.Exception.Message
+        if ($msg -match '(?i)access is denied|0x80070005|not authorized|denied') {
+            Write-RunLog ('Could not remove [{0}]: access denied. Policy in this estate may reserve scheduled task changes to someone else. Underlying error: {1}' -f $Name, $msg) 'FATAL' `
+                -ConsoleText 'Could not remove the task: access denied.'
+        }
+        else {
+            Write-RunLog ('Could not remove [{0}]: {1}' -f $Name, $msg) 'FATAL' `
+                -ConsoleText ('Could not remove the task: {0}' -f $msg)
+        }
+        return 7
+    }
+
+    $stillThere = $true
+    try { Get-ScheduledTask -TaskName $Name -ErrorAction Stop | Out-Null }
+    catch { $stillThere = $false }
+
+    if ($stillThere) {
+        Write-RunLog ('Unregister-ScheduledTask reported success but [{0}] is still registered.' -f $Name) 'ERROR' `
+            -ConsoleText 'The removal reported success but the task is still there.'
+        return 7
+    }
+
+    Write-RunLog ('Removed scheduled task [{0}].' -f $Name)
+    Write-Report ''
+    Write-Report ('  Removed: {0}' -f $Name) 'Good'
+    return 0
+}
+
+#endregion
 
 $script:Elevated = Test-IsElevated
 if (-not $script:Elevated -and -not $NoElevate) {
@@ -1561,6 +2393,15 @@ if (-not $script:Elevated -and -not $NoElevate) {
         # without it would silently change how the runspace authenticates -
         # turning an explicit credential into an implicit one.
         Write-Warning 'Not elevated, but -Credential cannot be passed to a new process, so this run continues as it is. Re-run from an elevated session if it fails to publish.'
+    }
+    elseif ($null -ne $TaskCredential) {
+        # The same constraint with a different consequence. -TaskCredential is
+        # the account the task will run as, and it cannot cross a process
+        # boundary either - a relaunch would drop it, and the child would either
+        # prompt again in a window that closes or refuse outright. So this run
+        # stays where it is and fails at the registration step instead, which is
+        # the better place to fail: that message can name the fix.
+        Write-Warning 'Not elevated, and -TaskCredential cannot be passed to a new process. Re-run from an already-elevated session to register the task.'
     }
     elseif (-not [Environment]::UserInteractive) {
         # A scheduled task or service has no desktop to show a consent prompt
@@ -1600,7 +2441,7 @@ if (-not $script:Elevated -and -not $NoElevate) {
         if ($relay) { $bound['ConsoleRelayPath'] = $relay }
 
         $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f
-                   $PSCommandPath, (ConvertTo-RelaunchArguments $bound)
+                   $PSCommandPath, (ConvertTo-RelaunchArguments $bound -Exclude 'NoElevate')
 
         # Said before the consent prompt rather than after an empty pipeline. The
         # rows are built in the child, so a -PassThru run that elevates returns
@@ -1678,6 +2519,48 @@ $csvPath        = Join-Path $OutputPath ('BigFunnelPostingListMonitor-{0}.csv' -
 $latestCsv      = Join-Path $OutputPath 'latest.csv'
 $latestJson     = Join-Path $OutputPath 'latest-summary.json'
 
+# A registration run is a purely local operation against the task scheduler, so
+# it takes no concurrency lock, binds no Exchange runspace and runs no
+# pre-flight. There is nothing for it to contend with, and skipping the binding
+# is not just a saving: setting the schedule up is something people do on a
+# server where Exchange is not reachable yet, and a registration that failed
+# because the runspace would not open would be failing for a reason that has
+# nothing to do with the task.
+#
+# It sits here rather than immediately after the elevation block so that it
+# inherits $script:LogFile, because every refusal below is a diagnosis worth
+# keeping. Creating $OutputPath as a side effect is deliberate too: this run is
+# elevated, so the directory is created owned by Administrators - which is the
+# ownership the task's own runs need in order to refresh latest.csv and
+# latest-summary.json. A non-elevated run that creates it first is how the
+# stale-summary failure on w25-ex01 started.
+if ($RegisterScheduledTask -or $UnregisterScheduledTask) {
+    Write-Report ''
+    Write-Report ('BigFunnel PostingListTable monitor v{0}' -f $script:ScriptVersion) 'Head'
+    Write-Report ('scheduled task operation on {0}' -f $script:ThisServer) 'Dim'
+
+    $taskExit = 0
+
+    # Unregister first when both were passed, so that combination reads as
+    # "replace it" rather than as a conflict to be rejected. Register with -Force
+    # would overwrite anyway; doing it in this order means the removal is
+    # confirmed before the replacement goes in, rather than assumed.
+    if ($UnregisterScheduledTask) {
+        $taskExit = Unregister-MonitorScheduledTask -Name $TaskName
+    }
+    if ($RegisterScheduledTask -and $taskExit -eq 0) {
+        $taskExit = Register-MonitorScheduledTask -Bound $PSBoundParameters `
+                        -Name $TaskName -IntervalHours $TaskIntervalHours `
+                        -StartTime $TaskStartTime -TaskCred $TaskCredential
+    }
+
+    Write-Report ''
+    Write-Report ('Exit code {0}' -f $taskExit) $(if ($taskExit -eq 0) { 'Good' } else { 'Bad' })
+    if ($script:LogFile) { Write-Report ('Log: {0}' -f $script:LogFile) 'Dim' }
+    Write-Report ''
+    exit $taskExit
+}
+
 # A long collection against a busy store can overrun the schedule interval.
 # Two concurrent runs would double the load on the very component this script
 # exists to protect. Global\ needs SeCreateGlobalPrivilege, which the Exchange
@@ -1721,6 +2604,14 @@ $script:SummaryWritten = $false
 # rather than counted, because the reason is what tells you whether it is an ACL,
 # a full disk or a file someone left open.
 $script:StablePublishErrors = New-Object System.Collections.Generic.List[string]
+
+# Deliberately NOT the same list. A failure to publish latest.csv or
+# latest-summary.json escalates the exit code to 3; a failure on an emit channel
+# never touches it. Keeping them in one collection is the easy way to lose that
+# distinction, and it would lose it in the direction that breaks a customer's
+# existing scheduler on the day they turn a channel on.
+$script:EmitErrors     = New-Object System.Collections.Generic.List[string]
+$script:LastRunSummary = $null
 
 #region Exchange binding -------------------------------------------------------
 
@@ -2960,6 +3851,15 @@ try {
         Write-RunLog ('The run summary could not be published, so [{0}] still describes an earlier run. Exiting 3 so this run is not mistaken for a healthy one.' -f $latestJson) 'ERROR'
     }
 
+    # After the summary, so the payload carries the final exit code and can
+    # report a failure to publish that the published file cannot. Before the
+    # retention sweep, so a per-run JSON old enough to prune is pruned on the run
+    # that wrote its successor rather than one cadence later.
+    Invoke-RunEmit -Channels $EmitTo -Source $EventLogSource -OutputDirectory $OutputPath `
+        -Summary $script:LastRunSummary -ExitCode $exitCode `
+        -AtRisk $atRisk -Emerging $emerging -MaxDetail $MaxAlertDetail
+    Update-RunSummaryEmitErrors -Path $latestJson
+
     Remove-ExpiredOutput -Path $OutputPath -Days $RetentionDays
     Write-RunLog ('Monitor run complete. Exit code {0}.' -f $exitCode)
 
@@ -3289,6 +4189,22 @@ finally {
             PublishErrors        = (($script:StablePublishErrors | Select-Object -Unique) -join ' | ')
             Elevated             = $script:Elevated
             ExitCode             = $exitCode
+        }
+
+        # The abort path emits too, and this is the case the channel exists for.
+        # A run that never collected anything is the one a poller cannot see: it
+        # leaves latest.csv untouched, so a consumer reading the CSV's timestamp
+        # sees only that nothing changed, which is also what a healthy estate
+        # looks like. Event 1007 says the monitor stopped, by name. Wrapped
+        # because this runs in a finally and an exception here would replace
+        # whatever the run was actually aborting for.
+        try {
+            Invoke-RunEmit -Channels $EmitTo -Source $EventLogSource -OutputDirectory $OutputPath `
+                -Summary $script:LastRunSummary -ExitCode $exitCode -MaxDetail $MaxAlertDetail
+            Update-RunSummaryEmitErrors -Path $latestJson
+        }
+        catch {
+            Write-RunLog ('The emit channels could not run on the abort path: {0}' -f $_.Exception.Message) 'WARN'
         }
 
         # The abort verdict. Without this the whole class of runs that fail
