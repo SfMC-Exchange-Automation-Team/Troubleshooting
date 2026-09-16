@@ -169,7 +169,7 @@ An observed bar is a direct measurement of the allocation point on the build act
 
 The 64 MB fallback is roughly four times the upper bound of the measured range, so a `Blind` verdict reached under it is close to unarguable. Both the bar in force and its basis are published in `latest-summary.json` on every run.
 
-Verified on the lab server described above, Exchange Server SE `15.2.2562.17`. With no intervention it reports 15 of 15 eligible mailboxes at `0 B`, exits `5`, and reports `Status = MetricUnavailable`. With a single controlled non-zero value present on one mailbox, the same server minutes later reports 14 of 15, exits `1`, and reports `Status = OK`. That pair is what separates "the metric is blind" from "the metric works and nothing crossed a line," and reproducing it is the check to run before trusting an absence of alerts on your own build.
+Verified on the lab server described above, Exchange Server SE `15.2.2562.17`. With no intervention it reports 15 of 15 eligible mailboxes at `0 B`, exits `5`, and reports `Status = MetricUnavailable`. With a single controlled non-zero value present on one mailbox, the same server minutes later reports 14 of 15, exits `1`, and reports `Status = Alert` - a threshold crossed on a counter that demonstrably reads. That pair is what separates "the metric is blind" from "the metric works and has something to say," and reproducing it is the check to run before trusting an absence of alerts on your own build.
 
 ### Detection signals
 
@@ -233,13 +233,113 @@ Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchan
 > **The in-process Exchange snap-in is never used, and that is deliberate.** A store cmdlet loaded by `Add-PSSnapin` binds the store from the calling process, and an in-process bind reaches only a store on the same server - so a `-Scope All` run under it drops every database mounted on another DAG member and still writes a complete-looking summary. Measured on a three-node DAG, same server and minute: the snap-in collected 50 mailboxes across 2 of 4 databases and reported `Partial`; the runspace collected 97 across all 4 and reported `OK`. A run that cannot open a runspace exits `3` rather than collecting a subset. `-ConnectionUri` points at another Exchange server in the organisation where the local vdir is not the one to use; it does not have to be the node holding the database. `latest-summary.json` records which binding was used in `Binding`, and where, in `ConnectionUri`.
 
 > [!NOTE]
-> **A clean run prints nothing to the console.** Every line goes to the run log and to `Write-Verbose`; only `ERROR` and `FATAL` surface interactively, as warnings. That is correct for the scheduled task this script is built for, where console output goes nowhere - but run by hand it looks like a hang, particularly during the first few seconds while the Exchange runspace is being opened and its proxies imported, which is itself silent. Add `-Verbose` to watch a run as it happens, or read `latest-summary.json` and the log afterwards. Silence is a working run, and `$LASTEXITCODE` carries the verdict.
+> **Every run reports on the console, whether or not you ask it to.** A header, a line per database as it is collected, any warning or error inline, and then a verdict block: the status, the counts behind it, which mailboxes carry a posting list table, the worst affected, the paths to the CSV and the log, and the exit code. Status and counts are coloured. `-Verbose` adds the timestamped `[INFO]`/`[WARN]`/`[ERROR]` stream underneath, which is the troubleshooting layer rather than the only way to learn what happened - before v1.7.6 it was the only way, and a default run printed nothing at all. Long explanations are written to the log in full and abbreviated on screen, so the verdict is not pushed off the top of the window by the reasoning behind it. `-Quiet` removes the report for a wrapper that parses instead of reads; it suppresses decoration, never evidence, so the log, both stable files and the exit code are unaffected. See [Reading a run on screen](#reading-a-run-on-screen).
+
+> [!NOTE]
+> **The script elevates itself, and the report survives the window that opens to do it.** Started from an ordinary console it relaunches under UAC with the same parameters, waits, and exits with that run's code, so the stable files cannot end up owned by an administrator and then be unwritable to the next non-elevated run. What that costs is a console: an elevated process cannot attach to the console of the non-elevated one that asked for it, so the relaunch gets a window of its own and Windows closes it the moment the run ends. Before v1.11.0 that left the operator approving a consent prompt, watching a console flash past, and holding two lines and a path to a log file. The child now writes each console line to a relay file in the parent's `TEMP` as it prints it, and the parent replays the file - colours included - into the window the operator is actually looking at. Line by line rather than buffered, so a child that dies mid-run still relays what it managed to say; where `TEMP` is not set the relay is skipped and the run falls back to reporting the exit code and the log path. `-NoElevate` opts out of the whole arrangement, which is right wherever the output directory is already owned by the account running the script, and `-Quiet` relays nothing because there is nothing to relay.
 
 > [!IMPORTANT]
 > Run the file, not a copy assembled out of this article. Earlier revisions of this runbook carried the whole script inline, and a copy taken from one of those has no `-Scope`, `-ThresholdMode`, `-MaxRunMinutes` or `-ExitNonZeroOnAlert`, writes neither `latest.csv` nor `latest-summary.json`, and has neither the `MetricUnavailable` status nor exit code `5`. Every exit code, contract and lab result described in this article refers to the file in this folder. The excerpts below are quoted from it for reading, and are not a substitute for it.
 
 > [!NOTE]
 > The script exports to CSV rather than sending mail. The `Send-MailMessage` cmdlet is obsolete and Microsoft recommends against using it because it does not guarantee a secure connection to the SMTP server. Integrate the CSV output with your organization's approved monitoring or alerting platform.
+
+### Reading a run on screen
+
+A run started by hand looks like this. Nothing was passed but `-Scope Local`:
+
+```text
+BigFunnel PostingListTable monitor v1.11.0
+run 20260915-121458-317452 on EXCH-01
+
+Scope Local - 3 database(s) in scope
+  MDB01............................. 7 mailbox(es)
+  MDB02............................. 7 mailbox(es)
+  MDB03............................. 7 mailbox(es)
+  - 3 mailbox(es) were skipped because their size value could not be parsed.
+  - 3 mailbox(es) were skipped because BigFunnelPostingListTableTotalSize held no readable value - Unlimited, or present but empty. They are absent from the detail below; do not read that as a size of zero.
+
+  RESULT  Alert
+  15 mailbox(es) evaluated in 1.1s
+
+    Critical             3
+    Warning              3
+    Emerging             0
+    Databases failed     0
+    Counter              Confirmed
+    Posting list table   15 of 15 mailbox(es) - see the report
+
+  Growth
+    No baseline old enough to measure against. The next run is the first that can.
+
+  Worst affected
+    Critical  Ana Ilic on MDB02  2.4 GB  no rate yet
+    Critical  Ana Ilic on MDB03  2.4 GB  no rate yet
+    Critical  Ana Ilic on MDB01  2.4 GB  no rate yet
+    ...and 3 more in the report below
+
+  Report  C:\ProgramData\ExchangeBigFunnelPostingListMonitor\BigFunnelPostingListMonitor-20260914-224627-1556648.csv
+  Log     C:\ProgramData\ExchangeBigFunnelPostingListMonitor\BigFunnelPostingListMonitor-20260914-224627-1556648.log
+
+  Exit code 0
+  0 because -ExitNonZeroOnAlert was not passed. The finding above is still real.
+```
+
+That is a first run, which is why every finding reads `no rate yet` rather than
+carrying a rate: there is no earlier run to difference against. From the second
+run onward those tails carry the measured growth instead.
+
+On an estate where only a handful of mailboxes have allocated a posting list
+table, that same block names them instead of counting them:
+
+```text
+    Critical             1
+    Warning              1
+    Emerging             1
+    Databases failed     0
+    Counter              Confirmed
+
+  Posting list table present on 3 of 97 mailbox(es)
+    Critical  bfseed03 on clab-daga-db02  0.704 GB  not growing
+    Warning   bfseed01 on clab-daga-db02  0.566 GB  not growing
+    Emerging  bfseed02 on clab-daga-db02  0.453 GB  +0.0787 GB/day, critical in 2.5 day(s)
+
+  Growth  measured over 48h, against run 20260913-095608-000000
+    Two counters in use: 3 dated on BigFunnelPostingListTableTotalSize, 37 ranked only on IndexPayloadBytes.
+    Nothing else grew measurably over that window.
+```
+
+When those same three mailboxes are healthy, the block does not list them. It
+says how many there are and how many it held back:
+
+```text
+  Posting list table present on 3 of 97 mailbox(es)
+    3 reading Normal, not listed. -Verbose lists them.
+
+  Growth  measured over 36.88h, against run 20260913-214541-18364
+    Two counters in use: 3 dated on BigFunnelPostingListTableTotalSize, 37 ranked only on IndexPayloadBytes.
+    Nothing grew measurably over that window.
+```
+
+Eight things in those blocks are easy to misread:
+
+**`RESULT Alert` above `Exit code 0` is not a contradiction.** Exit codes `1`, `5` and `6` are gated behind `-ExitNonZeroOnAlert` so that adding this monitor to an existing scheduler cannot start failing tasks on the day it is deployed. The finding is real either way and `latest-summary.json` records it as `Status: Alert`. The line under the exit code says so rather than leaving you to work it out.
+
+**A count of zero is still printed.** A row missing because the number was zero reads identically to a row missing because the run never looked, so every category is listed on every run.
+
+**`Counter` is the metric-validation verdict, not a count.** `Confirmed` means at least one mailbox in scope has a populated posting list table, so the thresholds above were applied to real numbers. `Blind` means nothing was populated and something in scope was large enough that it should have been - that is a monitoring gap and it is red. `Inconclusive` means nothing was populated and nothing was large enough to prove it either way, which is the expected steady state of a small estate. See [Confirm the metric is populated before you trust it](#confirm-the-metric-is-populated-before-you-trust-it).
+
+**`Worst affected` is a sample, capped at three.** It is there so you know whether to open the CSV, not instead of opening it. A bad estate can hold hundreds of at-risk mailboxes; printing them all would push the verdict off the top of the window on exactly the run that most needs reading. The full list is in the CSV and in the log. It is skipped altogether when the `Posting list table` block above it has already named every at-risk mailbox, which is the normal case on an estate where only a few mailboxes have allocated the table at all - the two lists were identical, printed one under the other, under different headings.
+
+**`Posting list table` switches between a roll call and a count.** Ten or fewer, and the ones that are a finding are named with their database and size, because that is the question a bare count raises and the only other way to answer it was the 32-column CSV. Above ten it collapses to a single line: a hundred names would be the whole report. A row that is driving the `Emerging` count is labelled `Emerging` there rather than `Normal`, with its projected date - `Emerging` is not a status in the CSV, it is `Normal` plus a projection inside three days, so the count above would otherwise have nothing on screen to attach itself to.
+
+**Every finding carries its own growth rate; a size on its own is half the picture.** `Critical ... 0.704 GB  not growing` and `Critical ... 0.704 GB  +0.4 GB/day` are the same size and different problems, and the second is the one to act on this week. Both blocks that name a mailbox annotate it - the roll call on a small estate, `Worst affected` on a large one - so the amount the report says about growth does not fall away as the estate grows. The tail on each row is the rate, then the projected date where the thresholds can produce one. Three tails mean three different things: `+N GB/day, critical in N day(s)` is a mailbox with a measured rate and a crossing point; `+N GB/day` alone is a mailbox already past Critical, where a projection to Critical would be meaningless; `+N GB/day on index payload, no projected date` is trended on a counter the thresholds do not describe, so the rate is real and no crossing point exists. `not growing` means the script measured it and it did not move. `no rate yet` means there was no baseline to measure against - not the same claim, and the difference matters when you are deciding whether to wait a day.
+
+**`Growth` is the only block that is not about current size.** Everything above it - the counts, the roll call, `Worst affected` - is a size measured against a threshold. This block is the provenance for every rate on screen: the window it was measured over and the run it was measured against, and both matter, because `0.02 GB/day` off a 40-hour window and off a 40-minute one are not the same claim. Under that it lists what the roll call did not already name, fastest first and capped at three - mailboxes that are growing but are not yet a finding, which nothing else in the report can show. `Nothing else grew` and `Nothing grew` are deliberately different sentences: the first is what a run says when it has already printed rates above. On a first run the block says it has no baseline rather than reporting zero growth. The two-counter caveat prints here, directly above the rates it qualifies; before v1.9.0 it printed at collection time, roughly ten lines above any growth number and immediately below nine lines of sizes.
+
+**The roll call names findings, not mailboxes that are fine.** A `Normal` row is the absence of a finding, and a verdict block that spends a line each saying mailboxes are healthy is the wall of text this block exists to avoid - on a clean estate every line in it would be one. They are counted, and the line below says how many were held back and how to see them; `-Verbose` lists them in the same shape as the rest. The count and the CSV are unaffected either way.
+
+A run that aborts before it collects anything prints the same shape with `RESULT` naming the abort reason and a pointer to the log, rather than returning you to a bare prompt.
 
 ### What a run leaves behind
 
@@ -252,7 +352,31 @@ Everything lands under `-OutputPath`, which defaults to `%ProgramData%\ExchangeB
 | `latest.csv` | Refreshed only when a run produced detail | A copy of the newest per-run CSV at a stable path, for a monitoring agent that reads files |
 | `latest-summary.json` | On every run that gets far enough to have an output directory | The run verdict: `Completed`, `Status`, `ExitCode`, the status counts, and `TrendMetric` |
 
+Those last two are the stable pair, and they are the only files a scheduled consumer reads. A run that cannot refresh either one exits `3` and names the reason in `PublishErrors`, rather than returning success over a pair that still describes an earlier run. A `latest.csv` deliberately skipped because the run produced no detail is not that case and does not affect the exit code.
+
 Per-run files older than `-RetentionDays` are pruned at the end of each run. The retention sweep matches on the `BigFunnelPostingListMonitor-*` prefix only, so the two stable files are never candidates for it and an integration reading just those keeps working at any retention setting.
+
+### Querying a run instead of reading it
+
+The console report is a summary, and the CSV is the full picture, but neither answers an arbitrary question without either scrolling or opening a 32-column file in something. `-PassThru` emits the collected rows on the success stream as well, so the run becomes a variable:
+
+```powershell
+$r = .\Monitor-BigFunnelPostingList.ps1 -Scope All -PassThru
+
+$r | Where-Object Status -eq 'Critical' | Select-Object DisplayName, Database, PostingListGB
+$r | Sort-Object GrowthGBPerDay -Descending | Select-Object -First 5 DisplayName, GrowthGBPerDay, DaysToCritical
+$r | Where-Object { $_.DaysToCritical -gt 0 -and $_.DaysToCritical -le 14 } | Measure-Object
+$r | Group-Object Database | Sort-Object Count -Descending
+```
+
+These are the same `[pscustomobject]` rows the report and the CSV are both built from, not a re-read of the file. They are typed `BigFunnel.PostingListRow`, so a downstream script can test the type rather than duck-typing on column names.
+
+**The types survive, which is the point.** `Import-Csv` hands back strings, and a string sort puts `0.9` above `0.0787` - correct lexically and wrong for a growth rate. Off the objects, `PostingListGB`, `GrowthGBPerDay` and `DaysToCritical` are doubles and sort and compare as numbers.
+
+Two things to know before wiring it into anything:
+
+- **Pair it with `-Quiet` when the caller wants data rather than a report.** Without `-Quiet` the report still prints - it goes out through `Write-Host`, so it will not contaminate `$r`, but it will still be on screen.
+- **It returns nothing across an elevation relaunch.** The rows are built in the elevated child process, and what crosses back to the parent is its exit code and a replay of its console report - not its pipeline. So a `-PassThru` run that elevates hands back an empty pipeline, which is indistinguishable from a run that found no mailboxes, even though the report on screen plainly says otherwise. The script warns before the consent prompt when both apply. Run it from an already-elevated session, or read the CSV the child writes.
 
 ### Parameters
 
@@ -261,8 +385,13 @@ Per-run files older than `-RetentionDays` are pruned at the end of each run. The
 param(
     [string[]]$Databases,
 
+    # All, not Local, since v1.7.7. A run started by hand is expected to answer
+    # for the estate, not for whichever node the operator happened to be sitting
+    # on - and the remote runspace reaches every database regardless of which
+    # node holds it. Scheduled tasks on more than one DAG member want -Scope
+    # Local explicitly.
     [ValidateSet('Local', 'All')]
-    [string]$Scope = 'Local',
+    [string]$Scope = 'All',
 
     [ValidateRange(0.001, 1024)]
     [double]$WarningGB = 1.7,
@@ -299,18 +428,46 @@ param(
     [ValidateRange(1, 10000)]
     [int]$MaxAlertDetail = 25,
 
+    # Fallback only. A run that can see the allocation point in its own
+    # population calibrates against that instead and ignores this.
+    [ValidateRange(1, 1048576)]
+    [int]$AllocationEvidenceMB = 64,
+
+    # Empty means this server, built from its own FQDN at run time.
+    [string]$ConnectionUri = '',
+
+    [System.Management.Automation.PSCredential]$Credential,
+
+    # Do not relaunch elevated. Correct wherever the output directory is already
+    # owned by the account running the script.
+    [switch]$NoElevate,
+
+    # Silence the console report. The log, both stable files and the exit code
+    # are unaffected: this suppresses decoration, never evidence.
+    [switch]$Quiet,
+
+    # Emit the collected rows on the success stream as well as writing them to
+    # the CSV, so the run can be queried rather than only read.
+    [switch]$PassThru,
+
+    # Internal. The parent passes this to the elevated child so the child can
+    # mirror every console line into a file the parent replays. Not a parameter
+    # an operator sets: empty on a run nobody relaunched.
+    [string]$ConsoleRelayPath = '',
+
     [switch]$ExitNonZeroOnAlert
 )
 ```
 
-The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Six parameters exist mainly because a monitoring integration needs them:
+The defaults are the values this runbook recommends, so a run with no arguments at all is the intended configuration on a DAG member. Eight parameters exist mainly because a monitoring integration needs them:
 
 | Parameter | Effect |
 |---|---|
-| `-Scope` | `Local`, the default, collects only the databases whose active copy is mounted on this node. That is what makes one scheduled task correct on every DAG member and correct again after a switchover. `All` collects every database in the organization, from any invocation including a scheduled task, because the script binds through an Exchange runspace rather than the in-process snap-in. Right on exactly one member and redundant on the others, so it suits an ad-hoc sweep rather than monitoring. See [`-Scope All`, and what a Partial means now](#-scope-all-and-what-a-partial-means-now) |
+| `-Scope` | `All`, the default, collects every database in the organization from any invocation including a scheduled task, because the script binds through an Exchange runspace rather than the in-process snap-in. `Local` collects only the databases whose active copy is mounted on this node, and that is what makes one scheduled task correct on every DAG member and correct again after a switchover - **pass it explicitly when registering a task per node**, or each node sweeps the whole organization and writes a full set of files describing the same estate. See [`-Scope All`, and what a Partial means now](#-scope-all-and-what-a-partial-means-now) |
 | `-ThresholdMode` | `Fixed` applies `-WarningGB` and `-CriticalGB` as given. `Adaptive` raises them to the collected population's 95th and 99th percentile where those sit higher, never lowers them, and falls back to the fixed values when fewer than `-AdaptiveMinimumSample` mailboxes were collected or when the two percentiles fail to separate |
 | `-MaxRunMinutes` | A collection budget. Reaching it ends the run early and reports exit code `2`, so a collection cut short is never reported as a clean one |
-| `-ExitNonZeroOnAlert` | Turns findings into the non-zero exit codes `1` and `5`. Without it the script exits `0` for anything short of a breakage and reports its findings through `latest-summary.json` only |
+| `-ExitNonZeroOnAlert` | Turns findings into the non-zero exit codes `1`, `5` and `6`. Without it the script exits `0` for anything short of a breakage and reports its findings through the console report and `latest-summary.json` only - the report says so on the line below the exit code rather than leaving the contradiction on screen |
+| `-PassThru` | Emits the collected rows on the success stream as well as writing them to the CSV, so a run can be assigned and queried: `$r = .\Monitor-BigFunnelPostingList.ps1 -Scope All -PassThru`, then `$r \| Where-Object Status -eq 'Critical'`. These are the same `[pscustomobject]` rows the report and the CSV are both built from - typed `BigFunnel.PostingListRow`, not a re-read of the file - so the growth fields come back as numbers rather than as text that sorts lexically. Off by default, because a bare run would follow the report with a hundred objects through the default formatter. Returns nothing across an elevation relaunch, since the rows are built in the elevated child; the run warns when both apply. See [Querying a run instead of reading it](#querying-a-run-instead-of-reading-it) |
 | `-AllocationEvidenceMB` | The mailbox size, in MB, above which a `0 B` posting list table counts as evidence that the counter is not being populated. **A fallback only**: where any mailbox in scope has a populated table, the script measures the bar off the estate instead and ignores this value. Default `64`, roughly four times the upper bound of the measured allocation range, so a `Blind` verdict reached under it is close to unarguable. Lower it only if you have measured a lower allocation point on your own build; raising it makes the script slower to call a real outage |
 | `-ConnectionUri` | The Exchange runspace to bind through. Empty by default, which means this server's own PowerShell vdir, built from its FQDN at run time. Any Exchange server in the organization is a valid target - it does not have to be the node holding the databases being collected |
 | `-Credential` | Only needed where the account running the script cannot authenticate to that runspace on its own. Whether it can is decided by the task's `LogonType`, not by the account: measured on a lab DAG, a task registered with a stored password opened the runspace with Kerberos and no credential, and the same task registered `S4U` could not open it at all. Use this where a stored password is not permitted, and supply it from your own secret store. See [The logon type is load-bearing](#the-logon-type-is-load-bearing) |
@@ -413,16 +570,19 @@ Two cautions. **The thresholds it computes are demonstration values, not product
 Use this example to run every 4 hours. Run from an elevated Exchange Management Shell. Replace the script path, output path, and account with environment-specific values.
 
 ```powershell
-# No -Databases. The script then discovers the databases whose active copy is
-# mounted on this node, which is what makes the same registration correct on
-# every DAG member and correct again after a switchover. Name databases
-# explicitly only when you deliberately want a fixed subset, and expect that
-# task to start collecting nothing the first time the copy moves.
+# -Scope Local, and no -Databases. The script then discovers the databases whose
+# active copy is mounted on this node, which is what makes the same registration
+# correct on every DAG member and correct again after a switchover. -Scope is
+# load-bearing here: the default is All, so leaving it off registers a task that
+# sweeps the whole organization from every node and writes a full set of files
+# describing the same estate several times over. Name databases explicitly only
+# when you deliberately want a fixed subset, and expect that task to start
+# collecting nothing the first time the copy moves.
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument (
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass ' +
     '-File "C:\Scripts\Monitor-BigFunnelPostingList.ps1" ' +
     '-OutputPath "C:\ProgramData\ExchangeBigFunnelPostingListMonitor" ' +
-    '-WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30')
+    '-Scope Local -WarningGB 1.7 -CriticalGB 2.0 -RetentionDays 30')
 
 $trigger = New-ScheduledTaskTrigger -Once -At 00:05 `
     -RepetitionInterval (New-TimeSpan -Hours 4)
@@ -494,7 +654,8 @@ Get-Content 'C:\ProgramData\ExchangeBigFunnelPostingListMonitor\latest-summary.j
 | `LastTaskResult 3`, summary `Status` names a credential | S4U, or the account has no Exchange RBAC |
 | `LastTaskResult 3`, `DatabasesInScope 0` | Expected on a passive-only member |
 | `LastTaskResult` and summary `ExitCode` disagree | The action is using `-Command`. Re-register with `-File` |
-| `LastTaskResult 0`, summary `Status OK` | Working |
+| `LastTaskResult 0`, summary `Status OK` | Working, and it found nothing |
+| `LastTaskResult 0`, summary `Status Alert` | Working. The task is fine; the estate is not. Read the counts |
 
 Do this on every member you register, not just the first. A passive-only member is the one node where a genuine fault and the expected exit `3` look alike, and the summary's `DatabasesInScope` is what tells them apart.
 
@@ -503,6 +664,7 @@ Do this on every member you register, not just the first. A passive-only member 
 - **Store the script outside its own output directory.** The script prunes files matching `BigFunnelPostingListMonitor-*` under `-OutputPath` on a retention schedule. Keeping the script somewhere else, such as `C:\Scripts`, removes any possibility of the housekeeping and the tooling sharing a folder.
 - **Use a literal path, not an environment variable.** `%ProgramData%` expands differently depending on which shell creates the task and whether the service account's profile is loaded. A hardcoded path fails visibly at registration rather than silently at 02:05.
 - **The account needs Exchange RBAC, not just local administrator.** It must be able to run `Get-ExchangeServer`, `Get-MailboxDatabase`, and `Get-MailboxStatistics`. View-Only Organization Management is sufficient and is the least-privileged role that covers all three.
+- **It elevates itself.** If the script is not already running as administrator it relaunches itself with the same parameters under `-Verb RunAs`, waits for that run, and exits with its exit code. Start it from an elevated shell and no prompt appears — which includes every task registered with `-RunLevel Highest`. Two departures from the usual four-line version of this pattern are deliberate: it **waits** and propagates the child's exit code, because returning `0` the moment the child starts would report every run as clean; and it rebuilds the child's command line from `PSBoundParameters` rather than a hand-kept list, so a relaunch cannot quietly drop `-CriticalGB` and judge against the wrong threshold. Three cases do not prompt. A non-interactive session has no desktop to show consent on, so it warns that the task wants `-RunLevel Highest` rather than hanging on a prompt nobody can answer. A run with `-Credential` cannot relaunch, because a `PSCredential` does not cross a process boundary and dropping it would change how the runspace authenticates. And `-NoElevate` suppresses it outright — pass that when the output directory is somewhere the current account already owns, such as a scratch path under `%TEMP%`, and a prompt would be pure friction. In all three the run continues and, if it genuinely cannot publish, fails with exit `3` rather than silently. Refusing the prompt is also exit `3`, because a monitor that was not allowed to run has not run.
 - **Interpret the exit code.** See [Exit codes and the run summary](#exit-codes-and-the-run-summary) below. A run that is missing entirely leaves a log file with no `Monitor run complete` line; that is how a killed run is identified, since it has no exit code to report.
 - **Register the task with `-File`, never `-Command`.** `powershell.exe -Command` collapses every non-zero exit code to `1`. Exit codes `2`, `3`, `4`, `5` and `6` then all reach the scheduler looking like "at-risk mailboxes found", and a metric outage, an uncollected database or a projection days out cannot be told apart from a threshold breach. This is measured rather than assumed, and measured at the scheduler rather than in a shell: the same failing run, registered twice minutes apart with only the launcher changed, wrote `"ExitCode": 3` to `latest-summary.json` both times, and the scheduler recorded `LastTaskResult 3` under `-File` and `1` under `-Command`. That disagreement between the file and the scheduler is the signature, and step 3 of the verification above is how to catch it. The registration above already uses `-File`. Keep it that way in any wrapper script or monitoring agent that invokes the monitor on your behalf, and check the wrapper specifically, because a wrapper is where `-Command` usually creeps back in.
 
@@ -515,7 +677,7 @@ The monitor reports through two independent channels: the process exit code, for
 | `0` | Completed. All in-scope databases collected, nothing over threshold | No |
 | `1` | Completed, at-risk mailboxes found. `-ExitNonZeroOnAlert` only | Yes, as a mailbox finding |
 | `2` | Completed with partial failure. At least one database was not collected, or collection was cut short by `-MaxRunMinutes` | Yes, as a monitor fault |
-| `3` | Fatal. Pre-flight failed, or no database was in scope | Yes, as a monitor fault, but see the DAG note below |
+| `3` | Fatal. Pre-flight failed, no database was in scope, or one of the two stable files could not be refreshed | Yes, as a monitor fault, but see the DAG note below |
 | `4` | Another instance is already running | Yes, as a monitor fault |
 | `5` | Completed, but every mailbox large enough to have allocated a posting list table reported it as `0 B`. `-ExitNonZeroOnAlert` only | Yes, as a monitoring gap |
 | `6` | Completed, nothing over threshold, but at least one mailbox is projected to cross the critical threshold within 3 days. `-ExitNonZeroOnAlert` only | Yes, as a mailbox finding, but not as urgent as `1` |
@@ -532,12 +694,20 @@ A run cannot return both `1` and `6`. Where a breach and a projection coexist, `
 
 | `Status` | Meaning |
 |---|---|
-| `OK` | The run collected its scope and the counter was readable |
+| `OK` | The run collected its scope, the counter was readable, and nothing is at or approaching a threshold |
+| `PublishFailed` | `latest.csv` could not be refreshed, so the stable files no longer describe the newest run. Pairs with exit code `3`. `PublishErrors` names the reason |
 | `Partial` | At least one database was not collected. Pairs with exit code `2` |
+| `Alert` | At least one mailbox is at or above the warning or critical threshold now. Pairs with exit code `1`, but is reported whether or not `-ExitNonZeroOnAlert` was passed |
 | `MetricUnavailable` | Every eligible mailbox in scope reported the posting list table as `0 B`. Pairs with exit code `5`, but is reported whether or not `-ExitNonZeroOnAlert` was passed |
+| `Emerging` | Nothing has crossed yet, but at least one mailbox is projected to cross critical inside the lead-time window. Pairs with exit code `6`, and is likewise ungated |
 | `MetricInconclusive` | Nothing in scope has a populated posting list table and nothing is large enough to have allocated one, so the run cannot say whether the counter works. **Not a fault.** Does not change the exit code |
 
-Reported worst-first where more than one applies: `Partial`, then `MetricUnavailable`, then `MetricInconclusive`, then `OK`.
+Reported worst-first where more than one applies: `PublishFailed`, then `Partial`, then `Alert`, then `MetricUnavailable`, then `Emerging`, then `MetricInconclusive`, then `OK`. That is the exit-code order, so `Status` and `ExitCode` never name different findings about the same run.
+
+`PublishFailed` outranks everything because a consumer that cannot read this run's verdict learns nothing from the rest of the field. It carries one asymmetry worth knowing before you build an integration on it: it can only ever be *read* when `latest.csv` was the file that failed. If `latest-summary.json` itself could not be written, the value never reaches disk - the file cannot report its own absence - and the condition surfaces only as exit code `3`. That is precisely why the exit code carries it too, and why an integration that polls the summary file alone needs a staleness check of its own: a summary whose `RunId` has not moved since the last poll is the signature, and the scheduler's `3` is the corroboration. Measured on `w25-ex01`: a non-elevated session could create its timestamped CSV and log but not overwrite a `latest.csv` and `latest-summary.json` owned by `BUILTIN\Administrators`. Before this existed the run warned twice and exited `0`, leaving a summary 19 hours stale beside a CSV it had just written. Self-elevation is the other half of that fix; see [Reading a run on screen](#reading-a-run-on-screen).
+
+> [!IMPORTANT]
+> **Before v1.7.2, `Status` had no value for a finding at all.** It described only whether the run mechanism worked, so a run could publish `Critical 1`, `Warning 1`, `ExitCode 1` and `Status OK` side by side - and the integration recommended here, alert when `Status` is not `OK`, went silent on the one condition the script exists to detect. If you are reading a summary written by v1.7.1 or earlier, `OK` there means "the run worked", not "nothing was found"; read the counts.
 
 Three further fields describe the run's confidence in its own instrument, independent of any threshold:
 
@@ -547,7 +717,9 @@ Three further fields describe the run's confidence in its own instrument, indepe
 | `AllocationEvidenceMB` | number | The mailbox size above which a `0 B` table counts as evidence of an outage, in force for this run |
 | `AllocationEvidenceBasis` | `Observed` / `Configured` | Whether that bar was measured off this estate or taken from `-AllocationEvidenceMB` |
 
-Alert on `Completed = false` to catch every abort reason, and read `Status` for the reason itself. `Completed = false` does not cover `MetricUnavailable`, which is a completed run: see [When every indexed mailbox reads 0 B](#when-every-indexed-mailbox-reads-0-b). Do not alert on `MetricInconclusive` - on a permanently small estate it fires on every run, and an alert that always fires gets muted; read it when triaging a clean result instead. `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it.
+Alert on `Status` not in `OK, MetricInconclusive`, and read the counts beside it for what was found. `Completed = false` catches the abort reasons and nothing else, so it is a useful second condition but not a substitute: `PublishFailed`, `Alert`, `MetricUnavailable` and `Emerging` are all completed runs. `MetricInconclusive` is excluded deliberately - on a permanently small estate it fires on every run, and an alert that always fires gets muted; read it when triaging a clean result instead. If your alerting cannot express a set, `Status -ne 'OK'` is the safe simplification in the noisy direction. `latest.csv` is refreshed only when a run produced detail, so it can legitimately be older than the summary sitting beside it - that deliberate skip is not a publish failure and does not affect the exit code.
+
+`Elevated` records whether the process that wrote the summary held an elevated token. It is there because it is the usual reason `PublishErrors` is not empty, and because it cannot be recovered from the files after the fact.
 
 `TrendMetric` in the summary names the counter growth was measured on. On a mixed estate it reads `Mixed`, meaning both counters were in use in the one run: the mailboxes whose posting list table is readable were trended on it and carry projected dates, and the mailboxes still reading `0 B` were trended on `IndexPayloadBytes` and carry a ranking instead. `TrendedOnPayload` gives the size of that second group.
 

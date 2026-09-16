@@ -201,6 +201,13 @@ function ConvertTo-MonitorArgs {
 
     $argv = New-Object System.Collections.Generic.List[string]
     $argv.Add('-OutputPath'); $argv.Add($OutDir)
+    # The monitor elevates itself when it is not already administrator. That is
+    # right when an operator runs it directly against ProgramData, and wrong
+    # here: this harness runs it several times into a directory under -WorkPath
+    # that the current account created and owns, so every invocation would raise
+    # a consent prompt that changes nothing. This script needs no elevation of
+    # its own for the same reason.
+    $argv.Add('-NoElevate')
     foreach ($k in @($Settings.Keys | Sort-Object)) {
         $v = $Settings[$k]
         if ($v -is [bool]) {

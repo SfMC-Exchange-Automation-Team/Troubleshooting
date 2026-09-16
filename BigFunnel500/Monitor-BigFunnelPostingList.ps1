@@ -28,16 +28,23 @@ Explicit database names. When omitted, databases are discovered according to
 -Scope.
 
 .PARAMETER Scope
-Local  - databases whose active copy is currently mounted on this server
-         (default; correct for a per-server scheduled task in a DAG).
-All    - every mounted database in the organization. Reaches a database
-         mounted on another server only when this script is driven from an
-         Exchange Management Shell session, where store cmdlets are proxied to
-         an Exchange server. Under a bare powershell.exe - which is what a
-         scheduled task runs - the snap-in fallback binds the store in-process,
-         every remote database fails ACCESS_DENIED, and the run reports Partial
-         and exit 2. Use Local per node for scheduled monitoring.
+All    - every mounted database in the organization (default). One run answers
+         for the whole DAG, which is what somebody running this by hand almost
+         always wants: the alternative is running it once per node and adding
+         the results up.
+Local  - only databases whose active copy is currently mounted on this server.
+         Pass this for a scheduled task registered on more than one DAG member.
+         Without it each node collects the whole organization, so a 3-node DAG
+         does the same work three times and raises three alerts per mailbox.
 Ignored when -Databases is supplied.
+
+The default was Local until v1.7.7, for a reason that no longer exists: under
+the old in-process snap-in fallback a -Scope All run from a bare powershell.exe
+failed ACCESS_DENIED on every remote database and reported Partial. v1.6.x
+dropped the snap-in for a remote Exchange runspace, which reaches any database
+in the organization regardless of which node holds it. Measured on w25-ex01 in
+the same minute: Local collected 50 mailboxes across 2 databases, All collected
+97 across all 4, both from a scheduled task under a batch logon.
 
 .PARAMETER ThresholdMode
 Fixed     - use -WarningGB and -CriticalGB as given (default).
@@ -99,6 +106,55 @@ more runs reporting MetricInconclusive on a small estate.
 Lower it if the estate is uniformly small and the inconclusive verdict is
 unhelpful; raise it to demand stronger evidence before the run alerts.
 
+.PARAMETER NoElevate
+Do not relaunch elevated. The run continues as whatever account started it and,
+if that account cannot refresh the stable files, fails honestly with exit 3.
+
+Pass this when the output directory is somewhere the current account already
+owns - a scratch path under TEMP, a per-user directory, a test harness - where
+the consent prompt would buy nothing. Also the way to run the monitor from a
+non-interactive context that has already been given the rights it needs.
+
+.PARAMETER Quiet
+Suppress the console report. The log file, the timestamped CSV, latest.csv,
+latest-summary.json and the exit code are all unaffected: this switch removes
+decoration, never evidence.
+
+Intended for a wrapper or a monitoring agent that reads the exit code or parses
+the summary and would otherwise have to skip past a progress block it did not
+ask for. Not a quieter mode for an operator - an operator wants the report, and
+-Verbose is the switch for wanting more of it.
+
+.PARAMETER PassThru
+Emit the collected rows on the success stream in addition to writing them to the
+CSV, so the run can be assigned and queried rather than only read:
+
+    $r = .\Monitor-BigFunnelPostingList.ps1 -Scope All -PassThru
+    $r | Where-Object Status -eq 'Critical' | Select-Object DisplayName, PostingListGB
+    $r | Sort-Object GrowthGBPerDay -Descending | Select-Object -First 5
+
+These are the same objects the report and the CSV are both built from, typed
+BigFunnel.PostingListRow, not a re-read of the file. The growth fields come back
+as numbers - Import-Csv would hand back text that sorts lexically, so a
+Sort-Object on GrowthGBPerDay would put 0.9 above 0.0787.
+
+Off by default because the report already prints and a bare run would follow it
+with a hundred objects through the default formatter. Returns nothing across an
+elevation relaunch, since the rows are built in the elevated child; the run warns
+when both apply.
+
+.PARAMETER ConsoleRelayPath
+Internal plumbing, set by the script on itself when it relaunches elevated. Not
+for hand use, and it is not a way to capture the report - redirect stdout, or
+read the log, for that.
+
+An elevated process cannot attach to the console of the non-elevated one that
+asked for it, so the relaunch gets a window of its own that Windows closes as
+soon as the run ends. The child writes each console line here as it prints it,
+and the parent replays the file into its own window before exiting with the
+child's code. Skipped where TEMP is not set, in which case the parent falls back
+to reporting the exit code and the log path.
+
 .PARAMETER ExitNonZeroOnAlert
 Return a non-zero exit code when the run has something to say: 1 when at-risk
 mailboxes are found, 5 when the metric could not be read on any indexed
@@ -108,13 +164,22 @@ monitor broke".
 .EXAMPLE
 .\Monitor-BigFunnelPostingList.ps1
 
-Collects every database whose active copy is mounted on this server, using the
-default 1.7 GB / 2.0 GB thresholds, and writes to %ProgramData%.
+Collects every mounted database in the organization, using the default
+1.7 GB / 2.0 GB thresholds, and writes to %ProgramData%. One run answers for the
+whole DAG regardless of which node it is started from.
+
+.EXAMPLE
+.\Monitor-BigFunnelPostingList.ps1 -Scope Local
+
+Collects only the databases whose active copy is mounted on this server. This is
+the form to schedule when the task is registered on more than one DAG member.
 
 .EXAMPLE
 .\Monitor-BigFunnelPostingList.ps1 -Databases DB01, DB02 -Verbose
 
-Collects two named databases and echoes the log to the console.
+Collects two named databases. The console report appears either way; -Verbose
+adds the timestamped log stream underneath it, and lists the mailboxes that hold
+a posting list table but are reading Normal.
 
 .EXAMPLE
 .\Monitor-BigFunnelPostingList.ps1 -ThresholdMode Adaptive -ThrottleDelaySeconds 30
@@ -128,7 +193,7 @@ $cred = Get-Credential -Message 'Service account for the monitor task'
 Register-ScheduledTask -TaskName 'BigFunnel PostingList Monitor' -Force `
     -Action (New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
         '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-        '"C:\Scripts\Monitor-BigFunnelPostingList.ps1"')) `
+        '"C:\Scripts\Monitor-BigFunnelPostingList.ps1" -Scope Local')) `
     -Trigger (New-ScheduledTaskTrigger -Once -At 00:05 `
         -RepetitionInterval (New-TimeSpan -Hours 4)) `
     -User $cred.UserName -Password $cred.GetNetworkCredential().Password `
@@ -161,8 +226,12 @@ Exit codes:
   1  Completed, at-risk mailboxes found (-ExitNonZeroOnAlert only).
   2  Completed with partial failure. At least one database was not collected,
      or collection was cut short by -MaxRunMinutes.
-  3  Fatal. Pre-flight failed, no databases were in scope, or no Exchange
-     runspace could be opened.
+  3  Fatal. Pre-flight failed, no databases were in scope, no Exchange
+     runspace could be opened, or the run could not publish latest.csv /
+     latest-summary.json. The last of those can follow a collection that
+     succeeded completely: the figures are in the timestamped CSV, but the two
+     files a scheduled consumer polls still describe an earlier run, so the run
+     is reported as failed rather than as healthy.
   4  Another instance is already running.
   5  Completed, but every mailbox large enough to have allocated a posting
      list table reported it as 0 B, so no threshold in this run could have
@@ -279,6 +348,34 @@ subset. Where the local vdir is not the one to use, -ConnectionUri points at
 any other Exchange server in the organisation; it does not have to be the node
 holding the database.
 
+A run reports on the console without being asked. Every run prints a header, a
+line per database as it is collected, any warning or error inline, and then a
+verdict block: the run status, the counts behind it, the three worst affected
+mailboxes, the paths to the CSV and the log, and the exit code. The status and
+the counts are coloured - green for OK, yellow for a finding, red for a failure.
+
+-Verbose adds to that rather than replacing it. What it adds is the timestamped
+[INFO]/[WARN]/[ERROR] log stream, the same text that goes to the .log file, so
+it is the troubleshooting layer and not the only way to learn what happened. It
+also fills in the "Posting list table present on N of M" roll call, which by
+default names only the mailboxes that are a finding: a Normal row is the absence
+of one, and a verdict block that spends a line each saying mailboxes are fine is
+the wall of text this block exists to avoid. The count is printed either way, and
+so is a line saying how many were held back, so a clean run still answers "how
+many carry the counter" without answering "and here are all their names".
+Before v1.7.6 it was the only way: a default run printed nothing at all, which
+left an operator with a returned prompt and no idea whether the run had found
+something, found nothing, or never looked. Per-mailbox detail is deliberately
+NOT echoed - a bad estate holds hundreds of at-risk mailboxes, and one line each
+pushes the verdict off the top of the window. It is in the CSV, and in the log.
+
+-Quiet removes the report entirely, for a caller that parses instead of reads.
+
+Where a finding is reported above exit code 0, both are correct: codes 1, 5 and
+6 are gated behind -ExitNonZeroOnAlert so that adding this monitor to an
+existing scheduler cannot start failing tasks on day one. The report says so on
+the line below the exit code rather than leaving the contradiction on screen.
+
 Outputs, written to -OutputPath:
   BigFunnelPostingListMonitor-<runId>.csv   per-run detail, retained
   BigFunnelPostingListMonitor-<runId>.log   per-run log, retained
@@ -290,22 +387,90 @@ BigFunnelPostingListMonitor-* pattern so that neither the baseline scan nor
 the retention sweep can pick them up.
 
 latest-summary.json is written on every run that gets far enough to have an
-output directory, including runs that abort. It always carries the same field
-set. Alert on Completed = false, which covers every abort reason, and read
-Status for the reason itself. latest.csv is only refreshed when a run produced
-detail, so it can legitimately be older than the summary beside it.
+output directory, including runs that abort - unless the file itself cannot be
+written, which is the one case the file cannot report about itself. A run that
+fails to refresh either stable file exits 3 and names the reason in
+PublishErrors, so a consumer polling these two is never left reading an older
+run behind a success code. Measured on w25-ex01: a non-elevated session could
+create its timestamped CSV and log but not overwrite a latest.csv and
+latest-summary.json owned by BUILTIN\Administrators, and before this the run
+warned twice and exited 0 with a summary 19 hours stale.
+
+The script elevates itself. If it is not already running as administrator it
+relaunches itself with the same parameters under -Verb RunAs, waits for that run
+to finish, and exits with its exit code. Start it from an elevated shell and you
+never see a prompt; start it from an ordinary one and you approve a prompt. Three
+details differ from the usual four-line version of this and all are deliberate:
+it waits and propagates the child's exit code, because this script's exit code
+is its interface and returning 0 the moment the child starts would report every
+run as clean; the relaunch command line is rebuilt from PSBoundParameters
+rather than a hand-kept list, so a parameter added later cannot be silently
+dropped on the way across; and the child's console report is relayed back into
+the window the operator is actually looking at.
+
+That last one matters more than it sounds. An elevated process cannot attach to
+the console of the non-elevated one that launched it, so the relaunch gets a
+window of its own and Windows closes it the moment the run ends. Without the
+relay the operator approves a consent prompt, watches a console flash past, and
+is left with two lines and a pointer to a log file - on a script whose entire
+reporting layer exists so that a run does not have to be read out of a log
+afterwards. The child writes each console line to a relay file in the parent's
+TEMP as it prints it, and the parent replays the file, styles included, before
+exiting with the child's code. It is written line by line rather than buffered so
+that a child that dies mid-run still relays what it managed to say, and the
+parent falls back to the old exit-code-and-log-path line if nothing arrives.
+
+Three cases deliberately do not prompt. A non-interactive session has no desktop
+to show consent on, so it warns that the task wants -RunLevel Highest and
+continues. A run with -Credential cannot relaunch, because a PSCredential does
+not cross a process boundary and dropping it would quietly change how the
+runspace authenticates. And -NoElevate suppresses it outright, which is what to
+pass when the output directory is somewhere the current account already owns -
+a scratch path under TEMP, say - and a consent prompt would be pure friction.
+In all three the run continues and, if it really cannot publish, fails honestly
+with exit 3 rather than silently. Refusing the consent prompt is also exit 3: a
+monitor that was not allowed to run has not run.
+
+latest-summary.json always carries the same field
+set. Alert on Status not in (OK, MetricInconclusive) and read the counts beside
+it for what was found; Completed = false catches the abort reasons and nothing
+else, so it is a useful second condition but not a substitute. latest.csv is
+only refreshed when a run produced detail, so it can legitimately be older than
+the summary beside it - that deliberate skip is not a publish failure and does
+not affect the exit code.
 
 Status on a run that completed is one of:
-  OK                  the run collected its scope and the counter was readable
+  OK                  the run collected its scope, the counter was readable,
+                      and no mailbox is at or approaching a threshold
+  PublishFailed       latest.csv could not be refreshed, so the stable files no
+                      longer describe the newest run (exit code 3). See
+                      PublishErrors for the reason. The matching failure on
+                      latest-summary.json cannot appear here for the obvious
+                      reason, and shows up only as exit code 3.
   Partial             at least one database was not collected (exit code 2)
+  Alert               at least one mailbox is at or above the warning or
+                      critical threshold now (exit code 1)
   MetricUnavailable   every eligible mailbox in scope reported the posting
-                      list table as 0 B
+                      list table as 0 B (exit code 5)
+  Emerging            nothing has crossed yet, but at least one mailbox is
+                      projected to cross critical inside the lead-time
+                      window (exit code 6)
   MetricInconclusive  nothing in scope has a populated posting list table and
                       nothing in scope is large enough to have allocated one,
                       so the run cannot say whether the counter works
 
-Reported worst-first where more than one applies: Partial, then
-MetricUnavailable, then MetricInconclusive, then OK.
+Reported worst-first where more than one applies: PublishFailed, then Partial,
+then Alert, then MetricUnavailable, then Emerging, then MetricInconclusive, then
+OK. The order is the exit-code order, so Status and ExitCode never disagree
+about which of several conditions a run is reporting.
+
+Alert and Emerging are, unlike the exit codes they parallel, NOT gated on
+-ExitNonZeroOnAlert. A run at defaults returns 0 and still reports Status
+Alert with Critical and Warning counts beside it: the exit code is the opt-in
+signal, the summary file is the record. Before v1.7.2, Status had no branch for
+a finding at all, so a run could report Critical 1, Warning 1, ExitCode 1 and
+Status OK - and the documented integration, alert when Status is not OK, went
+silent on the one condition this script exists to detect.
 
 Completed = false does not cover MetricUnavailable. Such a run completes and
 collects everything asked of it; it just cannot read the one counter it exists
@@ -327,8 +492,13 @@ answer, put one mailbox above the bar.
 param(
     [string[]]$Databases,
 
+    # All, not Local, since v1.7.7. A run started by hand is expected to answer
+    # for the estate, not for whichever node the operator happened to be sitting
+    # on - and the remote runspace reaches every database regardless of which
+    # node holds it. Scheduled tasks on more than one DAG member want -Scope
+    # Local explicitly; see the .PARAMETER block above.
     [ValidateSet('Local', 'All')]
-    [string]$Scope = 'Local',
+    [string]$Scope = 'All',
 
     [ValidateRange(0.001, 1024)]
     [double]$WarningGB = 1.7,
@@ -390,17 +560,77 @@ param(
     # where a stored password is not permitted.
     [System.Management.Automation.PSCredential]$Credential,
 
+    # Suppress the automatic relaunch described in the elevation section of the
+    # header. The run continues unelevated, which is correct wherever the output
+    # directory is already writable by the account - a per-service directory, or
+    # one whose ACL was set deliberately. If it turns out not to be writable the
+    # run still fails honestly with exit 3, so this switch trades a UAC prompt
+    # for a clear failure, never for a silent one.
+    [switch]$NoElevate,
+
+    # Silence the console report described in the reporting section of the
+    # header. The log file, latest.csv, latest-summary.json and the exit code
+    # are all unaffected - this suppresses decoration, never evidence. Intended
+    # for a wrapper or monitoring agent that parses stdout and would otherwise
+    # have to skip past a progress block it did not ask for.
+    [switch]$Quiet,
+
+    # Emit the collected rows on the success stream as well as writing them to
+    # the CSV. Off by default: a bare run would otherwise print the report and
+    # then spray a hundred objects through the default formatter underneath it.
+    #
+    # What comes back is the same [pscustomobject] set the report and the CSV are
+    # both built from, not a re-read of the file. That matters most for the growth
+    # fields: GrowthGBPerDay and DaysToCritical return as numbers, where Import-Csv
+    # would hand back text that sorts lexically and compares wrong.
+    #
+    # Returns nothing across an elevation relaunch - the rows are built in the
+    # child process and the parent only ever sees its exit code. The run says so
+    # when both apply rather than returning an empty pipeline silently.
+    [switch]$PassThru,
+
+    # Internal plumbing, set by the script on itself. Not for hand use.
+    #
+    # An elevated process cannot attach to the console of the non-elevated one
+    # that asked for it, so the relaunch gets a window of its own and that window
+    # closes the moment the run ends. The operator approves a UAC prompt, watches
+    # a console flash past, and is returned to their own prompt having been shown
+    # two lines and no report - on a script whose whole reporting layer exists so
+    # that a run does not have to be read out of a log afterwards.
+    #
+    # The child writes every console line here as it prints it, and the parent
+    # replays the file into the window the operator is actually looking at. A
+    # file rather than a pipe because Start-Process cannot combine -Verb RunAs
+    # with -RedirectStandardOutput, and written line by line rather than buffered
+    # so that a child that dies mid-run still relays what it managed to say.
+    [string]$ConsoleRelayPath = '',
+
     [switch]$ExitNonZeroOnAlert
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion   = '1.7.1'
+$script:ScriptVersion   = '1.11.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
 $script:FailedDbs       = New-Object System.Collections.Generic.List[string]
+
+# Read by Write-Report rather than the switch itself, so the console channel has
+# one boolean to test and nothing has to reason about SwitchParameter semantics
+# on a hot path.
+$script:ReportSilenced  = [bool]$Quiet
+
+# Where Write-Report mirrors itself for a parent process to replay, or empty on
+# a run nobody relaunched. Read on every console line, so it is resolved once
+# here rather than tested through the parameter each time.
+$script:ReportRelay     = [string]$ConsoleRelayPath
+
+# Assigned for real in the elevation region during pre-flight. Declared here
+# because StrictMode 2.0 throws on a read of a variable that was never set, and
+# an abort before that region still writes a summary.
+$script:Elevated        = $false
 
 # Declared here, not at the point of use. StrictMode 2.0 throws on a variable
 # that was never assigned, and the finally block reads EmsSession to close the
@@ -431,11 +661,131 @@ if ([string]::IsNullOrWhiteSpace($script:ThisServer)) { $script:ThisServer = [Sy
 
 #region helpers ---------------------------------------------------------------
 
+function Write-Report {
+    # The console channel, and the only one an operator sees without asking for
+    # anything. Deliberately separate from Write-RunLog: the log is a forensic
+    # record keyed by timestamp and level, and this is a report meant to be read
+    # once, while the run is happening, by somebody who has not read the script.
+    # Wording that suits one rarely suits the other, so they are written
+    # separately rather than one being derived from the other.
+    #
+    # Write-Host and not Write-Output on purpose. The success stream is a return
+    # value; anything emitted there ends up in a caller's variable, or in a
+    # pipeline, and a monitoring wrapper doing $r = & monitor.ps1 would collect
+    # decoration instead of nothing. Write-Host cannot be captured that way, and
+    # its colour is simply dropped when the stream is redirected to a file.
+    #
+    # Which is also why an elevated relaunch needs the relay below. Write-Host
+    # writes to the child's own console and nowhere else, so there is nothing for
+    # the parent to capture even in principle.
+    [CmdletBinding()]
+    param(
+        [string]$Text = '',
+        [ValidateSet('Plain', 'Head', 'Good', 'Warn', 'Bad', 'Dim')][string]$Style = 'Plain'
+    )
+
+    if ($script:ReportSilenced) { return }
+
+    # Relayed before it is printed, so a line that reaches the child's screen is
+    # already on its way to the parent's. The style travels with the text: the
+    # relay exists to reproduce the report, and a verdict block that arrives in
+    # the parent window uncoloured is a different report from the one the child
+    # showed.
+    #
+    # Silent on failure, deliberately. This is the decoration channel - a run
+    # that cannot write its relay file has still collected, still written its
+    # CSV and still got an exit code, and turning that into a terminating error
+    # would trade the evidence for the commentary about it.
+    if ($script:ReportRelay) {
+        try {
+            # Tab-delimited because the report is built with PadRight and never
+            # contains one, so the split on the other side cannot land inside a
+            # mailbox name that happened to hold the delimiter.
+            [System.IO.File]::AppendAllText($script:ReportRelay,
+                ("{0}`t{1}{2}" -f $Style, $Text, [Environment]::NewLine),
+                (New-Object System.Text.UTF8Encoding($false)))
+        }
+        catch { $script:ReportRelay = '' }
+    }
+
+    $colour = switch ($Style) {
+        'Head' { 'Cyan' }
+        'Good' { 'Green' }
+        'Warn' { 'Yellow' }
+        'Bad'  { 'Red' }
+        'Dim'  { 'DarkGray' }
+        default { '' }
+    }
+    # Write-Host rejects a null ForegroundColor rather than treating it as
+    # "leave it alone", so the uncoloured case is a separate call.
+    if ($colour) { Write-Host $Text -ForegroundColor $colour }
+    else         { Write-Host $Text }
+}
+
+function Show-ConsoleRelay {
+    # The other end of the relay Write-Report writes. Replays the file an
+    # elevated child left behind into this process's console, and returns how
+    # many lines it managed to print so the caller can tell a relay that worked
+    # from one that never arrived.
+    #
+    # A function rather than a dozen lines inline in the elevation region,
+    # because the region itself cannot be reached from a test run without a
+    # consent prompt nobody can answer, and the parsing here is the part that
+    # can go quietly wrong. Lifted out, it is exercised by name.
+    [CmdletBinding()]
+    param([string]$Path)
+
+    if (-not $Path) { return 0 }
+    if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+
+    $n = 0
+    try {
+        foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+            # Split once, on the first tab. Report text is built with PadRight
+            # and holds none, but splitting on all of them would still be the
+            # wrong shape if one ever appeared.
+            $tab = $line.IndexOf("`t")
+            if ($tab -lt 0) { continue }
+            $style = $line.Substring(0, $tab)
+            $text  = $line.Substring($tab + 1)
+            # Checked against the set Write-Report accepts rather than passed
+            # through. A child killed mid-write can leave a truncated last line,
+            # and an unexpected style would hit a ValidateSet and throw here -
+            # turning a cosmetic loss into a failed parent process.
+            if ('Plain', 'Head', 'Good', 'Warn', 'Bad', 'Dim' -notcontains $style) { $style = 'Plain' }
+            Write-Report $text $style
+            $n++
+        }
+    }
+    catch {
+        # Whatever reached the screen still counts as replayed. Reporting zero
+        # here would make the caller add its fallback line underneath a report
+        # that had already printed.
+    }
+    return $n
+}
+
 function Write-RunLog {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Message,
-        [ValidateSet('INFO', 'WARN', 'ERROR', 'FATAL')][string]$Level = 'INFO'
+        [ValidateSet('INFO', 'WARN', 'ERROR', 'FATAL')][string]$Level = 'INFO',
+        # One line about one mailbox, out of a list that can legitimately run to
+        # -MaxAlertDetail entries. Still WARN in the log, because that is where
+        # the list is meant to be read, but kept off the console: twenty-five
+        # GUIDs scrolling past push the verdict off the top of the window, and
+        # burying the conclusion under its own evidence is the same failure as
+        # printing nothing at all. The counts and the CSV path in the verdict
+        # block are the console's version of this.
+        [switch]$RowDetail,
+        # A short form for the console while the log keeps $Message in full.
+        # The long explanations in this script are worth every word in a file
+        # somebody reads after the fact, and are actively harmful on screen: a
+        # 70-word sentence wraps to five lines in an 80-column console, and five
+        # lines of prose directly above the verdict is how the verdict stops
+        # being read. Length is free in the log and expensive on screen, so the
+        # two are allowed to differ. An array prints one line per element.
+        [string[]]$ConsoleText
     )
 
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
@@ -456,7 +806,42 @@ function Write-RunLog {
         }
     }
 
-    if ($Level -eq 'ERROR' -or $Level -eq 'FATAL') { Write-Warning $line }
+    # Anything above INFO reaches the console whether or not -Verbose was
+    # passed. This is the half of the old behaviour that was actually wrong: a
+    # WARN went to the verbose stream, where PowerShell renders it in the same
+    # colour and with the same VERBOSE: prefix as every INFO line around it, so
+    # the one line worth reading looked exactly like the eighteen that were not.
+    # The message is printed without its timestamp and level here - the log
+    # keeps those, and on screen they are noise in front of the sentence.
+    # The console form is $ConsoleText when one was supplied, and $Message
+    # otherwise - so a call site that says nothing about the console keeps the
+    # behaviour it had before this parameter existed.
+    $onScreen = @(if ($ConsoleText) { $ConsoleText } else { $Message })
+
+    # A bullet rather than an exclamation mark. The line is already yellow, so
+    # the '!' was not carrying the severity - it was only adding volume, and a
+    # column of them down the left of a collection block reads as shouting at
+    # an operator about something the colour had already said. '-' says "list
+    # item", which is what these lines are. ERROR and FATAL keep 'X': that is a
+    # different severity, and colour alone should not have to carry it.
+    #
+    # The marker goes on the first line only. Repeating it down every line of a
+    # four-line message reads as four separate findings rather than one finding
+    # with three parts, and those messages already indent their own sub-lines to
+    # hang under the first.
+    $marker = ''
+    $colour = ''
+    switch ($Level) {
+        'WARN'  { if (-not $RowDetail) { $marker = '-'; $colour = 'Warn' } }
+        'ERROR' { if (-not $RowDetail) { $marker = 'X'; $colour = 'Bad' } }
+        'FATAL' { $marker = 'X'; $colour = 'Bad' }
+    }
+    if ($marker) {
+        for ($i = 0; $i -lt $onScreen.Count; $i++) {
+            $prefix = if ($i -eq 0) { '  ' + $marker + ' ' } else { '    ' }
+            Write-Report ($prefix + $onScreen[$i]) $colour
+        }
+    }
 }
 
 function Get-SafeProperty {
@@ -757,6 +1142,57 @@ function Get-TrendMetricForRow {
     return 'PostingListBytes'
 }
 
+function Format-GrowthAnnotation {
+    # One growth phrase, used everywhere a mailbox is named. The roll call and the
+    # growth list were each deciding separately when to show a rate, when to show
+    # a projected date and when to show neither, and they had already drifted
+    # apart: the same mailbox printed "critical in 2.5 day(s)" in one block and
+    # " 0.0787 GB/day ... critical in 2.5 day(s)" nine lines below it, which reads
+    # as two findings about one mailbox rather than one finding printed twice.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Row,
+
+        # Say why there is no rate instead of returning nothing. Worth a word on a
+        # finding - an operator looking at a Critical mailbox with no annotation
+        # cannot tell whether the script measured it and found it flat, or never
+        # had a baseline to measure against, and those carry opposite urgency.
+        # Left off for rows that are not findings, where silence is correct.
+        [switch]$ExplainAbsence
+    )
+
+    $rate = $Row.GrowthGBPerDay
+    $days = $Row.DaysToCritical
+
+    if ($null -eq $rate) {
+        if ($ExplainAbsence) { return 'no rate yet' }
+        return ''
+    }
+    if ([double]$rate -le 0) {
+        if ($ExplainAbsence) { return 'not growing' }
+        return ''
+    }
+
+    # Signed, because this is a rate and not a size. A bare "0.0787 GB/day" set
+    # at the end of a line that already carries "0.453 GB" reads as a second size
+    # at a glance down the column; a leading + does not.
+    $text = '+{0} GB/day' -f $rate
+
+    if ($null -ne $days -and [double]$days -gt 0) {
+        return ('{0}, critical in {1} day(s)' -f $text, $days)
+    }
+
+    # An absent date is not a dropped one. Either the mailbox is already past
+    # Critical, where a projection to Critical means nothing, or it is trended on
+    # IndexPayloadBytes, which the thresholds do not describe at all - and the
+    # second needs saying on the row, because the rate beside it is measured on a
+    # different counter from the size beside that.
+    if ([string]$Row.TrendMetric -eq 'IndexPayloadBytes') {
+        return ('{0} on index payload, no projected date' -f $text)
+    }
+    return $text
+}
+
 function Get-PreviousRunBaseline {
     # The run ID embedded in each file name is yyyyMMdd-HHmmss followed by the
     # process id, so the timestamp parses without touching the current culture.
@@ -1014,6 +1450,15 @@ function Write-RunSummary {
         GrowingRanked        = 0
         DetailCsv            = ''
         LogFile              = $script:LogFile
+        # Any failure to refresh latest.csv or latest-summary.json, joined.
+        # Empty on a healthy run. Non-empty means the two stable files no longer
+        # describe the newest run, so ExitCode is 3 even where collection itself
+        # succeeded. Joined for the same reason FailedDatabases is.
+        PublishErrors        = ''
+        # Whether the process that produced this summary held an elevated token.
+        # Worth recording because it is the usual reason PublishErrors is not
+        # empty, and it is invisible after the fact from the files alone.
+        Elevated             = $false
         ExitCode             = 0
     }
 
@@ -1039,6 +1484,12 @@ function Write-RunSummary {
     }
     catch {
         Write-RunLog ('Could not write the run summary to [{0}]: {1}' -f $Path, $_.Exception.Message) 'WARN'
+        # Recorded so the exit code can reflect it. Without this the run reports
+        # success while the file a monitoring agent polls still describes an
+        # earlier run - measured on w25-ex01, where a non-elevated session left a
+        # summary 19 hours stale, reading Status OK, beside a CSV it had just
+        # written, and exited 0.
+        $script:StablePublishErrors.Add(('latest-summary.json: {0}' -f $_.Exception.Message))
     }
 }
 
@@ -1052,6 +1503,152 @@ if ($WarningGB -ge $CriticalGB) {
     Write-Warning ('WarningGB ({0}) must be below CriticalGB ({1}); otherwise the warning tier can never fire.' -f $WarningGB, $CriticalGB)
     exit 3
 }
+
+#region elevation -------------------------------------------------------------
+#
+# Placed before the output directory is created, because an account that cannot
+# create the directory should be relaunched rather than told to go away, and
+# before the single-instance mutex below, because a parent holding the mutex
+# would get its own elevated child refused with exit 4.
+
+function Test-IsElevated {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    (New-Object Security.Principal.WindowsPrincipal $id).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function ConvertTo-RelaunchArguments {
+    # Rebuild the invocation for the elevated child. Driven off PSBoundParameters
+    # rather than a hand-maintained list, so a parameter added later cannot be
+    # silently dropped on the way across the process boundary - a relaunch that
+    # quietly discards -CriticalGB would report against the wrong threshold.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Bound)
+
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($k in $Bound.Keys) {
+        $v = $Bound[$k]
+        if ($k -eq 'NoElevate') { continue }
+        if ($v -is [System.Management.Automation.SwitchParameter]) {
+            if ($v.IsPresent) { $parts.Add('-' + $k) }
+            continue
+        }
+        if ($v -is [bool]) { $parts.Add('-{0}:${1}' -f $k, $v); continue }
+
+        $format = {
+            param($item)
+            $t = [string]$item
+            # A value ending in a backslash would escape the closing quote when
+            # Windows splits the child's command line, swallowing the next
+            # argument. Paths are the common case and a trailing separator is
+            # never significant in one.
+            while ($t.EndsWith('\')) { $t = $t.Substring(0, $t.Length - 1) }
+            '"{0}"' -f ($t -replace '"', '""')
+        }
+
+        $parts.Add('-' + $k)
+        if ($v -is [array]) { $parts.Add((($v | ForEach-Object { & $format $_ }) -join ',')) }
+        else                { $parts.Add((& $format $v)) }
+    }
+    return ($parts -join ' ')
+}
+
+$script:Elevated = Test-IsElevated
+if (-not $script:Elevated -and -not $NoElevate) {
+
+    if ($null -ne $Credential) {
+        # A PSCredential cannot cross a process boundary, and relaunching
+        # without it would silently change how the runspace authenticates -
+        # turning an explicit credential into an implicit one.
+        Write-Warning 'Not elevated, but -Credential cannot be passed to a new process, so this run continues as it is. Re-run from an elevated session if it fails to publish.'
+    }
+    elseif (-not [Environment]::UserInteractive) {
+        # A scheduled task or service has no desktop to show a consent prompt
+        # on, so relaunching would hang until the execution time limit rather
+        # than fail. Registering the task with -RunLevel Highest is the fix, and
+        # saying so here is more use than a prompt nobody can answer.
+        Write-Warning 'Not elevated, and this session is not interactive so it cannot prompt for consent. Register the task with -RunLevel Highest. The run continues and exits 3 if it cannot publish.'
+    }
+    else {
+        $exe = Join-Path $PSHOME 'powershell.exe'
+
+        # A relay file the child writes and this process replays, so the report
+        # lands in the window the operator is looking at rather than in the one
+        # UAC opens and Windows closes a second later. In the parent's own TEMP:
+        # the child is an administrator and can write there, and reading it back
+        # afterwards needs no privilege this process does not already have.
+        #
+        # Removed first. A stale file from an earlier run would be replayed as
+        # though it were this one's output, which is worse than no relay at all -
+        # it would show a verdict that is not the verdict the exit code carries.
+        #
+        # Empty where TEMP is not set, which happens in a stripped environment
+        # rather than never. The relay is then simply skipped and the run keeps
+        # the behaviour it had before: an exit code and a pointer to the log.
+        $tempDir = [string]$env:TEMP
+        $relay   = ''
+        if ($tempDir -and (Test-Path -LiteralPath $tempDir)) {
+            $relay = Join-Path $tempDir ('BigFunnelPostingListMonitor-relay-{0}.txt' -f $PID)
+            try { Remove-Item -LiteralPath $relay -Force -ErrorAction SilentlyContinue } catch { }
+        }
+
+        # Added to the bound parameters rather than appended to the string, so it
+        # goes through the same quoting as everything else and a TEMP path with a
+        # space in it survives the process boundary.
+        $bound = @{}
+        foreach ($k in $PSBoundParameters.Keys) { $bound[$k] = $PSBoundParameters[$k] }
+        if ($relay) { $bound['ConsoleRelayPath'] = $relay }
+
+        $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f
+                   $PSCommandPath, (ConvertTo-RelaunchArguments $bound)
+
+        # Said before the consent prompt rather than after an empty pipeline. The
+        # rows are built in the child, so a -PassThru run that elevates returns
+        # nothing to the caller that asked for them - which is indistinguishable
+        # from a run that found no mailboxes at all.
+        if ($PassThru) {
+            Write-Warning '-PassThru returns nothing across an elevation relaunch, because the rows are built in the elevated child. Re-run from an already-elevated session, or read the CSV the child writes.'
+        }
+
+        Write-Report 'Not running as administrator. Relaunching elevated - approve the prompt.' 'Warn'
+        try {
+            $child = Start-Process -FilePath $exe -ArgumentList $argLine -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        }
+        catch {
+            # Declining the consent prompt lands here. A monitor that was not
+            # allowed to run has not run, so this is exit 3 and not a quiet
+            # return to the prompt.
+            Write-Warning ('Elevation was refused or failed, so nothing was collected: {0}' -f $_.Exception.Message)
+            exit 3
+        }
+
+        # -Wait, rather than the usual fire-and-forget, because this script's
+        # exit code is its interface: a scheduler reads 0/1/2/3/4/5/6 to decide
+        # what to do. Returning 0 the instant the child starts would report
+        # every run as clean regardless of what it found.
+        #
+        # PassThru can report a null ExitCode where the process object is torn
+        # down early. Treating unknown as failure is the safe direction here.
+        $rc = if ($null -eq $child.ExitCode) { 3 } else { $child.ExitCode }
+
+        # The child's window is gone by now. Replay what it printed into this one,
+        # styles and all, so the operator reads the run they just approved instead
+        # of being told where its log file is and left to go and open it.
+        $replayed = Show-ConsoleRelay -Path $relay
+        if ($relay) {
+            try { Remove-Item -LiteralPath $relay -Force -ErrorAction SilentlyContinue } catch { }
+        }
+
+        # Only when the report did not make it across. With the relay working the
+        # replayed block already ends in "Exit code N" and the path to the log, so
+        # this line would be the same two facts a second time.
+        if ($replayed -eq 0) {
+            Write-Report ('The elevated run exited {0}. Its log is in {1}.' -f $rc, $OutputPath) 'Dim'
+        }
+        exit $rc
+    }
+}
+#endregion elevation
 
 try {
     if (-not (Test-Path -LiteralPath $OutputPath)) {
@@ -1117,6 +1714,13 @@ $exitCode = 0
 # so a monitoring agent gets the reason rather than just a non-zero code.
 $abortReason           = ''
 $script:SummaryWritten = $false
+
+# Every failure to refresh latest.csv or latest-summary.json. These two are the
+# only files a scheduled consumer polls, so failing to publish them is a
+# monitoring outage even when the collection behind them was perfect. Collected
+# rather than counted, because the reason is what tells you whether it is an ACL,
+# a full disk or a file someone left open.
+$script:StablePublishErrors = New-Object System.Collections.Generic.List[string]
 
 #region Exchange binding -------------------------------------------------------
 
@@ -1219,6 +1823,13 @@ try {
     Write-RunLog ('Starting BigFunnel PostingListTable monitor v{0}, run {1}, on {2}.' -f
         $script:ScriptVersion, $runId, $script:ThisServer)
 
+    # The console header. Named separately from the log line above because the
+    # log wants one greppable sentence and the screen wants two short ones.
+    Write-Report ''
+    Write-Report ('BigFunnel PostingListTable monitor v{0}' -f $script:ScriptVersion) 'Head'
+    Write-Report ('run {0} on {1}' -f $runId, $script:ThisServer) 'Dim'
+    Write-Report ''
+
     # Echoed in full because the first question asked of any unattended run is
     # "what was it actually configured with", and the answer should be in the
     # log rather than in whoever registered the task.
@@ -1303,8 +1914,22 @@ try {
 
     # Confirm RBAC before collecting, so a permissions problem reports as a
     # fatal pre-flight rather than as every database failing individually.
+    #
+    # Deliberately the first store call of the run, which makes it also the call
+    # implicit remoting announces itself on: the proxy functions Import-PSSession
+    # generates print "Creating a new session for implicit remoting of
+    # Get-MailboxDatabase command..." when they first find no live session.
+    # Measured on w25-ex01, that line reached stdout on a -Quiet run that had
+    # promised an empty console - a line a wrapper parsing stdout would have to
+    # know to skip. It is emitted with Write-Host, so $InformationPreference does
+    # not gate it (5.1 exempts Write-Host on purpose) and only a stream-6
+    # redirection removes it. Absorbed here rather than script-wide: on an
+    # ordinary run it is honest context about a step that is otherwise several
+    # silent seconds, and a caller that asked for silence is the only one it
+    # misleads.
     try {
-        $null = Get-MailboxDatabase -ErrorAction Stop | Select-Object -First 1
+        $probeDb = { $null = Get-MailboxDatabase -ErrorAction Stop | Select-Object -First 1 }
+        if ($script:ReportSilenced) { & $probeDb 6>$null } else { & $probeDb }
     }
     catch {
         Write-RunLog ('Cannot enumerate mailbox databases. Check Exchange RBAC for this account. {0}' -f $_.Exception.Message) 'FATAL'
@@ -1371,7 +1996,7 @@ try {
                 ForEach-Object { [string](Get-SafeProperty $_ 'Name') })
 
             if ($targets.Count -eq 0 -and $all.Count -gt 0) {
-                Write-RunLog ('No active database copies are mounted on {0}. {1} database(s) are mounted elsewhere in the DAG. Expected on a passive member. Either register this task on every DAG member so whichever node holds the active copy is the node that collects it, or run -Scope All, which from the Exchange runspace this script now opens does reach databases mounted on other nodes.' -f $me, $all.Count) 'WARN'
+                Write-RunLog ('No active database copies are mounted on {0}, but {1} database(s) are mounted elsewhere in the DAG. Expected on a passive member. -Scope Local was asked for explicitly or inherited from a saved command line; the default is now All, which reaches every database in the organization from one node. Drop -Scope Local to collect the whole DAG here, or keep it and register the task on every member so whichever node holds the active copy is the node that collects it.' -f $me, $all.Count) 'WARN'
             }
         }
         else {
@@ -1386,6 +2011,7 @@ try {
         exit $exitCode
     }
     Write-RunLog ('{0} database(s) in scope: {1}' -f $targets.Count, ($targets -join ', '))
+    Write-Report ('Scope {0} - {1} database(s) in scope' -f $Scope, $targets.Count)
 
     #endregion
 
@@ -1506,6 +2132,11 @@ try {
                     catch { $mailboxBytes = $null }
 
                     $results.Add([pscustomobject]@{
+                        # Named so -PassThru output is identifiable downstream: a
+                        # caller can test the type rather than duck-typing on
+                        # column names. Consumed by the cast rather than stored,
+                        # so it adds no CSV column and nothing else changes shape.
+                        PSTypeName                         = 'BigFunnel.PostingListRow'
                         # Round-trip format: unambiguous for any downstream
                         # parser regardless of the collecting server's locale.
                         Timestamp                          = (Get-Date).ToString('o')
@@ -1562,7 +2193,7 @@ try {
                 }
                 catch {
                     $script:ParseFailures++
-                    Write-RunLog ('Skipped mailbox [{0}] on [{1}]: {2}' -f $displayName, $db, $_.Exception.Message) 'WARN'
+                    Write-RunLog ('Skipped mailbox [{0}] on [{1}]: {2}' -f $displayName, $db, $_.Exception.Message) 'WARN' -RowDetail
                 }
             }
 
@@ -1574,6 +2205,10 @@ try {
             }
             else {
                 Write-RunLog ('Database [{0}] returned {1} mailbox(es).' -f $db, $script:MailboxesSeen)
+                # Dot leaders because the database names vary in length and a
+                # ragged right edge makes the counts hard to compare by eye.
+                Write-Report ('  {0} {1} mailbox(es)' -f
+                    ([string]$db).PadRight(34, '.'), $script:MailboxesSeen)
             }
         }
         catch {
@@ -1698,7 +2333,9 @@ try {
     elseif ($payloadRows.Count -gt 0)                           { $trendMetric = 'Mixed' }
 
     if ($payloadRows.Count -gt 0 -and $postingRows.Count -eq 0) {
-        Write-RunLog ('BigFunnelPostingListTableTotalSize is 0 B for all {0} mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering below is still meaningful - the mailbox at the top is genuinely the one growing fastest. No date is given: the warning and critical thresholds are sizes of the posting list table, they have never been validated against this counter, and a projection towards them would be arithmetic on two unrelated quantities. Use the ranking to decide what to look at first, and establish a threshold for this counter on your own estate before treating any of it as a deadline.' -f $results.Count) 'WARN'
+        Write-RunLog ('BigFunnelPostingListTableTotalSize is 0 B for all {0} mailbox(es) in scope, so growth is being measured on IndexPayloadBytes instead. The ordering below is still meaningful - the mailbox at the top is genuinely the one growing fastest. No date is given: the warning and critical thresholds are sizes of the posting list table, they have never been validated against this counter, and a projection towards them would be arithmetic on two unrelated quantities. Use the ranking to decide what to look at first, and establish a threshold for this counter on your own estate before treating any of it as a deadline.' -f $results.Count) 'WARN' -ConsoleText @(
+            'No posting list table anywhere in scope. Growth is ranked on IndexPayloadBytes instead.',
+            'The ranking is real; the dates are not given, because the thresholds do not apply to that counter. Full reasoning in the log.')
     }
     elseif ($payloadRows.Count -gt 0) {
         # Deliberately does not restate the 0 B condition: the NotPopulated
@@ -1714,8 +2351,16 @@ try {
         # two. The two row sets are disjoint by construction: Get-TrendMetricForRow
         # returns PostingListBytes wherever that counter has a reading, so a
         # mailbox can be in one list or the other but never both.
+        #
+        # On screen this is deferred, not deleted. It used to print here, at
+        # collection time, which is before the baseline has even been loaded -
+        # so the run announced how growth was going to be measured roughly ten
+        # lines above any growth number, and then never printed a rate at all.
+        # Everything between the two was current size. The console copy now goes
+        # out with the Growth block in the verdict, where there is something for
+        # it to be about; the log keeps it here, in the order it was decided.
         Write-RunLog ('Growth on this run is split across two counters. Of the {1} mailbox(es) carrying a reading to trend, {0} have no posting list table and are trended on IndexPayloadBytes; the other {2} are trended on BigFunnelPostingListTableTotalSize. Both reports below are real: the posting list rows carry a projected date, and the IndexPayloadBytes rows carry a ranking and no date, for the reason given above. Do not read a short Emerging list as the whole answer on a run like this - it can only ever name mailboxes the thresholds can see.' -f
-            $payloadRows.Count, ($payloadRows.Count + $postingRows.Count), $postingRows.Count) 'WARN'
+            $payloadRows.Count, ($payloadRows.Count + $postingRows.Count), $postingRows.Count) 'WARN' -RowDetail
     }
 
     # The warning threshold is only useful if it buys lead time, and lead time
@@ -2031,11 +2676,11 @@ try {
             }
 
             Write-RunLog ('{0}: [{1}] {2} on [{3}] at {4} GB{5}.' -f
-                $r.Status, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $trend) 'WARN'
+                $r.Status, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $trend) 'WARN' -RowDetail
         }
         if ($atRisk.Count -gt $shown) {
             Write-RunLog ('...and {0} further at-risk mailbox(es) not listed. Full detail is in [{1}].' -f
-                ($atRisk.Count - $shown), $csvPath) 'WARN'
+                ($atRisk.Count - $shown), $csvPath) 'WARN' -RowDetail
         }
         if ($ExitNonZeroOnAlert -and $exitCode -eq 0) { $exitCode = 1 }
     }
@@ -2058,10 +2703,10 @@ try {
         if ($shown -ge $MaxAlertDetail) { break }
         $shown++
         Write-RunLog ('Emerging: [{0}] {1} on [{2}] is {3} GB but projected critical in {4} day(s).' -f
-            $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $r.DaysToCritical) 'WARN'
+            $r.MailboxGuid, $r.DisplayName, $r.Database, $r.PostingListGB, $r.DaysToCritical) 'WARN' -RowDetail
     }
     if ($emerging.Count -gt $shown) {
-        Write-RunLog ('...and {0} further emerging mailbox(es) not listed, all of them further out than the ones above.' -f ($emerging.Count - $shown)) 'WARN'
+        Write-RunLog ('...and {0} further emerging mailbox(es) not listed, all of them further out than the ones above.' -f ($emerging.Count - $shown)) 'WARN' -RowDetail
     }
 
     # Exit 6, not 1. Exit 1 means a mailbox is at or above a threshold now; this
@@ -2114,11 +2759,11 @@ try {
                 if ($shown -ge $MaxAlertDetail) { break }
                 $shown++
                 Write-RunLog ('Fastest growing #{0}: [{1}] {2} on [{3}] at {4} GB, growing {5} GB/day on IndexPayloadBytes.' -f
-                    $shown, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay) 'WARN'
+                    $shown, $r.MailboxGuid, $r.DisplayName, $r.Database, $r.MeasuredGB, $r.GrowthGBPerDay) 'WARN' -RowDetail
             }
             if ($growing.Count -gt $shown) {
                 Write-RunLog ('...and {0} further growing mailbox(es) not listed. Full detail is in [{1}].' -f
-                    ($growing.Count - $shown), $csvPath) 'WARN'
+                    ($growing.Count - $shown), $csvPath) 'WARN' -RowDetail
             }
         }
         elseif ($payloadRows.Count -gt 0) {
@@ -2153,10 +2798,10 @@ try {
             if ($shown -ge $MaxAlertDetail) { break }
             $shown++
             Write-RunLog ('SearchHealth: [{0}] {1} on [{2}] - {3}.' -f
-                $r.MailboxGuid, $r.DisplayName, $r.Database, $r.SearchHealth) 'WARN'
+                $r.MailboxGuid, $r.DisplayName, $r.Database, $r.SearchHealth) 'WARN' -RowDetail
         }
         if ($healthIssues.Count -gt $shown) {
-            Write-RunLog ('...and {0} further mailbox(es) with index-health flags.' -f ($healthIssues.Count - $shown)) 'WARN'
+            Write-RunLog ('...and {0} further mailbox(es) with index-health flags.' -f ($healthIssues.Count - $shown)) 'WARN' -RowDetail
         }
         # Deliberately does not move the exit code: table size and index health
         # are separate problems with separate remediations, and quietly
@@ -2189,11 +2834,36 @@ try {
     # take the previous answer with it.
     if ($sorted.Count -gt 0 -and (Test-Path -LiteralPath $csvPath)) {
         try { Copy-Item -LiteralPath $csvPath -Destination $latestCsv -Force -ErrorAction Stop }
-        catch { Write-RunLog ('Could not refresh [{0}]: {1}' -f $latestCsv, $_.Exception.Message) 'WARN' }
+        catch {
+            Write-RunLog ('Could not refresh [{0}]: {1}' -f $latestCsv, $_.Exception.Message) 'WARN'
+            $script:StablePublishErrors.Add(('latest.csv: {0}' -f $_.Exception.Message))
+        }
     }
     elseif ($sorted.Count -eq 0 -and (Test-Path -LiteralPath $latestCsv)) {
         Write-RunLog ('This run produced no rows, so [{0}] has been left untouched and still holds the detail from the last run that collected something. Read it together with this run''s exit code, not instead of it.' -f $latestCsv) 'WARN'
     }
+
+    # A monitor that cannot publish its verdict has not monitored. The
+    # collection above may have been flawless, but latest.csv and
+    # latest-summary.json are the only two files a scheduled consumer reads, and
+    # a stale pair sitting behind a success code is precisely the failure this
+    # script exists to expose. Escalated here, before the summary is written, so
+    # the ExitCode and Status it carries agree with what the process returns.
+    if ($script:StablePublishErrors.Count -gt 0) { $exitCode = 3 }
+
+    # Lifted out of the hashtable below so the console verdict and the published
+    # summary cannot drift apart. They used to be one expression, which meant
+    # the only way to show the verdict on screen was to recompute it - and two
+    # copies of a seven-branch precedence is one copy too many.
+    $runStatus = $(
+        if ($script:StablePublishErrors.Count -gt 0) { 'PublishFailed' }
+        elseif ($exitCode -eq 2)       { 'Partial' }
+        elseif ($atRisk.Count -gt 0)   { 'Alert' }
+        elseif ($metricUnavailable)    { 'MetricUnavailable' }
+        elseif ($emerging.Count -gt 0) { 'Emerging' }
+        elseif ($metricInconclusive)   { 'MetricInconclusive' }
+        else                           { 'OK' }
+    )
 
     Write-RunSummary -Path $latestJson -Values @{
         RunId                = $runId
@@ -2203,19 +2873,31 @@ try {
         Binding              = $script:BindingUsed
         ConnectionUri        = $script:EmsUri
         Completed            = $true
-        # Ungated, unlike the exit code above. Status describes the run rather
-        # than signalling it, and a caller reading this file is entitled to know
-        # the metric was blind whether or not it asked for alert exit codes.
-        # Ordered worst-first: a database that was never collected outranks a
-        # counter that read zero, which in turn outranks a run that could not
-        # tell whether the counter works, because that last one is not a fault
-        # at all - it is a scope too small to prove anything either way.
-        Status               = $(
-            if ($exitCode -eq 2)         { 'Partial' }
-            elseif ($metricUnavailable)  { 'MetricUnavailable' }
-            elseif ($metricInconclusive) { 'MetricInconclusive' }
-            else                         { 'OK' }
-        )
+        # Ungated, unlike the exit code above. A caller reading this file is
+        # entitled to the finding whether or not it asked for alert exit codes.
+        #
+        # Status used to describe only whether the run worked, so a run that
+        # found a critical mailbox reported "OK" while Critical read 1 and
+        # ExitCode read 1. That was defensible in isolation and wrong in
+        # practice: MetricUnavailable is also a finding and did surface here, so
+        # the field was already half a signal, and the documented integration -
+        # alert when Status is not OK - went silent on exactly the condition the
+        # script exists to detect. Measured on w25-ex01: Critical 1, Warning 1,
+        # ExitCode 1, Status OK.
+        #
+        # Ordered worst-first, and deliberately parallel to the exit codes:
+        # failing to publish the run at all (3) outranks everything, because a
+        # consumer that cannot read this run's verdict learns nothing from the
+        # rest of the field; then a database that was never collected (2)
+        # outranks a threshold crossed now (1), which outranks a counter that
+        # read zero (5), which outranks a mailbox projected to cross later (6).
+        # MetricInconclusive sits last before OK because it is not a fault at
+        # all - it is a scope too small to prove anything either way.
+        #
+        # PublishFailed can only ever be read when latest.csv was the file that
+        # failed. If the summary itself could not be written this value never
+        # reaches disk, which is exactly why the exit code carries it too.
+        Status               = $runStatus
         # Confirmed: something in scope has a populated posting list table, so
         # the counter demonstrably works on this build. Blind: nothing is
         # populated and something large enough to have been is sitting at 0 B.
@@ -2261,12 +2943,298 @@ try {
         Growing              = $growingAll.Count
         GrowingRanked        = $growing.Count
         DetailCsv            = $csvPath
+        PublishErrors        = (($script:StablePublishErrors | Select-Object -Unique) -join ' | ')
+        Elevated             = $script:Elevated
         ExitCode             = $exitCode
     }
-    if ($script:SummaryWritten) { Write-RunLog ('Wrote run summary to [{0}].' -f $latestJson) }
+    if ($script:SummaryWritten) {
+        Write-RunLog ('Wrote run summary to [{0}].' -f $latestJson)
+    }
+    else {
+        # The summary is the one artefact a scheduled consumer polls. If it could
+        # not be written then nothing on disk records this run's verdict, and the
+        # exit code is the only channel left to say so. ERROR rather than WARN:
+        # this is the difference between a monitor that found nothing and a
+        # monitor that reported nothing.
+        $exitCode = 3
+        Write-RunLog ('The run summary could not be published, so [{0}] still describes an earlier run. Exiting 3 so this run is not mistaken for a healthy one.' -f $latestJson) 'ERROR'
+    }
 
     Remove-ExpiredOutput -Path $OutputPath -Days $RetentionDays
     Write-RunLog ('Monitor run complete. Exit code {0}.' -f $exitCode)
+
+    #region console verdict ---------------------------------------------------
+    #
+    # The block an operator actually reads. Every number here is taken from the
+    # same variables the summary was built from rather than re-derived, so the
+    # screen and latest-summary.json cannot disagree - a monitor whose console
+    # output contradicts its own published verdict is worse than one that says
+    # nothing, which is what this used to do.
+
+    # Worst-first, matching the Status precedence and the exit codes. OK and
+    # MetricInconclusive are the two that are not findings.
+    $verdictStyle = switch ($runStatus) {
+        'OK'                 { 'Good' }
+        'MetricInconclusive' { 'Plain' }
+        'Emerging'           { 'Warn' }
+        'Alert'              { 'Warn' }
+        default              { 'Bad' }
+    }
+
+    Write-Report ''
+    Write-Report ('  RESULT  {0}' -f $runStatus) $verdictStyle
+    Write-Report ('  {0} mailbox(es) evaluated in {1}s' -f
+        $sorted.Count, [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)) 'Dim'
+    Write-Report ''
+
+    # Counts that are zero are still printed. A row missing because it was zero
+    # reads identically to a row missing because the script never looked, and
+    # the whole complaint this block answers was not being able to tell.
+    $rows = @(
+        @{ Label = 'Critical';         Value = $crit.Count;                      Bad = ($crit.Count -gt 0) },
+        @{ Label = 'Warning';          Value = ($atRisk.Count - $crit.Count);    Bad = (($atRisk.Count - $crit.Count) -gt 0) },
+        @{ Label = 'Emerging';         Value = $emerging.Count;                  Bad = $false },
+        @{ Label = 'Databases failed'; Value = $script:FailedDbs.Count;          Bad = ($script:FailedDbs.Count -gt 0) }
+    )
+    foreach ($r in $rows) {
+        Write-Report ('    {0} {1}' -f ([string]$r.Label).PadRight(20, ' '), $r.Value) `
+                     $(if ($r.Bad) { 'Warn' } else { 'Plain' })
+    }
+    # Named rather than numbered: "Confirmed" and "Blind" are the words the
+    # runbook and the summary use, and a count here would mean nothing.
+    Write-Report ('    {0} {1}' -f 'Counter'.PadRight(20, ' '), $metricValidation) `
+                 $(if ($metricValidation -eq 'Blind') { 'Bad' } else { 'Plain' })
+
+    # Which mailboxes actually carry the counter this monitor is named after.
+    # The run already prints how many - "the other 3 are trended on
+    # BigFunnelPostingListTableTotalSize" - and a bare 3 is a worse answer than
+    # no answer, because the only way to turn it into names was the 32-column
+    # CSV or a log with a line per mailbox in it. On this estate those three are
+    # the entire point of the run and they were the hardest thing in the output
+    # to find.
+    #
+    # Self-suppressing above ten. A handful is a list worth reading; a hundred
+    # is the CSV's job, and on a healthy estate where every mailbox has a
+    # posting list table this block would otherwise be the whole report.
+    $namedGuids = New-Object System.Collections.Generic.HashSet[string]
+    if ($postingRows.Count -gt 0 -and $postingRows.Count -le 10) {
+        # Keyed on GUID rather than on the row objects, because the emerging and
+        # at-risk sets are built by separate Where-Object passes and reference
+        # equality is not something this code should be relying on.
+        $emergingGuids = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($r in $emerging) { $null = $emergingGuids.Add([string]$r.MailboxGuid) }
+
+        # Findings only, by default. A Normal row is the absence of a finding,
+        # and a verdict block that spends three lines listing mailboxes that are
+        # fine is back to being the wall of text this block was shortened out of
+        # - on a healthy estate every line here would be one. The count above
+        # still says they exist and how many, which is the part that is worth a
+        # line on a clean run.
+        #
+        # -Verbose lists them, rather than a switch of its own: the script
+        # already documents -Verbose as the lever for wanting more of the
+        # report, and a display nicety does not need its own parameter.
+        $interesting = @($postingRows | Where-Object {
+            $_.Status -ne 'Normal' -or $emergingGuids.Contains([string]$_.MailboxGuid)
+        })
+        $showAll = ($VerbosePreference -ne 'SilentlyContinue')
+        $toList  = @(if ($showAll) { $postingRows } else { $interesting })
+        $hidden  = $postingRows.Count - $toList.Count
+
+        Write-Report ''
+        Write-Report ('  Posting list table present on {0} of {1} mailbox(es)' -f
+            $postingRows.Count, $sorted.Count) 'Dim'
+        foreach ($r in ($toList | Sort-Object { [double]$_.PostingListGB } -Descending)) {
+            $null = $namedGuids.Add([string]$r.MailboxGuid)
+            # Emerging is not a Status - it is Normal plus a projection inside
+            # the lead window - so a row that is driving the Emerging count
+            # prints as Normal here and the count above looks unattributable.
+            # Labelled with what earned it the count, which is the only reason
+            # it is being shown.
+            $isEmerging = $emergingGuids.Contains([string]$r.MailboxGuid)
+            $label = if ($isEmerging) { 'Emerging' } else { [string]$r.Status }
+
+            # Every finding carries its own rate, not only the Emerging ones.
+            # Annotating Emerging alone made growth look like a property of that
+            # one label, when "Critical and still climbing 0.08 GB/day" and
+            # "Critical and flat since Tuesday" are different problems with
+            # different urgency and this block showed them identically. A Normal
+            # row stays bare: it is only on screen under -Verbose at all, and a
+            # rate on it belongs to the Growth block rather than to a fourth
+            # column on a line that is not a finding.
+            $isFinding = $isEmerging -or $r.Status -eq 'Critical' -or $r.Status -eq 'Warning'
+            $ann  = if ($isFinding) { Format-GrowthAnnotation -Row $r -ExplainAbsence } else { '' }
+            $tail = if ($ann) { '  ' + $ann } else { '' }
+            Write-Report ('    {0}  {1} on {2}  {3} GB{4}' -f
+                $label.PadRight(8, ' '), $r.DisplayName, $r.Database, $r.PostingListGB, $tail) `
+                $(if ($r.Status -eq 'Critical') { 'Bad' }
+                  elseif ($r.Status -eq 'Warning' -or $isEmerging) { 'Warn' }
+                  else { 'Plain' })
+        }
+        # Said rather than silently dropped. "3 of 97" with nothing under it
+        # reads as a block that failed to print, and the names are still the
+        # answer to a question somebody will eventually ask - so the run says
+        # where to get them instead of pretending there is nothing to get.
+        if ($hidden -gt 0) {
+            Write-Report ('    {0} reading Normal, not listed. -Verbose lists them.' -f $hidden) 'Dim'
+        }
+    }
+    elseif ($postingRows.Count -gt 10) {
+        Write-Report ('    {0} {1} of {2} mailbox(es) - see the report' -f
+            'Posting list table'.PadRight(20, ' '), $postingRows.Count, $sorted.Count) 'Plain'
+    }
+
+    # Growth, which until now reached the console by no path at all. Every other
+    # number in this report is a current size: the counts are sizes against a
+    # threshold, the roll call is sizes, "Worst affected" is sizes. The script
+    # measures a rate for every trendable mailbox and computes a projected date
+    # for the ones the thresholds describe, and all of it went to the log and the
+    # CSV only - so a report whose entire justification is lead time never showed
+    # any. Emerging was the single growth-derived figure on screen, and it is a
+    # count with no rate behind it.
+    #
+    # This is also where the two-counter warning belongs. It was printing at
+    # collection time, above the verdict, explaining how growth would be measured
+    # before anything had measured any - the operator read a paragraph about
+    # projected dates and then scrolled past nine lines of sizes without meeting
+    # one. Said here it is a caveat on the numbers directly beneath it.
+    Write-Report ''
+    if (-not $trendComputed) {
+        # Distinguished from "nothing grew". A first run has no baseline to
+        # difference against, and reporting that as zero growth would be the
+        # script inventing a measurement it did not take.
+        Write-Report '  Growth' 'Dim'
+        Write-Report '    No baseline old enough to measure against. The next run is the first that can.' 'Dim'
+    }
+    else {
+        # The window and what it was measured against, because a rate is
+        # meaningless without them - 0.02 GB/day off a 40-hour window and off a
+        # 40-minute one are not the same claim, and the second is the one that
+        # produces a wild projection.
+        $baseShort = [string]$baselineName -replace '^BigFunnelPostingListMonitor-', '' -replace '\.csv$', ''
+        Write-Report ('  Growth  measured over {0}h, against run {1}' -f $baselineHours, $baseShort) 'Dim'
+    }
+
+    # Printed whether or not a rate was computed. Which counters are readable is
+    # a property of the estate, not of the baseline: on a first run there is no
+    # growth to caveat yet, but the operator still needs to know that a later run
+    # can only ever put a date on part of it.
+    if ($payloadRows.Count -gt 0 -and $postingRows.Count -gt 0) {
+        Write-Report ('    Two counters in use: {0} dated on BigFunnelPostingListTableTotalSize, {1} ranked only on IndexPayloadBytes.' -f
+            $postingRows.Count, $payloadRows.Count) 'Warn'
+    }
+    elseif ($payloadRows.Count -gt 0) {
+        Write-Report ('    All {0} trended on IndexPayloadBytes - ranked only, no projected date.' -f
+            $payloadRows.Count) 'Warn'
+    }
+
+    if ($trendComputed) {
+        # Only what the roll call did not already annotate. Every finding now
+        # carries its rate on its own line, so listing the same three mailboxes
+        # again under a second heading is not emphasis - it is one mailbox read
+        # twice by an operator working out whether they are two.
+        #
+        # What survives the filter is the population nothing else in this report
+        # can show: mailboxes that are growing and are not yet a finding. One at
+        # 0.2 GB climbing 0.5 GB/day is weeks away from anything the thresholds
+        # will say a word about, and it is the most interesting row on the estate.
+        # When the roll call self-suppressed above ten, nothing was named and this
+        # degrades to the plain fastest-first list it used to be.
+        #
+        # Both counters in one list, ordered by rate. Splitting them into two
+        # headed sections was the first attempt and it reintroduced the problem
+        # the split warning exists to flag: whichever list came second read as an
+        # afterthought, when the fastest-growing mailbox on the estate is just as
+        # likely to be in it. Which counter a row came from is carried on the row
+        # instead, by the annotation.
+        $fastest = @($sorted | Where-Object {
+            $null -ne $_.GrowthGBPerDay -and [double]$_.GrowthGBPerDay -gt 0 -and
+            -not $namedGuids.Contains([string]$_.MailboxGuid)
+        } | Sort-Object @{ Expression = { [double]$_.GrowthGBPerDay } } -Descending)
+
+        if ($fastest.Count -eq 0) {
+            # "Nothing grew" and "nothing else grew" are different claims, and
+            # only the second one is true on a run that has just printed three
+            # rates directly above this line.
+            Write-Report $(if ($namedGuids.Count -gt 0) {
+                               '    Nothing else grew measurably over that window.'
+                           } else {
+                               '    Nothing grew measurably over that window.'
+                           }) 'Plain'
+        }
+        else {
+            foreach ($r in ($fastest | Select-Object -First 3)) {
+                $null = $namedGuids.Add([string]$r.MailboxGuid)
+                # MeasuredGB and not PostingListGB. The size printed here has to
+                # be read off the same counter as the rate beside it, or a row
+                # trended on the index payload prints as "0 GB, +0.0161 GB/day" -
+                # not a rounding artifact but two different counters set side by
+                # side as though they were one number.
+                Write-Report ('    {0} on {1}  {2} GB  {3}' -f
+                    $r.DisplayName, $r.Database, $r.MeasuredGB, (Format-GrowthAnnotation -Row $r)) `
+                    $(if ($null -ne $r.DaysToCritical -and [double]$r.DaysToCritical -gt 0 -and
+                          [double]$r.DaysToCritical -le 3) { 'Warn' } else { 'Plain' })
+            }
+            if ($fastest.Count -gt 3) {
+                Write-Report ('    ...and {0} more growing, in the report below' -f ($fastest.Count - 3)) 'Dim'
+            }
+        }
+    }
+
+    # A bounded sample of what was found, so the block answers "which ones"
+    # without becoming the list it replaced. Three, because the point is to give
+    # the operator somewhere to start rather than the whole finding - the CSV
+    # named below carries every row, sorted worst-first already.
+    #
+    # Skipped entirely when the block above already named every at-risk mailbox,
+    # which is the normal case on an estate where only a handful of mailboxes
+    # have a posting list table at all: the two lists were identical, printed
+    # one under the other, under two different headings. Repeating a finding is
+    # not emphasis, it is another thing to read before reaching the exit code.
+    $unnamed = @($atRisk | Where-Object { -not $namedGuids.Contains([string]$_.MailboxGuid) })
+    if ($atRisk.Count -gt 0 -and $unnamed.Count -gt 0) {
+        Write-Report ''
+        Write-Report '  Worst affected' 'Dim'
+        foreach ($r in ($unnamed | Select-Object -First 3)) {
+            # Annotated on the same terms as the roll call. On an estate above
+            # ten posting-list mailboxes the roll call collapses to a count, so
+            # this block is the only place a finding is named at all - and
+            # leaving the rate off here would mean the bigger the estate, the
+            # less the report says about growth. Everything in $atRisk is a
+            # finding by construction, so the absence wording always applies.
+            $ann  = Format-GrowthAnnotation -Row $r -ExplainAbsence
+            $tail = if ($ann) { '  ' + $ann } else { '' }
+            Write-Report ('    {0}  {1} on {2}  {3} GB{4}' -f
+                ([string]$r.Status).PadRight(8, ' '), $r.DisplayName, $r.Database, $r.PostingListGB, $tail) `
+                $(if ($r.Status -eq 'Critical') { 'Bad' } else { 'Warn' })
+        }
+        if ($unnamed.Count -gt 3) {
+            Write-Report ('    ...and {0} more in the report below' -f ($unnamed.Count - 3)) 'Dim'
+        }
+    }
+
+    Write-Report ''
+    Write-Report ('  Report  {0}' -f $csvPath) 'Dim'
+    if ($script:LogFile) { Write-Report ('  Log     {0}' -f $script:LogFile) 'Dim' }
+    Write-Report ''
+    Write-Report ('  Exit code {0}' -f $exitCode) $verdictStyle
+    # The one combination that reliably reads as a contradiction: a RESULT
+    # naming a finding directly above a zero. Both are correct - codes 1, 5 and
+    # 6 are gated behind -ExitNonZeroOnAlert so that adding the monitor to an
+    # existing scheduler cannot start failing tasks on day one - but nothing on
+    # screen said so, and the operator is left deciding which half to believe.
+    if ($exitCode -eq 0 -and $runStatus -ne 'OK' -and $runStatus -ne 'MetricInconclusive') {
+        Write-Report '  0 because -ExitNonZeroOnAlert was not passed. The finding above is still real.' 'Dim'
+    }
+    Write-Report ''
+
+    # Last, and only on request. Everything above this line went out through
+    # Write-Host so that this stream could stay empty by default, which is what
+    # makes $r = .\Monitor-BigFunnelPostingList.ps1 -PassThru return rows and
+    # nothing else - no report text to strip back out of the result.
+    if ($PassThru) { $sorted }
+
+    #endregion
 
     #endregion
 }
@@ -2284,12 +3252,27 @@ finally {
     # the previous run's summary untouched and a monitoring agent would keep
     # reporting the last healthy result while the monitor was dead.
     if (-not $script:SummaryWritten) {
+        $abortStatus = $(if ([string]::IsNullOrWhiteSpace($abortReason)) { 'Aborted' } else { $abortReason })
+
+        # There is no such thing as a successful incomplete run, so reaching
+        # here with 0 is always wrong. Every abort inside the try sets 3 before
+        # it exits; the one that cannot is an interrupt. Ctrl+C is a pipeline
+        # stop rather than an exception, so it skips the catch above, runs this
+        # finally, and leaves $exitCode at the 0 it was initialised with.
+        # Observed on w25-ex01: a run interrupted during database discovery
+        # printed "RESULT Aborted" in red directly above "Exit code 0" and
+        # published ExitCode 0 beside Completed false - so a scheduler reading
+        # the exit code, which is the documented integration, recorded a clean
+        # run that never collected a mailbox. Completed false caught it only for
+        # a consumer already parsing the summary.
+        if ($exitCode -eq 0) { $exitCode = 3 }
+
         Write-RunSummary -Path $latestJson -Values @{
             RunId                = $runId
             DurationSeconds      = [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)
             Scope                = $Scope
             Completed            = $false
-            Status               = $(if ([string]::IsNullOrWhiteSpace($abortReason)) { 'Aborted' } else { $abortReason })
+            Status               = $abortStatus
             # Carried onto the abort path too. Most aborts happen after the
             # build has been read, and dropping it here forces whoever triages
             # the alert back onto the log to answer the first question they will
@@ -2303,8 +3286,24 @@ finally {
             RunBudgetExceeded    = $script:BudgetExceeded
             SkippedUnparseable   = $script:ParseFailures
             MissingProperty      = $script:PropertyMissing
+            PublishErrors        = (($script:StablePublishErrors | Select-Object -Unique) -join ' | ')
+            Elevated             = $script:Elevated
             ExitCode             = $exitCode
         }
+
+        # The abort verdict. Without this the whole class of runs that fail
+        # before they collect anything - no runspace, nothing in scope, a
+        # refused mutex - print a warning or two and then simply stop, which
+        # leaves an operator staring at a returned prompt wondering whether it
+        # worked. Only on the abort path: the completed path has already
+        # printed its own block above.
+        Write-Report ''
+        Write-Report ('  RESULT  {0}' -f $abortStatus) 'Bad'
+        Write-Report '  The run did not complete, so nothing was collected.' 'Dim'
+        if ($script:LogFile) { Write-Report ('  Log     {0}' -f $script:LogFile) 'Dim' }
+        Write-Report ''
+        Write-Report ('  Exit code {0}' -f $exitCode) 'Bad'
+        Write-Report ''
     }
 
     if ($null -ne $mutex) {

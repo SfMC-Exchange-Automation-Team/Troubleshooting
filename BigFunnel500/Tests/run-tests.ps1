@@ -11,7 +11,7 @@ $root    = Split-Path -Parent $PSScriptRoot
 $psExe   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $monitor = Join-Path $root 'Monitor-BigFunnelPostingList.ps1'
 
-# Scratch output. The cases below create 33 output directories, and a test run
+# Scratch output. The cases below create 37 output directories, and a test run
 # must not leave any of them in the working tree.
 $scratch = Join-Path $env:TEMP 'BigFunnelMonitorTests'
 if (-not (Test-Path -LiteralPath $scratch)) { New-Item -ItemType Directory -Path $scratch -Force | Out-Null }
@@ -30,13 +30,21 @@ function Invoke-Monitor {
     param(
         [Parameter(Mandatory = $true)][string]$OutputPath,
         [string]$Extra = '',
-        [hashtable]$WithEnv = @{}
+        [hashtable]$WithEnv = @{},
+        # The monitor relaunches itself elevated whenever it is not already
+        # administrator. This harness usually is not, so without -NoElevate
+        # every single case would raise a consent prompt and then sit on
+        # Start-Process -Wait until somebody answered it. The elevation gate has
+        # its own cases below, which pass -TestElevation to reach it on purpose.
+        [switch]$TestElevation
     )
 
     foreach ($k in $WithEnv.Keys) { Set-Item -Path ('env:' + $k) -Value $WithEnv[$k] }
 
+    $noElev = if ($TestElevation) { '' } else { '-NoElevate ' }
+
     # Windows tokenizes on double quotes; single quotes would arrive literally.
-    $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -OutputPath "{1}" {2}' -f $monitor, $OutputPath, $Extra
+    $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -OutputPath "{1}" {2}{3}' -f $monitor, $OutputPath, $noElev, $Extra
 
     $so = Join-Path $env:TEMP 'bf-test-out.txt'
     $se = Join-Path $env:TEMP 'bf-test-err.txt'
@@ -45,6 +53,88 @@ function Invoke-Monitor {
 
     foreach ($k in $WithEnv.Keys) { Remove-Item -Path ('env:' + $k) -ErrorAction SilentlyContinue }
     return $p.ExitCode
+}
+
+function Invoke-MonitorPassThru {
+    # Invoke-Monitor redirects the child's stdout to a file and returns an exit
+    # code, which is exactly the string round trip -PassThru exists to avoid.
+    # Routed through Export-Clixml instead: it preserves the numeric types and
+    # the type name, so what these assertions see is what a caller receives.
+    #
+    # Driven off a generated runner script rather than powershell.exe -Command,
+    # because the command would need nested quoting through Start-Process and
+    # Windows would tokenize it apart before PowerShell ever saw it.
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [string]$Extra = '',
+        # The control case. Same invocation with the switch left off, so "nothing
+        # comes back by default" is tested against the same path rather than
+        # against a run that differed in some other way as well.
+        [switch]$NoPassThru
+    )
+
+    $clixml = Join-Path $env:TEMP 'bf-test-passthru.xml'
+    Remove-Item -LiteralPath $clixml -Force -ErrorAction SilentlyContinue
+
+    $sw     = if ($NoPassThru) { '' } else { '-PassThru' }
+    $runner = Join-Path $env:TEMP 'bf-test-passthru.ps1'
+    $body   = @(
+        ("`$r = & '{0}' -OutputPath '{1}' -NoElevate {2} {3}" -f $monitor, $OutputPath, $sw, $Extra),
+        '$code = $LASTEXITCODE',
+        # Collected first and written second. Export-Clixml on an empty pipeline
+        # still produces a readable file, which is what the control case reads.
+        ("@(`$r) | Export-Clixml -LiteralPath '{0}'" -f $clixml),
+        'exit $code'
+    ) -join "`r`n"
+    Set-Content -LiteralPath $runner -Value $body -Encoding ASCII
+
+    $so = Join-Path $env:TEMP 'bf-test-out.txt'
+    $se = Join-Path $env:TEMP 'bf-test-err.txt'
+    $p = Start-Process -FilePath $psExe -PassThru -Wait -NoNewWindow `
+         -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $runner) `
+         -RedirectStandardOutput $so -RedirectStandardError $se
+    return $p.ExitCode
+}
+
+function Get-PassThruRows {
+    $clixml = Join-Path $env:TEMP 'bf-test-passthru.xml'
+    if (-not (Test-Path -LiteralPath $clixml)) { return @() }
+    return @(Import-Clixml -LiteralPath $clixml)
+}
+
+function Get-Warnings {
+    # Whatever the last Invoke-Monitor wrote to stderr. Warnings are the only
+    # channel the elevation gate has before logging starts, so the tests that
+    # care about it have to read this rather than the log.
+    #
+    # Forced to a scalar string deliberately. Get-Content -Raw yields nothing at
+    # all for an empty file, and -match against nothing returns an empty
+    # collection rather than $false - which Assert then refuses to bind, or
+    # worse, treats as a failure on a case that was fine.
+    #
+    # Both streams, because in 5.1 only the error stream is mapped to stderr.
+    # Write-Warning lands on stdout, so reading stderr alone returns empty and
+    # every "did not warn" assertion passes without testing anything.
+    $text = ''
+    foreach ($f in @('bf-test-out.txt', 'bf-test-err.txt')) {
+        $p = Join-Path $env:TEMP $f
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        $raw = Get-Content -LiteralPath $p -Raw
+        if ($null -ne $raw) { $text += ' ' + ($raw -join ' ') }
+    }
+    return [string]($text -replace '\s+', ' ')
+}
+
+function Get-Stdout {
+    # Stdout alone, unlike Get-Warnings, which merges both streams because 5.1
+    # maps only the error stream to stderr. The console report is the thing an
+    # operator sees, and a test that cannot tell it apart from a warning that
+    # happened to land beside it is not testing the report.
+    #
+    # Lines rather than one string, so a test can count them. Join for a regex.
+    $p = Join-Path $env:TEMP 'bf-test-out.txt'
+    if (-not (Test-Path -LiteralPath $p)) { return @() }
+    return @(Get-Content -LiteralPath $p)
 }
 
 function Assert {
@@ -150,7 +240,10 @@ Assert 'healthy population reports SearchHealth OK' (@($rows | Where-Object { $_
 Write-Host ''
 Write-Host 'T3  passive DAG node: no active copies mounted here' -ForegroundColor Cyan
 $d3 = Reset-Dir '_t3'
-$rc = Invoke-Monitor -OutputPath $d3 -WithEnv @{ MOCK_ACTIVE_ELSEWHERE = '1' }
+# -Scope Local explicitly, and not by inheriting the default, since v1.7.7 made
+# the default All. The passive-member case only exists under Local: an All run
+# on this same estate collects all three databases from the node holding none.
+$rc = Invoke-Monitor -OutputPath $d3 -Extra '-Scope Local' -WithEnv @{ MOCK_ACTIVE_ELSEWHERE = '1' }
 Assert 'exits 3 rather than writing an empty CSV' ($rc -eq 3) ('got exit ' + $rc)
 $log3 = Get-Log $d3
 Assert 'explains the DAG situation in the log' (@($log3 | Where-Object { $_ -match 'mounted elsewhere in the DAG' }).Count -eq 1)
@@ -346,7 +439,10 @@ if (Test-Path -LiteralPath $sumPath) {
         ('mode=' + $sum.ThresholdMode + ' basis=' + $sum.ThresholdBasis)
     Assert 'summary reports run duration' ($sum.DurationSeconds -ge 0)
     Assert 'run budget not flagged on a normal run' ($sum.RunBudgetExceeded -eq $false)
-    Assert 'clean run marked completed' ($sum.Completed -eq $true -and $sum.Status -eq 'OK') `
+    # 3 critical and 3 warning, asserted above. Before v1.7.2 this same run
+    # reported Status OK beside those counts.
+    Assert 'a completed run that found something says Alert, not OK' `
+        ($sum.Completed -eq $true -and $sum.Status -eq 'Alert') `
         ('completed=' + $sum.Completed + ' status=' + $sum.Status)
 }
 
@@ -772,8 +868,8 @@ $d28c = Reset-Dir '_t28c'
 $rc = Invoke-Monitor -OutputPath $d28c -Extra '-ExitNonZeroOnAlert' -WithEnv @{ MOCK_NOTPOPULATED = 'partial' }
 Assert 'a partial outage exits on the threshold hits it did find' ($rc -eq 1) ('got exit ' + $rc)
 $sum28c = Get-Summary $d28c
-Assert 'and a partial outage is not a metric outage' `
-    ($null -ne $sum28c -and $sum28c.Status -eq 'OK') `
+Assert 'and a partial outage reads as Alert, not as a metric outage' `
+    ($null -ne $sum28c -and $sum28c.Status -eq 'Alert') `
     ('got [' + $(if ($sum28c) { $sum28c.Status } else { 'n/a' }) + ']')
 
 # A real breach is a different alert from an unmeasurable run and cannot be
@@ -873,8 +969,8 @@ Assert 'and it really is emerging-only' `
 Assert 'the new code reaches the summary too' `
     ($null -ne $sum30 -and $sum30.ExitCode -eq 6) `
     ('got ' + $(if ($sum30) { $sum30.ExitCode } else { 'n/a' }))
-Assert 'nothing has breached yet, so the run is still OK' `
-    ($null -ne $sum30 -and $sum30.Status -eq 'OK') `
+Assert 'a projection is a finding, so the status names it rather than saying OK' `
+    ($null -ne $sum30 -and $sum30.Status -eq 'Emerging') `
     ('got [' + $(if ($sum30) { $sum30.Status } else { 'n/a' }) + ']')
 
 # Default behaviour is a contract: the switch is what turns findings into exit
@@ -900,6 +996,11 @@ Assert 'and it genuinely had both' `
     ($null -ne $sum30c -and ($sum30c.Critical + $sum30c.Warning) -gt 0 -and $sum30c.Emerging -gt 0) `
     ('atrisk=' + $(if ($sum30c) { $sum30c.Critical + $sum30c.Warning } else { 'n/a' }) +
      ' emerging=' + $(if ($sum30c) { $sum30c.Emerging } else { 'n/a' }))
+# Status is ordered on the same rule as the exit code, so the two cannot name
+# different findings about one run.
+Assert 'and the status names the breach, matching the exit code' `
+    ($null -ne $sum30c -and $sum30c.Status -eq 'Alert') `
+    ('got [' + $(if ($sum30c) { $sum30c.Status } else { 'n/a' }) + ']')
 
 Write-Host ''
 Write-Host 'T31  the emerging list is ordered by how soon, not by how big' -ForegroundColor Cyan
@@ -1120,7 +1221,8 @@ $rc = Invoke-Monitor -OutputPath $d36 -WithEnv @{ MOCK_NOTPOPULATED = 'partial';
 Assert 'the run completes' ($rc -eq 0) ('got exit ' + $rc)
 $sum36 = Get-Summary $d36
 Assert 'one populated table is enough to confirm the counter works' `
-    ($null -ne $sum36 -and $sum36.MetricValidation -eq 'Confirmed' -and $sum36.Status -eq 'OK') `
+    ($null -ne $sum36 -and $sum36.MetricValidation -eq 'Confirmed' -and
+     $sum36.Status -notin @('MetricUnavailable', 'MetricInconclusive')) `
     ('got [' + $(if ($sum36) { $sum36.MetricValidation + '/' + $sum36.Status } else { 'n/a' }) + ']')
 Assert 'the bar is observed from the population and clamped to the 16 MB floor' `
     ($null -ne $sum36 -and $sum36.AllocationEvidenceBasis -eq 'Observed' -and
@@ -1255,6 +1357,839 @@ Assert 'and the runbook still explains why the logon type decides it' `
     ($runbook -match 'The logon type is load-bearing' -and $runbook -match '0x41303') ''
 
 Write-Host ''
+Write-Host 'T40  Status reports the finding, not just whether the run worked' -ForegroundColor Cyan
+# Status described only whether the run completed, so a run that found a critical
+# mailbox published Critical 1, Warning 1, ExitCode 1 and Status OK side by side.
+# Measured on w25-ex01 at v1.7.1, which is where it was caught. Every integration
+# note in the runbook says to alert when Status is not OK, so the field went
+# silent on the one condition the script exists to detect.
+#
+# The rest of the suite now asserts Alert and Emerging where they belong. What is
+# left to pin down here is the contract around them: OK still means OK, and the
+# field does not depend on the exit-code switch.
+
+# A run with nothing to report must still say so, or the fix has traded a false
+# negative for a false positive and the field is worthless either way.
+$d40 = Reset-Dir '_t40'
+$rc = Invoke-Monitor -OutputPath $d40 -Extra '-WarningGB 3.5 -CriticalGB 4.0'
+Assert 'a run with no findings exits 0' ($rc -eq 0) ('got exit ' + $rc)
+$sum40 = Get-Summary $d40
+Assert 'and still says OK' `
+    ($null -ne $sum40 -and $sum40.Status -eq 'OK') `
+    ('got [' + $(if ($sum40) { $sum40.Status } else { 'n/a' }) + ']')
+Assert 'because it genuinely found nothing' `
+    ($null -ne $sum40 -and $sum40.Critical -eq 0 -and $sum40.Warning -eq 0 -and $sum40.Emerging -eq 0) `
+    ('crit=' + $(if ($sum40) { $sum40.Critical } else { 'n/a' }) +
+     ' warn=' + $(if ($sum40) { $sum40.Warning } else { 'n/a' }) +
+     ' emerging=' + $(if ($sum40) { $sum40.Emerging } else { 'n/a' }))
+
+# -ExitNonZeroOnAlert is an opt-in for the exit code only. The summary file is
+# the record of what the run found, and a run at defaults is the common case: if
+# Status were gated too, the default deployment would be back where it started.
+$d40b = Reset-Dir '_t40b'
+$rc = Invoke-Monitor -OutputPath $d40b
+Assert 'the same estate at defaults exits 0' ($rc -eq 0) ('got exit ' + $rc)
+$sum40b = Get-Summary $d40b
+
+$d40c = Reset-Dir '_t40c'
+$rc = Invoke-Monitor -OutputPath $d40c -Extra '-ExitNonZeroOnAlert'
+Assert 'and exits 1 with the switch' ($rc -eq 1) ('got exit ' + $rc)
+$sum40c = Get-Summary $d40c
+
+Assert 'but Status is Alert either way, because the switch only moves the exit code' `
+    ($null -ne $sum40b -and $null -ne $sum40c -and
+     $sum40b.Status -eq 'Alert' -and $sum40c.Status -eq 'Alert') `
+    ('defaults=[' + $(if ($sum40b) { $sum40b.Status } else { 'n/a' }) +
+     '] switched=[' + $(if ($sum40c) { $sum40c.Status } else { 'n/a' }) + ']')
+Assert 'and the counts beside it agree on both runs' `
+    ($null -ne $sum40b -and $null -ne $sum40c -and
+     $sum40b.Critical -eq $sum40c.Critical -and $sum40b.Warning -eq $sum40c.Warning -and
+     $sum40b.Critical -gt 0) `
+    ('defaults=' + $(if ($sum40b) { '' + $sum40b.Critical + '/' + $sum40b.Warning } else { 'n/a' }) +
+     ' switched=' + $(if ($sum40c) { '' + $sum40c.Critical + '/' + $sum40c.Warning } else { 'n/a' }))
+
+# Precedence. A run that did not collect its whole scope is not entitled to
+# report what it found as the answer, however alarming the part it did collect.
+$d40d = Reset-Dir '_t40d'
+$rc = Invoke-Monitor -OutputPath $d40d -Extra '-ExitNonZeroOnAlert' -WithEnv @{ MOCK_FAIL_DB = 'MDB02' }
+Assert 'an incomplete collection exits 2 even with breaches in the part it read' ($rc -eq 2) ('got exit ' + $rc)
+$sum40d = Get-Summary $d40d
+Assert 'and Partial outranks Alert, matching the exit code again' `
+    ($null -ne $sum40d -and $sum40d.Status -eq 'Partial' -and
+     ($sum40d.Critical + $sum40d.Warning) -gt 0) `
+    ('status=[' + $(if ($sum40d) { $sum40d.Status } else { 'n/a' }) +
+     '] atrisk=' + $(if ($sum40d) { $sum40d.Critical + $sum40d.Warning } else { 'n/a' }))
+
+Write-Host ''
+Write-Host 'T41  a run that cannot publish its verdict is not a healthy run' -ForegroundColor Cyan
+# Measured on w25-ex01. A non-elevated session could create its own timestamped
+# CSV and log in C:\ProgramData\ExchangeBigFunnelPostingListMonitor, but could
+# not overwrite a latest.csv and latest-summary.json owned by
+# BUILTIN\Administrators from an earlier elevated run. The run warned twice and
+# exited 0, leaving a summary 19 hours stale that still read Status OK. Anything
+# alerting on that file was reading yesterday's verdict with no way to tell.
+# Collection succeeding is not the same as the result reaching the two files a
+# scheduled consumer actually polls.
+$d41 = Reset-Dir '_t41'
+$rc = Invoke-Monitor -OutputPath $d41
+$sum41 = Get-Summary $d41
+Assert 'a healthy run publishes cleanly and says so' `
+    ($rc -eq 0 -and $null -ne $sum41 -and [string]::IsNullOrEmpty($sum41.PublishErrors)) `
+    ('exit ' + $rc + ' errors=[' + $(if ($sum41) { $sum41.PublishErrors } else { 'n/a' }) + ']')
+
+# latest.csv held open exclusively. A read-only attribute would not do it -
+# Copy-Item -Force overwrites those quite happily, which is exactly the sort of
+# test that passes while proving nothing.
+$latest41 = Join-Path $d41 'latest.csv'
+$fs = [System.IO.File]::Open($latest41, 'Open', 'ReadWrite', 'None')
+try { $rc = Invoke-Monitor -OutputPath $d41 } finally { $fs.Close(); $fs.Dispose() }
+$sum41b = Get-Summary $d41
+Assert 'an unrefreshable latest.csv exits 3, not 0' ($rc -eq 3) ('got exit ' + $rc)
+Assert 'and the summary calls it PublishFailed' `
+    ($null -ne $sum41b -and $sum41b.Status -eq 'PublishFailed' -and $sum41b.ExitCode -eq 3) `
+    ('status=[' + $(if ($sum41b) { $sum41b.Status } else { 'n/a' }) +
+     '] exitcode=' + $(if ($sum41b) { $sum41b.ExitCode } else { 'n/a' }))
+Assert 'and names which file failed and why' `
+    ($null -ne $sum41b -and $sum41b.PublishErrors -match 'latest\.csv') `
+    ('errors=[' + $(if ($sum41b) { $sum41b.PublishErrors } else { 'n/a' }) + ']')
+# The collection itself was fine. The point is that a good collection does not
+# rescue a run whose result never reached the consumer.
+Assert 'while the collection behind it still succeeded' `
+    ($null -ne $sum41b -and $sum41b.MailboxesEvaluated -eq 15) `
+    ('evaluated=' + $(if ($sum41b) { $sum41b.MailboxesEvaluated } else { 'n/a' }))
+
+# The summary itself unwritable. This is the case the file cannot report about
+# itself, so the exit code is the only channel left.
+$json41 = Join-Path $d41 'latest-summary.json'
+$before = (Get-Summary $d41).RunId
+Set-ItemProperty -LiteralPath $json41 -Name IsReadOnly -Value $true
+try { $rc = Invoke-Monitor -OutputPath $d41 }
+finally { Set-ItemProperty -LiteralPath $json41 -Name IsReadOnly -Value $false }
+Assert 'an unwritable summary exits 3' ($rc -eq 3) ('got exit ' + $rc)
+Assert 'and the stale summary on disk is left describing the earlier run' `
+    ((Get-Summary $d41).RunId -eq $before) `
+    ('runid moved from ' + $before + ' to ' + (Get-Summary $d41).RunId)
+Assert 'and the log says the verdict was never published' `
+    (@(Get-Log $d41 | Where-Object { $_ -match 'could not be published' }).Count -ge 1) `
+    ((Get-Log $d41 | Where-Object { $_ -match 'summary' }) -join ' | ')
+
+# Regression guard for the documented legitimate case. A run that collected no
+# rows deliberately leaves latest.csv alone; that skip is not a publish failure
+# and must not start exiting 3.
+$d41e = Reset-Dir '_t41e'
+$rc = Invoke-Monitor -OutputPath $d41e
+$rc = Invoke-Monitor -OutputPath $d41e -WithEnv @{ MOCK_EMPTY = '1' }
+$sum41e = Get-Summary $d41e
+Assert 'a deliberate skip of latest.csv is still not a publish failure' `
+    ($rc -ne 3 -and $null -ne $sum41e -and [string]::IsNullOrEmpty($sum41e.PublishErrors)) `
+    ('exit ' + $rc + ' errors=[' + $(if ($sum41e) { $sum41e.PublishErrors } else { 'n/a' }) + ']')
+
+Write-Host ''
+Write-Host 'T42  the elevation gate, and the honesty of opting out of it' -ForegroundColor Cyan
+# The suite runs unelevated, so every case here reaches the gate with a split
+# token. That also means none of them may let the gate fire: a consent prompt in
+# an automated run blocks Start-Process -Wait until somebody answers it. What is
+# reachable without a prompt is the -NoElevate path and the guarantee behind it,
+# which is that opting out degrades into a visible failure and never a silent
+# success. The relaunch itself is covered by T43 and by reading the source below.
+$d42 = Reset-Dir '_t42'
+$rc = Invoke-Monitor -OutputPath $d42
+$sum42 = Get-Summary $d42
+Assert '-NoElevate runs to completion without attempting a relaunch' `
+    ($rc -eq 0 -and (Get-Warnings) -notmatch 'Relaunching elevated') `
+    ('exit ' + $rc + ' warnings=[' + (Get-Warnings) + ']')
+Assert 'and the summary records whether the run that published was elevated' `
+    ($null -ne $sum42 -and $sum42.PSObject.Properties.Name -contains 'Elevated' -and
+     $sum42.Elevated -eq $false) `
+    ('field=' + ($sum42.PSObject.Properties.Name -contains 'Elevated') +
+     ' value=' + $(if ($sum42) { $sum42.Elevated } else { 'n/a' }))
+
+# The real w25-ex01 case: an ACL that denies this account the two stable files.
+# Elevating is what fixes it, so -NoElevate is an operator saying "do not ask me,
+# I know what I am doing" - and the contract is that they still find out.
+$d42b = Reset-Dir '_t42b'
+$rc = Invoke-Monitor -OutputPath $d42b
+$latest42b = Join-Path $d42b 'latest.csv'
+& icacls.exe $latest42b '/deny' ($env:USERNAME + ':(W)') 2>&1 | Out-Null
+try { $rc = Invoke-Monitor -OutputPath $d42b }
+finally { & icacls.exe $latest42b '/remove:d' $env:USERNAME 2>&1 | Out-Null }
+Assert 'an ACL denial under -NoElevate exits 3 instead of reporting success' `
+    ($rc -eq 3) ('got exit ' + $rc)
+$sum42b = Get-Summary $d42b
+Assert 'with the reason recorded against the file that refused the write' `
+    ($null -ne $sum42b -and $sum42b.PublishErrors -match 'latest\.csv') `
+    ('errors=[' + $(if ($sum42b) { $sum42b.PublishErrors } else { 'n/a' }) + ']')
+
+# Read from the source because the behaviour cannot be provoked here, and both
+# of these regress silently. Dropping -Wait turns every relaunch into an
+# immediate exit 0, which is the exact defect v1.7.3 was written to remove;
+# dropping the UserInteractive guard turns a scheduled non-elevated task from a
+# warning into a hang on a prompt with no desktop to show it.
+$src42 = Get-Content -LiteralPath $monitor -Raw
+$gate42 = [regex]::Match($src42, '(?s)#region elevation.*?#endregion elevation').Value
+Assert 'the gate fires on nothing more than "not administrator, not opted out"' `
+    ($gate42 -match '\$script:Elevated\s*=\s*Test-IsElevated' -and
+     $gate42 -match 'if\s*\(-not\s*\$script:Elevated\s*-and\s*-not\s*\$NoElevate\)') `
+    'expected the plain two-term condition'
+Assert 'it waits for the child, so the exit code is the child''s and not 0' `
+    ($gate42 -match 'Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-Wait' -and $gate42 -match 'exit \$rc') `
+    'expected -Wait on the relaunch and exit $rc after it'
+Assert 'and a non-interactive session is warned rather than left on a prompt' `
+    ($gate42 -match '\[Environment\]::UserInteractive' -and $gate42 -match 'RunLevel Highest') `
+    'expected the non-interactive branch to name -RunLevel Highest'
+
+# The scenario harness drives the monitor several times into a directory it owns
+# under -WorkPath. If it ever stops passing -NoElevate, a demo that used to run
+# unattended starts asking for consent once per scenario.
+$scenario42 = Join-Path (Split-Path -Parent $monitor) 'Invoke-BigFunnelScenario.ps1'
+Assert 'the scenario harness opts its child monitor runs out of elevation' `
+    ((Test-Path -LiteralPath $scenario42) -and
+     (Get-Content -LiteralPath $scenario42 -Raw) -match "ConvertTo-MonitorArgs[\s\S]*?\`$argv\.Add\('-NoElevate'\)") `
+    ('scenario present: ' + (Test-Path -LiteralPath $scenario42))
+
+Write-Host ''
+Write-Host 'T43  the elevated child is relaunched with the same run, not a similar one' -ForegroundColor Cyan
+# The relaunch itself needs a consent prompt, so it cannot be driven from a test
+# run. The part that can go wrong silently can be: if the rebuilt command line
+# drops -CriticalGB, the elevated child collects happily and reports against the
+# wrong threshold, and nothing in the output says so. So the builder is lifted
+# out of the script by name and exercised directly.
+$fnAst = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null).
+         FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                              $n.Name -eq 'ConvertTo-RelaunchArguments' }, $true)
+Assert 'the argument builder is still there to test' ($fnAst.Count -eq 1) ('found ' + $fnAst.Count)
+if ($fnAst.Count -eq 1) {
+    . ([scriptblock]::Create($fnAst[0].Extent.Text))
+
+    $bound = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    $bound['Databases']          = @('DB one', 'DB two')
+    $bound['CriticalGB']         = 2.5
+    $bound['Scope']              = 'All'
+    $bound['OutputPath']         = 'C:\Program Files\bf out\'
+    $bound['ExitNonZeroOnAlert'] = [System.Management.Automation.SwitchParameter]::Present
+    $bound['NoElevate']          = [System.Management.Automation.SwitchParameter]::Present
+    $line = ConvertTo-RelaunchArguments $bound
+
+    Assert 'a threshold crosses intact, so the child judges by the same numbers' `
+        ($line -match '-CriticalGB "2\.5"') $line
+    Assert 'a value with a space stays one argument' `
+        ($line -match '-Scope "All"') $line
+    Assert 'an array crosses as a list, not as its first element' `
+        ($line -match '-Databases "DB one","DB two"') $line
+    # A trailing backslash would escape the closing quote when Windows splits
+    # the child's command line, swallowing whatever argument came next.
+    Assert 'a path ending in a separator cannot escape its own closing quote' `
+        (($line -match '-OutputPath "C:\\Program Files\\bf out"') -and ($line -notmatch 'out\\"')) $line
+    Assert 'a switch crosses as a switch, with no value appended' `
+        (($line -match '-ExitNonZeroOnAlert(\s|$)') -and ($line -notmatch '-ExitNonZeroOnAlert "')) $line
+    # Passing it on would be harmless but dishonest: the child is elevated, so
+    # the gate never runs there, and the line should describe what it does.
+    Assert 'and -NoElevate is not passed on to a child that is already elevated' `
+        ($line -notmatch 'NoElevate') $line
+}
+
+Write-Host ''
+Write-Host 'T44  what a run says on screen when nobody asked it to say anything' -ForegroundColor Cyan
+$d44  = Reset-Dir '_t44'
+$rc44 = Invoke-Monitor -OutputPath $d44
+$out44 = Get-Stdout
+$t44   = ($out44 -join "`n")
+$log44 = Get-Log $d44
+$sum44 = Get-Summary $d44
+
+Assert 'a default run reaches a verdict on screen without -Verbose' `
+    ($t44 -match 'RESULT\s+\w+') $t44
+Assert 'and identifies which version reached it' `
+    ($t44 -match 'PostingListTable monitor v\d+\.\d+\.\d+') $t44
+Assert 'and names each database as it is collected, with what it found there' `
+    (($t44 -match 'MDB01\.+\s+\d+ mailbox') -and ($t44 -match 'MDB03\.+\s+\d+ mailbox')) $t44
+Assert 'and points at both files it just wrote' `
+    (($t44 -match 'Report\s+\S+\.csv') -and ($t44 -match 'Log\s+\S+\.log')) $t44
+Assert 'and states the exit code it is about to return' `
+    ($t44 -match ('Exit code ' + $rc44)) $t44
+
+# The flood guard. -MaxAlertDetail allows 25 per-mailbox lines per category and
+# there are four categories, so echoing them would push the verdict a hundred
+# lines off the top of the window on exactly the estate that needs reading.
+$rowLines = @($log44 | Where-Object { $_ -match '\[WARN\]\s+(Critical|Warning): \[' })
+Assert 'per-mailbox findings are written to the log' `
+    ($rowLines.Count -gt 0) ('log rows: ' + $rowLines.Count)
+Assert 'but are kept off the console, where they would bury the verdict' `
+    ($t44 -notmatch '(Critical|Warning): \[') $t44
+
+# Kept off, not hidden: an operator who cannot see WHICH mailbox has to open the
+# CSV before they know whether to care.
+$worst = @($out44 | Where-Object { $_ -match '^\s+(Critical|Warning)\s+.+\sGB(\s\s\S.*)?$' })
+Assert 'the worst affected are still named, bounded to three' `
+    (($worst.Count -gt 0) -and ($worst.Count -le 3)) ('worst rows: ' + $worst.Count)
+Assert 'and the console says how many more it did not show' `
+    ($t44 -match 'and \d+ more in the report below') $t44
+# Above ten posting-list mailboxes the roll call collapses to a count, so this
+# block is the only place a finding gets named - and a name with no rate beside
+# it would mean the bigger the estate, the less the report says about growth.
+# This run has no baseline, so what the tail has to carry is the absence.
+Assert 'and each carries a growth annotation, not a bare size' `
+    (@($worst | Where-Object { $_ -match 'GB\s\s(no rate yet|not growing|\+[\d.]+ GB/day)' }).Count -eq $worst.Count) `
+    ($worst -join "`n")
+
+# Alert above a zero reads as a contradiction, and both halves are correct.
+Assert 'a finding reported above exit code 0 is explained, not left contradictory' `
+    (($rc44 -ne 0) -or ($t44 -match 'ExitNonZeroOnAlert was not passed')) $t44
+
+$d44q   = Reset-Dir '_t44q'
+$rc44q  = Invoke-Monitor -OutputPath $d44q -Extra '-Quiet'
+$out44q = Get-Stdout
+$sum44q = Get-Summary $d44q
+
+Assert '-Quiet leaves the console completely empty' `
+    (@($out44q | Where-Object { $_.Trim() -ne '' }).Count -eq 0) ($out44q -join '|')
+Assert 'and suppresses decoration, never evidence: the exit code is unchanged' `
+    ($rc44q -eq $rc44) ('quiet ' + $rc44q + ' vs ' + $rc44)
+Assert 'and the summary still reaches disk carrying the same verdict' `
+    (($null -ne $sum44q) -and ($null -ne $sum44) -and ($sum44q.Status -eq $sum44.Status)) `
+    ('quiet ' + $sum44q.Status + ' vs ' + $sum44.Status)
+Assert 'and the log is written exactly as it would have been' `
+    ((Get-Log $d44q).Count -gt 0)
+
+$d44v  = Reset-Dir '_t44v'
+$null  = Invoke-Monitor -OutputPath $d44v -Extra '-Verbose'
+$t44v  = ((Get-Stdout) -join "`n")
+$both  = Get-Warnings
+
+# The half of the old behaviour that was wrong was not that -Verbose showed too
+# much - it is that it was the only channel there was.
+Assert '-Verbose adds the log stream underneath the report rather than replacing it' `
+    (($t44v -match 'RESULT\s+\w+') -and ($both -match 'VERBOSE: \d{4}-\d{2}-\d{2}')) $t44v
+
+Write-Host ''
+Write-Host 'T45  the default scope answers for the DAG, not for this node' -ForegroundColor Cyan
+# The estate where the distinction is visible: every active copy is mounted
+# somewhere other than the node running the script. Under the old Local default
+# this run found nothing and exited 3 - which is what it looks like from a node
+# that simply is not holding anything today.
+$d45  = Reset-Dir '_t45'
+$rc45 = Invoke-Monitor -OutputPath $d45 -WithEnv @{ MOCK_ACTIVE_ELSEWHERE = '1' }
+$sum45 = Get-Summary $d45
+$t45   = ((Get-Stdout) -join "`n")
+
+Assert 'a run with no -Scope collects databases mounted on other nodes' `
+    ($rc45 -eq 0) ('got exit ' + $rc45)
+Assert 'and the summary records the scope it actually used' `
+    (($null -ne $sum45) -and ($sum45.Scope -eq 'All')) ('got [' + $(if ($sum45) { $sum45.Scope } else { 'n/a' }) + ']')
+Assert 'and it evaluated mailboxes rather than reporting an empty estate' `
+    (($null -ne $sum45) -and ($sum45.MailboxesEvaluated -gt 0)) ('got ' + $(if ($sum45) { $sum45.MailboxesEvaluated } else { 'n/a' }))
+# The console names the scope, so an operator can tell at a glance which
+# question the numbers below it answer.
+Assert 'and the console says which scope the count belongs to' `
+    ($t45 -match 'Scope All - \d+ database\(s\) in scope') $t45
+
+# The opposite half, on the identical estate: Local still declines them, which
+# is what makes it worth passing explicitly for a per-node scheduled task.
+$d45l  = Reset-Dir '_t45l'
+$rc45l = Invoke-Monitor -OutputPath $d45l -Extra '-Scope Local' -WithEnv @{ MOCK_ACTIVE_ELSEWHERE = '1' }
+Assert '-Scope Local on the same estate still collects nothing, deliberately' `
+    ($rc45l -eq 3) ('got exit ' + $rc45l)
+Assert 'and the log points at the default rather than just naming the problem' `
+    (@(Get-Log $d45l | Where-Object { $_ -match 'the default is now All' }).Count -eq 1)
+
+Write-Host ''
+Write-Host 'T46  an incomplete run never reports a clean exit code' -ForegroundColor Cyan
+# Every abort inside the main try sets 3 before it exits. The one that cannot is
+# an interrupt: Ctrl+C is a pipeline stop rather than an exception, so it skips
+# the catch, runs the finally, and leaves $exitCode at the 0 it started as.
+# Observed on w25-ex01 - "RESULT Aborted" in red directly above "Exit code 0",
+# and ExitCode 0 published beside Completed false, so a scheduler reading the
+# exit code recorded a clean run that never collected a mailbox.
+#
+# Asserted at the source, because the trigger is a console interrupt this
+# harness cannot deliver to a child process without also killing the finally
+# block it is trying to test.
+$src46 = Get-Content -LiteralPath $monitor -Raw
+$fin46 = if ($src46 -match '(?s)if \(-not \$script:SummaryWritten\) \{(.{0,2000})') { $Matches[1] } else { '' }
+Assert 'the abort block is still there to test' ($fin46 -ne '') 'finally block not matched'
+Assert 'and coerces a zero exit code before it publishes the summary' `
+    (($fin46 -match 'if \(\$exitCode -eq 0\) \{ \$exitCode = 3 \}') -and
+     ($fin46.IndexOf('if ($exitCode -eq 0) { $exitCode = 3 }') -lt $fin46.IndexOf('Write-RunSummary'))) $fin46
+# The existing abort paths must keep their own codes - the coercion is a floor
+# for the interrupt case, not a blanket overwrite.
+Assert 'an abort that already chose its exit code keeps it' `
+    ($rc45l -eq 3) ('got exit ' + $rc45l)
+
+Write-Host ''
+Write-Host 'T47  the console says which mailboxes, and says it in fewer words' -ForegroundColor Cyan
+# Two complaints about the same block of output, from an operator reading a real
+# run: the mixed-counter explanation wrapped to five lines of prose immediately
+# above the verdict, and the only thing it actually reported - that three
+# mailboxes carry a posting list table - could not be turned into three names
+# without opening a 32-column CSV.
+#
+# MOCK_NOTPOPULATED=partial is the mixed estate: rows 1 and 2 of each database
+# keep a populated posting list table, the rest read 0 B, so both counters are
+# in use on the same run.
+$d47 = Reset-Dir '_t47'
+$rc47 = Invoke-Monitor -OutputPath $d47 -WithEnv @{ MOCK_NOTPOPULATED = 'partial' }
+$out47 = (Get-Stdout) -join "`n"
+$log47 = (Get-Log $d47) -join "`n"
+
+Assert 'the mixed-counter run completes' ($rc47 -eq 0) ('got exit ' + $rc47)
+
+# The reasoning is not deleted, it is relocated. A shorter console that also
+# lost the explanation would be a worse outcome than the wall of text.
+Assert 'the full explanation is still written to the log' `
+    ($log47 -match 'Growth on this run is split across two counters' -and
+     $log47 -match 'Do not read a short Emerging list as the whole answer') $log47
+Assert 'but the paragraph does not reach the console' `
+    ($out47 -notmatch 'Do not read a short Emerging list as the whole answer') $out47
+# Moved, not deleted. It used to print at collection time, above the verdict and
+# roughly ten lines above any growth number - explaining how growth would be
+# measured before anything had measured any. It now sits under the Growth
+# heading, as a caveat on the rates directly beneath it.
+Assert 'the console states the split instead, on its own line' `
+    ($out47 -match 'Two counters in use: \d+ dated on BigFunnelPostingListTableTotalSize, \d+ ranked only on IndexPayloadBytes') $out47
+$idxGrowth47 = $out47.IndexOf('Growth')
+$idxSplit47  = $out47.IndexOf('Two counters in use')
+$idxResult47 = $out47.IndexOf('RESULT')
+Assert 'and it sits with the growth numbers rather than above the verdict' `
+    ($idxGrowth47 -gt 0 -and $idxSplit47 -gt $idxGrowth47 -and $idxSplit47 -gt $idxResult47) `
+    ('growth ' + $idxGrowth47 + ' split ' + $idxSplit47 + ' result ' + $idxResult47)
+
+# The question the count raised. A run that says "3" and makes the operator go
+# and find out which 3 has reported a number instead of an answer.
+Assert 'the console names how many carry a posting list table, out of how many' `
+    ($out47 -match 'Posting list table present on \d+ of \d+ mailbox\(es\)') $out47
+$pl47 = @(Get-Csv $d47 | Where-Object { [int64]$_.PostingListBytes -gt 0 })
+Assert 'the mock estate really is mixed, so the block above is being tested' `
+    ($pl47.Count -gt 0 -and $pl47.Count -lt (Get-Csv $d47).Count) ('populated ' + $pl47.Count)
+$named47 = @($pl47 | Where-Object { $out47.Contains($_.DisplayName) })
+Assert 'and names every one of them on screen' `
+    ($named47.Count -eq $pl47.Count) ('named ' + $named47.Count + ' of ' + $pl47.Count)
+Assert 'with the size that made it worth naming' `
+    ($out47 -match 'Ana Ilic on \S+\s+[\d.]+ GB') $out47
+
+# Naming them made the block below it redundant. On this estate every at-risk
+# mailbox is one of the few carrying a posting list table, so "Worst affected"
+# reprinted the same two rows under a second heading - which is not emphasis,
+# it is another thing to read before reaching the exit code.
+$atRisk47 = @(Get-Csv $d47 | Where-Object { $_.Status -eq 'Critical' -or $_.Status -eq 'Warning' })
+Assert 'the run really did find at-risk mailboxes, so the block could have printed' `
+    ($atRisk47.Count -gt 0) ('at risk ' + $atRisk47.Count)
+Assert 'and every one of them was named in the block above' `
+    (@($atRisk47 | Where-Object { -not $out47.Contains($_.DisplayName) }).Count -eq 0) $out47
+Assert 'so Worst affected is not printed a second time under a new heading' `
+    ($out47 -notmatch 'Worst affected') $out47
+
+# Self-suppressing, or the block becomes the report on a healthy estate where
+# every mailbox has one. MOCK_BULK pushes the populated count past the bound.
+$d47b = Reset-Dir '_t47b'
+$null = Invoke-Monitor -OutputPath $d47b -WithEnv @{ MOCK_BULK = '20' }
+$out47b = (Get-Stdout) -join "`n"
+Assert 'a large populated estate gets a count rather than a roll call' `
+    ($out47b -notmatch 'Posting list table present on' -and
+     $out47b -match 'Posting list table\s+\d+ of \d+ mailbox\(es\) - see the report') $out47b
+# The other half of the suppression above: with nothing named, the bounded
+# sample has to come back, or removing the duplicate would have removed the
+# only place the console says which mailboxes were found.
+Assert 'and still gets the bounded Worst affected sample, since nothing was named' `
+    ($out47b -match 'Worst affected') $out47b
+
+Write-Host ''
+Write-Host 'T48  the roll call names findings, not mailboxes that are fine' -ForegroundColor Cyan
+# The same operator, one run later: on a healthy estate every row in the block
+# T47 added reads Normal, so a block that exists to answer "which ones are a
+# problem" spends three lines answering "none of them, here they are anyway".
+# A Normal row is the absence of a finding and does not earn a line in a verdict
+# block; the count above it already says how many carry the counter.
+#
+# One database, so the populated count stays inside the ten-row bound and the
+# roll call actually prints. MDB01 alone gives five evaluated mailboxes: Ana
+# critical, Bo warning, and three sitting under the 1.7 GB threshold.
+$d48  = Reset-Dir '_t48'
+$rc48 = Invoke-Monitor -OutputPath $d48 -Extra '-Databases MDB01'
+$out48 = (Get-Stdout) -join "`n"
+
+Assert 'the single-database run completes' ($rc48 -eq 0) ('got exit ' + $rc48)
+
+$rows48   = @(Get-Csv $d48 | Where-Object { [int64]$_.PostingListBytes -gt 0 })
+$normal48 = @($rows48 | Where-Object { $_.Status -eq 'Normal' })
+$found48  = @($rows48 | Where-Object { $_.Status -ne 'Normal' })
+Assert 'the estate under test really is mixed Normal and not, so this proves something' `
+    ($normal48.Count -gt 0 -and $found48.Count -gt 0) `
+    ('normal ' + $normal48.Count + ' findings ' + $found48.Count)
+
+# The count is not what was objected to - it is one line, and it is the answer
+# to "does anything here carry the counter at all".
+Assert 'the count still prints on a run with nothing to name' `
+    ($out48 -match 'Posting list table present on \d+ of \d+ mailbox\(es\)') $out48
+Assert 'the mailboxes that are a finding are still named' `
+    (@($found48 | Where-Object { -not $out48.Contains($_.DisplayName) }).Count -eq 0) $out48
+# Matched on the roll call's own line shape rather than the bare name, so this
+# does not pass or fail on some unrelated line that happens to mention it.
+Assert 'and the Normal ones are not listed one per line' `
+    ($out48 -notmatch '(?m)^\s+Normal\s+\S') $out48
+# Held back, not hidden. "5 of 97" with two rows under it reads as a block that
+# gave up halfway; saying how many were withheld, and how to see them, keeps the
+# console honest about what it chose not to print.
+Assert 'the console says how many it held back, and how to get them' `
+    ($out48 -match ('\s' + $normal48.Count + ' reading Normal, not listed\. -Verbose lists them\.')) $out48
+
+# The switch. -Verbose rather than a parameter of its own: the script already
+# documents it as the lever for wanting more of the report.
+$d48b = Reset-Dir '_t48b'
+$null = Invoke-Monitor -OutputPath $d48b -Extra '-Databases MDB01 -Verbose'
+$out48b = (Get-Stdout) -join "`n"
+Assert '-Verbose lists the Normal rows, in the same shape as the rest' `
+    ($out48b -match '(?m)^\s+Normal\s+Shared Helpdesk on MDB01\s+[\d.]+ GB') $out48b
+Assert 'and then has nothing left to say it held back' `
+    ($out48b -notmatch 'reading Normal, not listed') $out48b
+Assert 'while the findings are still named, not replaced by the full list' `
+    (@($found48 | Where-Object { -not $out48b.Contains($_.DisplayName) }).Count -eq 0) $out48b
+
+Write-Host ''
+Write-Host 'T49  the console reports growth, not just current size' -ForegroundColor Cyan
+# Every other number in the verdict block is a current size: the counts are sizes
+# against a threshold, the roll call is sizes, Worst affected is sizes. The
+# script measures a rate for every trendable mailbox and projects a date for the
+# ones the thresholds describe, and all of it went to the log and the CSV only -
+# so a report whose entire justification is lead time never printed any lead
+# time. Emerging was the one growth-derived figure on screen, and it is a count.
+
+# A first run has nothing to difference against, and must say so rather than
+# reporting no growth - which would be the script publishing a measurement it
+# never took.
+$d49 = Reset-Dir '_t49'
+$rc49 = Invoke-Monitor -OutputPath $d49 -Extra '-WarningGB 3.0 -CriticalGB 3.5'
+$out49 = (Get-Stdout) -join "`n"
+Assert 'the seed run succeeds' ($rc49 -eq 0) ('got exit ' + $rc49)
+Assert 'a first run says it has no baseline rather than reporting zero growth' `
+    ($out49 -match 'No baseline old enough to measure against') $out49
+Assert 'and does not claim a rate it could not have measured' `
+    ($out49 -notmatch 'GB/day') $out49
+
+# Now give it one. Rates are set per mailbox so the expected ordering is known
+# and differs from size order - the mock scales growth with size, so without
+# this the two orderings agree and the test cannot tell them apart.
+$null = Set-RunAge -Dir $d49 -Hours 24
+$base49 = @(Get-ChildItem -LiteralPath $d49 -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows49 = @(Import-Csv -LiteralPath $base49.FullName)
+foreach ($r in $rows49) {
+    switch ($r.DisplayName) {
+        # 1.20 GB now, was 0.20 - 1.00 GB/day, the fastest on the estate and
+        # nowhere near the largest, which is the point.
+        'Emerging Mbx' { $r.PostingListBytes = [string][int64](0.20 * 1GB) }
+        # 2.40 GB now, was 2.00 - 0.40 GB/day. Twice the size, slower.
+        'Ana Ilic'     { $r.PostingListBytes = [string][int64](2.00 * 1GB) }
+        # 1.80 GB now, was 1.65 - 0.15 GB/day.
+        'Bo Persson'   { $r.PostingListBytes = [string][int64](1.65 * 1GB) }
+    }
+}
+$rows49 | Export-Csv -LiteralPath $base49.FullName -NoTypeInformation -Encoding UTF8
+
+$rc49b = Invoke-Monitor -OutputPath $d49 -Extra '-WarningGB 3.0 -CriticalGB 3.5'
+$out49b = (Get-Stdout) -join "`n"
+Assert 'the trended run succeeds' ($rc49b -eq 0) ('got exit ' + $rc49b)
+
+# A rate is meaningless without the window it was measured over and the run it
+# was measured against - 0.02 GB/day off 40 hours and off 40 minutes are not the
+# same claim, and the second is what produces a wild projection.
+Assert 'the growth heading names the window and the baseline run' `
+    ($out49b -match 'Growth\s+measured over [\d.]+h, against run \d{8}-\d{6}') $out49b
+Assert 'and a rate in GB/day actually reaches the console' `
+    ($out49b -match '(?m)^\s+\S.*\+[\d.]+ GB/day') $out49b
+Assert 'with the projected date on rows the thresholds can describe' `
+    ($out49b -match 'Emerging Mbx on \S+\s+[\d.]+ GB\s+\+[\d.]+ GB/day, critical in [\d.]+ day\(s\)') $out49b
+
+# Ordered by rate, which is the only ordering this block can justify. Size order
+# would duplicate the roll call directly above it.
+#
+# The rate is signed in the output. A bare number at the end of a line that
+# already carries "1.2 GB" reads as a second size at a glance down the column,
+# so the + is load-bearing rather than decoration - and matching on it here is
+# what stops this regex also capturing the size.
+$rates49 = @([regex]::Matches($out49b, '(?m)\+([\d.]+) GB/day') |
+             ForEach-Object { [double]$_.Groups[1].Value })
+Assert 'the block lists more than one mailbox, so ordering means something' `
+    ($rates49.Count -ge 2) ('got ' + $rates49.Count + ' rows')
+$desc49 = $true
+for ($i = 1; $i -lt $rates49.Count; $i++) { if ($rates49[$i] -gt $rates49[$i - 1]) { $desc49 = $false } }
+Assert 'and orders them fastest first' $desc49 ($rates49 -join ', ')
+Assert 'the fastest growing mailbox is the one climbing, not the biggest' `
+    ($out49b -match 'Emerging Mbx on \S+\s+[\d.]+ GB\s+\+1 GB/day') $out49b
+
+# Bounded like Worst affected, and honest about the truncation.
+$csv49 = @(Get-Csv $d49 | Where-Object { $_.GrowthGBPerDay -ne '' -and [double]$_.GrowthGBPerDay -gt 0 })
+Assert 'more mailboxes grew than the block prints, so the cap is under test' `
+    ($csv49.Count -gt 3) ('got ' + $csv49.Count + ' growing rows')
+Assert 'so it caps at three and says how many it left out' `
+    ($rates49.Count -eq 3 -and $out49b -match ('and ' + ($csv49.Count - 3) + ' more growing, in the report below')) `
+    ('printed ' + $rates49.Count + ' of ' + $csv49.Count)
+
+# The mixed-counter estate: rows trended on IndexPayloadBytes carry a rate but
+# can carry no date, and the block has to say which is which on the row itself.
+#
+# The baseline's payload counters are lowered rather than left alone, because
+# the mock emits the same IndexPayloadBytes on every run unless growth is
+# configured - so an untouched baseline differences to zero and the run reports
+# "nothing grew", which is true but tests none of this.
+$d49c = Reset-Dir '_t49c'
+$null = Invoke-Monitor -OutputPath $d49c -WithEnv @{ MOCK_NOTPOPULATED = 'partial' }
+$null = Set-RunAge -Dir $d49c -Hours 24
+$base49c = @(Get-ChildItem -LiteralPath $d49c -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows49c = @(Import-Csv -LiteralPath $base49c.FullName)
+foreach ($r in $rows49c) {
+    if ($r.IndexPayloadBytes -ne '' -and [int64]$r.IndexPayloadBytes -gt 0) {
+        $r.IndexPayloadBytes = [string]([int64]([int64]$r.IndexPayloadBytes * 0.5))
+    }
+}
+$rows49c | Export-Csv -LiteralPath $base49c.FullName -NoTypeInformation -Encoding UTF8
+
+$rc49c = Invoke-Monitor -OutputPath $d49c -WithEnv @{ MOCK_NOTPOPULATED = 'partial' }
+$out49c = (Get-Stdout) -join "`n"
+Assert 'the mixed-counter trended run completes' ($rc49c -eq 0) ('got exit ' + $rc49c)
+$pay49c = @(Get-Csv $d49c | Where-Object {
+    $_.TrendMetric -eq 'IndexPayloadBytes' -and $_.GrowthGBPerDay -ne '' -and [double]$_.GrowthGBPerDay -gt 0 })
+Assert 'payload-trended rows really did grow, so the annotation is under test' `
+    ($pay49c.Count -gt 0) ('got ' + $pay49c.Count + ' growing payload rows')
+Assert 'a row with no projectable counter says so, and names the counter it is on' `
+    ($out49c -match '\+[\d.]+ GB/day on index payload, no projected date') $out49c
+Assert 'and the two-counter caveat sits with those rates, not above the verdict' `
+    ($out49c.IndexOf('Two counters in use') -gt $out49c.IndexOf('Growth')) `
+    ('growth ' + $out49c.IndexOf('Growth') + ' split ' + $out49c.IndexOf('Two counters in use'))
+
+Write-Host ''
+Write-Host 'T50  a finding carries its own rate, and is not then repeated below' -ForegroundColor Cyan
+# The complaint this answers: every figure in the verdict block was a current
+# size, and the one growth-derived number on screen - the Emerging count - had no
+# rate behind it. A rate belongs on the finding it qualifies, because "Critical
+# and still climbing 0.4 GB/day" and "Critical and flat since Tuesday" are
+# different problems and the block was showing them identically.
+#
+# One database, so the populated count stays inside the ten-row bound and the
+# roll call actually prints. Above ten it self-suppresses, which T49 covers.
+$d50 = Reset-Dir '_t50'
+$null = Invoke-Monitor -OutputPath $d50 -Extra '-Databases MDB01 -WarningGB 1.5 -CriticalGB 2.2'
+
+# Two movers and a deliberate stayer. Bo is left untouched so a finding that did
+# not move is under test too - an unannotated Warning cannot be told apart from
+# one the script never measured, and that ambiguity is what -ExplainAbsence
+# exists to close.
+$null = Set-RunAge -Dir $d50 -Hours 24
+$base50 = @(Get-ChildItem -LiteralPath $d50 -Filter 'BigFunnelPostingListMonitor-*.csv' | Sort-Object Name -Descending)[0]
+$rows50 = @(Import-Csv -LiteralPath $base50.FullName)
+foreach ($r in $rows50) {
+    switch ($r.DisplayName) {
+        # 2.40 GB now, was 2.00 - climbing 0.40 GB/day and already past Critical,
+        # so a projection to Critical is meaningless and the row has to carry a
+        # rate with no date rather than a negative one.
+        'Ana Ilic'     { $r.PostingListBytes = [string][int64](2.00 * 1GB) }
+        # 1.20 GB now, was 0.20 - 1.00 GB/day, which puts it one day off the
+        # 2.2 GB Critical line and makes it Emerging while still reading Normal.
+        'Emerging Mbx' { $r.PostingListBytes = [string][int64](0.20 * 1GB) }
+    }
+}
+$rows50 | Export-Csv -LiteralPath $base50.FullName -NoTypeInformation -Encoding UTF8
+
+$rc50 = Invoke-Monitor -OutputPath $d50 -Extra '-Databases MDB01 -WarningGB 1.5 -CriticalGB 2.2'
+$out50 = (Get-Stdout) -join "`n"
+Assert 'the trended single-database run completes' ($rc50 -eq 0) ('got exit ' + $rc50)
+
+Assert 'a Critical finding carries its rate on its own line' `
+    ($out50 -match '(?m)^\s+Critical\s+Ana Ilic on MDB01\s+[\d.]+ GB\s+\+0\.4 GB/day\s*$') $out50
+# No date on a mailbox already past Critical. DaysToCritical goes negative there,
+# and "critical in -0.5 day(s)" is worse than saying nothing at all.
+Assert 'and no projected date, because it is already past the line' `
+    ($out50 -notmatch 'Ana Ilic on MDB01.*critical in') $out50
+Assert 'an Emerging finding carries both its rate and its date' `
+    ($out50 -match '(?m)^\s+Emerging\s+Emerging Mbx on MDB01\s+[\d.]+ GB\s+\+1 GB/day, critical in [\d.]+ day\(s\)') $out50
+Assert 'a finding that did not move says so, rather than being left bare' `
+    ($out50 -match '(?m)^\s+Warning\s+Bo Persson on MDB01\s+[\d.]+ GB\s+not growing') $out50
+
+# The other half of the request: in line with the finding rather than somewhere
+# else. Naming one mailbox twice under two headings is not emphasis - it is an
+# operator reading it twice and working out whether they are two mailboxes.
+$seen50e = @([regex]::Matches($out50, 'Emerging Mbx on MDB01')).Count
+$seen50a = @([regex]::Matches($out50, 'Ana Ilic on MDB01')).Count
+Assert 'the Emerging mailbox is named once in the whole report, not twice' `
+    ($seen50e -eq 1) ('named ' + $seen50e + ' times')
+Assert 'and so is the Critical one' ($seen50a -eq 1) ('named ' + $seen50a + ' times')
+
+# The block still earns its place: it is where the window and the baseline run
+# are named, and those are the provenance for every inline rate above it.
+Assert 'the growth heading still prints, since it dates the rates above it' `
+    ($out50 -match 'Growth\s+measured over [\d.]+h, against run \d{8}-\d{6}') $out50
+# "Nothing grew" and "nothing else grew" are different claims, and only the
+# second one is true on a run that has just printed two rates.
+Assert 'and the block says nothing ELSE grew, not that nothing grew' `
+    ($out50 -match 'Nothing else grew measurably over that window') $out50
+
+Write-Host ''
+Write-Host 'T51  -PassThru returns the rows, not a re-read of the CSV' -ForegroundColor Cyan
+# The report was the whole interface: an exit code, a CSV and a JSON. The rows it
+# prints from are already [pscustomobject]s built once at collection, so handing
+# them back costs nothing and is the difference between reading a result and
+# querying one.
+$d51 = Reset-Dir '_t51'
+$rc51 = Invoke-MonitorPassThru -OutputPath $d51 -Extra '-Databases MDB01'
+$r51  = @(Get-PassThruRows)
+$csv51 = @(Get-Csv $d51)
+Assert 'the run completes' ($rc51 -eq 0) ('got exit ' + $rc51)
+Assert 'rows come back on the success stream' ($r51.Count -gt 0) ('got ' + $r51.Count + ' rows')
+Assert 'and there is one per evaluated mailbox, matching the CSV' `
+    ($r51.Count -eq $csv51.Count) ('objects ' + $r51.Count + ' csv ' + $csv51.Count)
+# Matched on the suffix. Export-Clixml prefixes "Deserialized." on the way back
+# in, which is an artifact of how this harness gets the objects across a process
+# boundary and not something an in-process caller ever sees - $r = & monitor.ps1
+# hands back a plain BigFunnel.PostingListRow.
+Assert 'they are typed, so a caller can test for them rather than duck-type' `
+    ($r51[0].PSObject.TypeNames[0] -match 'BigFunnel\.PostingListRow$') ($r51[0].PSObject.TypeNames[0])
+
+# The point of returning objects rather than pointing at the CSV. Import-Csv
+# hands back text, and text sorts lexically - 0.9 above 0.0787 - which is
+# precisely wrong for the field an operator most wants to sort on.
+Assert 'sizes come back as numbers, not as text that sorts lexically' `
+    ($r51[0].PostingListGB -is [double]) ($r51[0].PostingListGB.GetType().Name)
+Assert 'and the rows answer a Where-Object the way the report does' `
+    (@($r51 | Where-Object { $_.Status -eq 'Critical' }).Count -eq
+     @($csv51 | Where-Object { $_.Status -eq 'Critical' }).Count) `
+    ('objects ' + @($r51 | Where-Object { $_.Status -eq 'Critical' }).Count)
+
+# The whole reason the report goes out through Write-Host. If any of it were
+# Write-Output it would be sitting in this collection, and every caller would
+# have to filter the decoration back out of their own result.
+$leaked51 = @($r51 | Where-Object { $_ -is [string] }).Count
+Assert 'no report text leaked into the stream alongside them' `
+    ($leaked51 -eq 0) ('got ' + $leaked51 + ' strings')
+
+# Off by default, or a bare run prints its report and then sprays a hundred
+# objects through the default formatter underneath it.
+$d51b = Reset-Dir '_t51b'
+$null = Invoke-MonitorPassThru -OutputPath $d51b -Extra '-Databases MDB01' -NoPassThru
+$r51b = @(Get-PassThruRows)
+Assert 'and without the switch the success stream stays empty' `
+    ($r51b.Count -eq 0) ('got ' + $r51b.Count + ' rows')
+
+Write-Host ''
+Write-Host 'T52  the elevated child does not take the report down with its window' -ForegroundColor Cyan
+# The relaunch needs a consent prompt, so the full round trip cannot be driven
+# from a test run. It splits cleanly in two, though, and both halves can be:
+# the child writing the relay, tested by running with the path passed directly,
+# and the parent replaying it, tested by reading the source the way T43 does.
+$d52   = Reset-Dir '_t52'
+$relay = Join-Path $env:TEMP 'bf-test-relay.txt'
+Remove-Item -LiteralPath $relay -Force -ErrorAction SilentlyContinue
+$null  = Invoke-Monitor -OutputPath $d52 -Extra ('-ConsoleRelayPath "{0}"' -f $relay)
+$out52 = Get-Stdout
+
+Assert 'the child writes a relay file when it is given somewhere to write one' `
+    (Test-Path -LiteralPath $relay) $relay
+
+$lines52 = @(if (Test-Path -LiteralPath $relay) { [System.IO.File]::ReadAllLines($relay) })
+Assert 'and it is not empty, on a run that printed a report' `
+    ($lines52.Count -gt 0) ('relay lines: ' + $lines52.Count)
+
+# Style first, tab, then the text. The delimiter is load-bearing: the parent
+# splits on it to decide the colour, and a line that arrived without one would
+# be dropped rather than printed uncoloured.
+$styles52 = @('Plain', 'Head', 'Good', 'Warn', 'Bad', 'Dim')
+$malformed52 = @($lines52 | Where-Object {
+    $i = $_.IndexOf("`t")
+    ($i -lt 0) -or ($styles52 -notcontains $_.Substring(0, $i))
+})
+Assert 'every relayed line carries a style the parent can act on' `
+    ($malformed52.Count -eq 0) ($malformed52 -join "`n")
+
+# The claim the relay has to support is not "some output arrived" but "the
+# operator reads the run they approved". Same lines, same order, same text.
+$decoded52 = @($lines52 | ForEach-Object { $_.Substring($_.IndexOf("`t") + 1) })
+Assert 'and replaying it reproduces the console report exactly, line for line' `
+    ((($decoded52 -join "`n")) -eq (($out52 -join "`n"))) `
+    (("relay:`n" + ($decoded52 -join "`n") + "`n`nconsole:`n" + ($out52 -join "`n")))
+
+# Colour is part of the report, not decoration on top of it: a verdict block
+# that arrives in the parent window all one colour is a different report.
+Assert 'the styles really travel, rather than everything arriving as Plain' `
+    (@($lines52 | Where-Object { $_ -notmatch '^Plain\t' }).Count -gt 0) ($lines52 -join "`n")
+
+# -Quiet means no console output. Relaying a report the child deliberately did
+# not print would make the parent louder than the run it is standing in for.
+$d52q = Reset-Dir '_t52q'
+Remove-Item -LiteralPath $relay -Force -ErrorAction SilentlyContinue
+$null = Invoke-Monitor -OutputPath $d52q -Extra ('-Quiet -ConsoleRelayPath "{0}"' -f $relay)
+Assert '-Quiet relays nothing, so the parent cannot print what the child suppressed' `
+    (-not (Test-Path -LiteralPath $relay)) $relay
+Remove-Item -LiteralPath $relay -Force -ErrorAction SilentlyContinue
+
+# The parent half. Lifted out of the source by name and run for real, the way
+# T43 exercises the argument builder - the elevation region around it needs a
+# consent prompt nobody can answer from a test run, but the parsing inside it is
+# where a relay goes quietly wrong, and that part is ordinary code.
+$relayFn = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null).
+           FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                                $n.Name -eq 'Show-ConsoleRelay' }, $true)
+Assert 'the replay is a function, so it can be tested without a consent prompt' `
+    ($relayFn.Count -eq 1) ('found ' + $relayFn.Count)
+
+if ($relayFn.Count -eq 1) {
+    . ([scriptblock]::Create($relayFn[0].Extent.Text))
+
+    # Stubbed so the test can see what the replay dispatched, rather than
+    # watching it scroll past. Same signature the real one has.
+    $script:Replayed = New-Object System.Collections.ArrayList
+    function Write-Report {
+        param([string]$Text = '', [string]$Style = 'Plain')
+        $null = $script:Replayed.Add(@{ Text = $Text; Style = $Style })
+    }
+
+    $fixture = Join-Path $env:TEMP 'bf-test-relay-fixture.txt'
+    [System.IO.File]::WriteAllText($fixture, @(
+        "Head`tBigFunnel PostingListTable monitor v9.9.9",
+        "Plain`t",
+        "Bad`t  RESULT  Alert",
+        # No tab: what a child killed part-way through its last write leaves.
+        "Dim",
+        # A style that is not in the set, for the same reason - this reaches a
+        # ValidateSet on the real Write-Report and must not throw there.
+        "Nonsense`t  a line whose style did not survive",
+        "Dim`t  Exit code 1"
+    ) -join "`r`n")
+
+    $n52 = Show-ConsoleRelay -Path $fixture
+    Assert 'a well-formed relay replays every line it can read' `
+        ($n52 -eq 5) ('replayed ' + $n52)
+    Assert 'and a truncated last line is skipped rather than printed as garbage' `
+        (@($script:Replayed | Where-Object { $_.Text -eq 'Dim' }).Count -eq 0) 'printed the style as text'
+    Assert 'an unreadable style degrades to Plain instead of throwing' `
+        (@($script:Replayed | Where-Object { $_.Text -match 'did not survive' -and $_.Style -eq 'Plain' }).Count -eq 1) `
+        (($script:Replayed | ForEach-Object { $_.Style + '|' + $_.Text }) -join "`n")
+    Assert 'and the styles that were readable are dispatched as they were written' `
+        ((@($script:Replayed)[0].Style -eq 'Head') -and (@($script:Replayed)[2].Style -eq 'Bad')) `
+        (($script:Replayed | ForEach-Object { $_.Style + '|' + $_.Text }) -join "`n")
+    Assert 'an empty report line survives the round trip as an empty line' `
+        (@($script:Replayed)[1].Text -eq '') ('got [' + @($script:Replayed)[1].Text + ']')
+
+    # Nothing to replay is the case the caller's fallback line exists for, and
+    # it has to be reported as zero rather than as a failure.
+    $script:Replayed.Clear()
+    Assert 'a relay that was never written replays nothing and says so' `
+        ((Show-ConsoleRelay -Path (Join-Path $env:TEMP 'bf-no-such-relay.txt')) -eq 0) 'expected 0'
+    Assert 'and an empty path is not treated as the current directory' `
+        ((Show-ConsoleRelay -Path '') -eq 0) 'expected 0'
+    Assert 'and neither case prints anything at all' `
+        ($script:Replayed.Count -eq 0) ('printed ' + $script:Replayed.Count)
+
+    Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'function:Write-Report' -Force -ErrorAction SilentlyContinue
+}
+
+$src52 = Get-Content -LiteralPath $monitor -Raw
+Assert 'the relaunch passes the relay path to the child it starts' `
+    ($src52 -match "bound\['ConsoleRelayPath'\]\s*=\s*\`$relay") 'not passed to the child'
+Assert 'and replays it after the child exits, then deletes it' `
+    ($src52 -match '(?s)\$replayed = Show-ConsoleRelay -Path \$relay.{0,200}Remove-Item -LiteralPath \$relay') 'no replay or no cleanup'
+# A relay that never arrived must not leave the operator with nothing at all.
+Assert 'and falls back to the exit code and log path when nothing came back' `
+    ($src52 -match '(?s)if \(\$replayed -eq 0\)\s*\{\s*Write-Report \(.The elevated run exited') 'no fallback'
+
+Write-Host ''
+
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
 if ($fail -gt 0) { exit 1 }
-
