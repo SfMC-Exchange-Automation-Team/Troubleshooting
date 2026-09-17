@@ -130,6 +130,27 @@ function Get-MailboxStatistics {
     # runs, which the growth-trending join depends on.
     $prefix = '{0:x8}' -f ([Math]::Abs($Database.GetHashCode()) -band 0x7FFFFFFF)
 
+    # How much content each regular mailbox holds. The default is 5.2 GB, far
+    # above any allocation bar the monitor can derive, which is deliberate: it
+    # keeps every pre-existing test asserting NotPopulated / MetricUnavailable
+    # valid without change, because those mailboxes are unarguably large enough
+    # to have allocated a posting list table.
+    #
+    # Override it to simulate the case that made the size test necessary - an
+    # estate of mailboxes too small to have allocated one, where 0 B is the
+    # correct reading rather than a metric outage. 'garbage' emits a value
+    # Convert-ExchangeSizeToBytes cannot parse, for the "cannot judge" path.
+    $itemSize = '5.2 GB (5,583,457,484 bytes)'
+    if ($env:MOCK_MAILBOX_MB) {
+        if ($env:MOCK_MAILBOX_MB -eq 'garbage') {
+            $itemSize = 'not a size at all'
+        }
+        else {
+            $mb       = [double]$env:MOCK_MAILBOX_MB
+            $itemSize = '{0} MB ({1:N0} bytes)' -f $mb, [int64]($mb * 1MB)
+        }
+    }
+
     $i = 0
     foreach ($s in $spec) {
         $i++
@@ -181,7 +202,7 @@ function Get-MailboxStatistics {
             DisplayName                        = $s.N
             MailboxGuid                        = [guid]('{0}-0000-0000-0000-{1:d12}' -f $prefix, $i)
             ItemCount                          = 1000 * $i
-            TotalItemSize                      = '5.2 GB (5,583,457,484 bytes)'
+            TotalItemSize                      = $itemSize
             BigFunnelPostingListTableTotalSize = $size
             BigFunnelIsEnabled                 = $true
             BigFunnelIndexedCount              = 1000 * $i
