@@ -10,9 +10,9 @@ destinations it is going to.
 > there is nothing to read directly. Every run prints a disclaimer saying so. Please repeat that to
 > customers — a message trace row is not a queue entry.
 
-**Current version: 1.6.6.** This supersedes `Get-ExoQueue_v1.4.2.ps1`, which is retained only for
-reference and should not be used: it under-reports on any tenant where the queue exceeds one page,
-and reports the run as complete while doing so.
+**Current version: 1.6.6.** It supersedes 1.4.2, which has moved to [`archive/`](archive/) — that
+version under-reports on any tenant where the queue exceeds one page, and reports the run as
+complete while doing so.
 
 ---
 
