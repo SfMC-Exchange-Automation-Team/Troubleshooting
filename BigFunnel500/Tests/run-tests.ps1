@@ -3209,6 +3209,139 @@ Assert 'and the two abort reasons stay distinguishable to a forwarder' `
     ($src60 -match 'WinRM second hop') 'both branches share one abort reason'
 
 Write-Host ''
+Write-Host 'T61  a run says where its time went, not only how much of it there was' -ForegroundColor Cyan
+# DurationSeconds and MailboxesEvaluated have been published since v1.5.0 and are
+# asserted above. What was missing until v1.13.0 is the breakdown: a single total
+# averages a fixed cost across a variable population, so it flatters a small
+# estate and understates a large one, and it cannot be extrapolated from a lab to
+# a production estate - which is the one question a customer actually asks of it.
+#
+# Three phases, because they scale on three different things: the runspace bind is
+# very nearly constant, discovery tracks the database count, and the per-mailbox
+# loop tracks the population and dominates at any real size.
+
+$d61  = Reset-Dir '_t61'
+$rc61 = Invoke-Monitor -OutputPath $d61
+Assert 'the run itself still succeeds' ($rc61 -eq 0) ('got exit ' + $rc61)
+
+$sum61 = Get-Summary $d61
+$names61 = if ($null -ne $sum61) { @($sum61.PSObject.Properties.Name) } else { @() }
+
+# Presence tested separately from value, because a field absent from the schema and
+# a field present and zero are the same JSON to a consumer reading it with a
+# null-coalescing default - and only one of them is a contract.
+Assert 'the summary declares all three phase fields' `
+    (($names61 -contains 'BindSeconds') -and ($names61 -contains 'DiscoverSeconds') -and ($names61 -contains 'CollectSeconds')) `
+    (($names61 | Where-Object { $_ -like '*Seconds' }) -join ', ')
+
+if ($null -ne $sum61) {
+    Assert 'each phase is a non-negative number' `
+        (($sum61.BindSeconds -ge 0) -and ($sum61.DiscoverSeconds -ge 0) -and ($sum61.CollectSeconds -ge 0)) `
+        ('bind=' + $sum61.BindSeconds + ' discover=' + $sum61.DiscoverSeconds + ' collect=' + $sum61.CollectSeconds)
+
+    # The three are a breakdown of the run, not a second opinion on its length.
+    # Their sum must fit inside the total, with the setup and reporting either side
+    # making up the difference. The tolerance is for rounding only: each field is
+    # rounded to one decimal independently, so the sum can exceed the truth by up
+    # to 0.05 three times over.
+    $phases61 = $sum61.BindSeconds + $sum61.DiscoverSeconds + $sum61.CollectSeconds
+    Assert 'the phases fit inside the total rather than exceeding it' `
+        ($phases61 -le ($sum61.DurationSeconds + 0.2)) `
+        ('phases=' + $phases61 + ' duration=' + $sum61.DurationSeconds)
+
+    # Guards the opposite failure from the one above: a breakdown that is a rounding
+    # error next to the total is not a breakdown, it is three zeroes shipped as a
+    # contract. On the mock estate the collection loop is the bulk of the run.
+    Assert 'and account for most of it, rather than rounding to nothing' `
+        ($phases61 -ge ($sum61.DurationSeconds * 0.5)) `
+        ('phases=' + $phases61 + ' duration=' + $sum61.DurationSeconds)
+
+    Assert 'the mailbox count is still beside them, as the denominator' `
+        ($sum61.MailboxesEvaluated -eq 15) ('got ' + $sum61.MailboxesEvaluated)
+}
+
+# The log carries each boundary as it is crossed, so a run that is STILL GOING can be
+# read from its log rather than waited out. That is not a nicety on an estate where
+# the collection phase is the one being measured.
+$log61 = Get-Log $d61
+Assert 'the log names the bind phase as it ends' `
+    ((($log61 -join "`n")) -match 'Exchange binding took [\d.]+s\.') 'no such line'
+Assert 'the log names the discovery phase as it ends' `
+    ((($log61 -join "`n")) -match 'Database discovery took [\d.]+s\.') 'no such line'
+Assert 'the log names the collection phase as it ends, with the database count' `
+    ((($log61 -join "`n")) -match 'Collection took [\d.]+s across \d+ database\(s\)\.') 'no such line'
+
+# On the console the breakdown rides on the line that was already there. "How long did
+# that take" is asked on screen; "which part of it" is the question a second run makes
+# you ask, and putting the answer anywhere but beside the total means nobody reads the
+# two together.
+$out61 = (Get-Stdout) -join "`n"
+Assert 'the console verdict line carries the breakdown beside the total' `
+    ($out61 -match '15 mailbox\(es\) evaluated in [\d.]+s\s+\(bind [\d.]+s, discover [\d.]+s, collect [\d.]+s\)') `
+    ((@(Get-Stdout) | Where-Object { $_ -match 'evaluated in' }) -join ' | ')
+
+# The elapsed-time rule itself, lifted out by name. The open-ended case is why this is
+# a function rather than three subtractions in two places, and it is the case a normal
+# run never reaches - so it is tested here or it is not tested at all.
+. ([scriptblock]::Create((Get-MonitorPartText -Name 'Get-PhaseSeconds')))
+
+Assert 'a phase the run never reached reports 0' `
+    ((Get-PhaseSeconds -From $null -To $null) -eq 0) ('got ' + (Get-PhaseSeconds -From $null -To $null))
+
+# The missing START is what means "never reached". An end marker without one is
+# incoherent state, and the honest answer to it is still 0 rather than a number
+# measured from the epoch.
+Assert 'and still reports 0 if only an end marker somehow survives' `
+    ((Get-PhaseSeconds -From $null -To (Get-Date)) -eq 0) ('got ' + (Get-PhaseSeconds -From $null -To (Get-Date)))
+
+$t0 = Get-Date
+Assert 'a completed phase reports its interval, to one decimal' `
+    ((Get-PhaseSeconds -From $t0 -To $t0.AddSeconds(12.34)) -eq 12.3) `
+    ('got ' + (Get-PhaseSeconds -From $t0 -To $t0.AddSeconds(12.34)))
+
+Assert 'a phase that took no measurable time reports 0, not an error' `
+    ((Get-PhaseSeconds -From $t0 -To $t0) -eq 0) ('got ' + (Get-PhaseSeconds -From $t0 -To $t0))
+
+# THE CASE THAT MATTERS ON A RUN THAT DIED. A phase with a start and no end is one the
+# run is still inside, and the useful number is how long it had been in it - a bind
+# that hung for 180 seconds before giving up is the single most informative thing such
+# a run can report. Treating the missing end as zero would erase exactly that.
+$openEnded = Get-PhaseSeconds -From (Get-Date).AddSeconds(-5) -To $null
+Assert 'an unfinished phase measures to now rather than reporting 0' `
+    ($openEnded -ge 4 -and $openEnded -le 20) ('got ' + $openEnded)
+
+Assert 'and returns a number, so a consumer can compare it without parsing' `
+    ((Get-PhaseSeconds -From $t0 -To $t0.AddSeconds(3)) -is [double]) `
+    ('got ' + (Get-PhaseSeconds -From $t0 -To $t0.AddSeconds(3)).GetType().Name)
+
+# A field added to the completed path and forgotten on the abort path is the specific
+# way this regresses, and it regresses INVISIBLY: the schema default fills the gap with
+# a 0, so the summary still validates and still carries the key. The abort path is also
+# where these fields are worth most - an abort with BindSeconds 180 and DiscoverSeconds
+# 0 names the runspace as the thing that hung. Checked against the AST rather than the
+# raw text so a mention in a comment cannot satisfy it.
+$ast61   = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null)
+$calls61 = @($ast61.FindAll({ param($x)
+    $x -is [System.Management.Automation.Language.CommandAst] -and
+    $x.GetCommandName() -eq 'Write-RunSummary'
+}, $true))
+
+Assert 'the monitor writes a summary from exactly two places' `
+    ($calls61.Count -eq 2) ('found ' + $calls61.Count)
+
+foreach ($f61 in @('BindSeconds', 'DiscoverSeconds', 'CollectSeconds')) {
+    $carried = @($calls61 | Where-Object {
+        @($_.CommandElements | Where-Object {
+            $_ -is [System.Management.Automation.Language.HashtableAst] -and
+            @($_.KeyValuePairs | Where-Object { $_.Item1.Extent.Text -eq $f61 }).Count -eq 1
+        }).Count -eq 1
+    })
+    Assert ('both the completed and the aborted path pass ' + $f61) `
+        ($carried.Count -eq $calls61.Count) `
+        ($carried.Count.ToString() + ' of ' + $calls61.Count + ' call site(s) at line(s) ' +
+         ((@($calls61) | ForEach-Object { $_.Extent.StartLineNumber }) -join ', '))
+}
+Write-Host ''
 
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
 if ($fail -gt 0) { exit 1 }

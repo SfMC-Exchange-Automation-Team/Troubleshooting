@@ -249,7 +249,7 @@ Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchan
 A run started by hand looks like this. Nothing was passed but `-Scope Local`:
 
 ```text
-BigFunnel PostingListTable monitor v1.12.0
+BigFunnel PostingListTable monitor v1.13.0
 run 20260915-121458-317452 on EXCH-01
 
 Scope Local - 3 database(s) in scope
@@ -260,7 +260,7 @@ Scope Local - 3 database(s) in scope
   - 3 mailbox(es) were skipped because BigFunnelPostingListTableTotalSize held no readable value - Unlimited, or present but empty. They are absent from the detail below; do not read that as a size of zero.
 
   RESULT  Alert
-  15 mailbox(es) evaluated in 1.1s
+  15 mailbox(es) evaluated in 1.1s  (bind 0.4s, discover 0.1s, collect 0.5s)
 
     Critical             3
     Warning              3
@@ -351,7 +351,7 @@ Everything lands under `-OutputPath`, which defaults to `%ProgramData%\ExchangeB
 | `BigFunnelPostingListMonitor-<timestamp>.log` | On every run | The run transcript, including the two `[ERROR]` lines a `MetricUnavailable` run emits |
 | `BigFunnelPostingListMonitor-<runid>.json` | Only when `-EmitTo` includes `RunJson` | The same summary object as `latest-summary.json`, kept per run instead of overwritten. See [Feeding a log aggregator](#feeding-a-log-aggregator) |
 | `latest.csv` | Refreshed only when a run produced detail | A copy of the newest per-run CSV at a stable path, for a monitoring agent that reads files |
-| `latest-summary.json` | On every run that gets far enough to have an output directory | The run verdict: `Completed`, `Status`, `ExitCode`, the status counts, and `TrendMetric` |
+| `latest-summary.json` | On every run that gets far enough to have an output directory | The run verdict: `Completed`, `Status`, `ExitCode`, the status counts, and `TrendMetric`, plus what the run cost - see [How long a run takes, and where the time goes](#how-long-a-run-takes-and-where-the-time-goes) |
 
 Those last two are the stable pair, and they are the only files a scheduled consumer reads. A run that cannot refresh either one exits `3` and names the reason in `PublishErrors`, rather than returning success over a pair that still describes an earlier run. A `latest.csv` deliberately skipped because the run produced no detail is not that case and does not affect the exit code.
 
@@ -429,7 +429,7 @@ The payload is `key=value`, one field per line - Splunk extracts it with no conf
 
 ```text
 RunId=20260916-120000-4242
-ScriptVersion=1.12.0
+ScriptVersion=1.13.0
 Timestamp=2026-09-16T12:00:00.0000000+02:00
 Server=EXCH-01
 Scope=Local
@@ -460,7 +460,7 @@ Per-mailbox events are bounded by `-MaxAlertDetail` (default `25`), the same cap
 
 #### `RunJson`
 
-`BigFunnelPostingListMonitor-<runid>.json`, in the output directory, carrying the same summary object as `latest-summary.json` - the same 47 fields, plus the run's real `ExitCode` - kept per run instead of overwritten. It is written **after** the event log channel on purpose, so that it records whatever the event log channel just failed with; written the other way round it would report an empty `EmitErrors` on precisely the runs where that channel broke.
+`BigFunnelPostingListMonitor-<runid>.json`, in the output directory, carrying the same summary object as `latest-summary.json` - the same 50 fields, plus the run's real `ExitCode` - kept per run instead of overwritten. It is written **after** the event log channel on purpose, so that it records whatever the event log channel just failed with; written the other way round it would report an empty `EmitErrors` on precisely the runs where that channel broke.
 
 At a 4-hour cadence that is about 2,200 files a year, and they are swept by the existing `-RetentionDays` pass because the name sits inside the `BigFunnelPostingListMonitor-*` pattern. There is no second rotation setting to configure, and none to forget.
 
@@ -1014,6 +1014,29 @@ Alert on `Status` not in `OK, MetricInconclusive`, and read the counts beside it
 `TrendMetric` in the summary names the counter growth was measured on. On a mixed estate it reads `Mixed`, meaning both counters were in use in the one run: the mailboxes whose posting list table is readable were trended on it and carry projected dates, and the mailboxes still reading `0 B` were trended on `IndexPayloadBytes` and carry a ranking instead. `TrendedOnPayload` gives the size of that second group.
 
 Read `Emerging` as the answer only when `TrendedOnPayload` is `0`. Above zero, `Emerging` is keyed on a projected date and no date is produced on the fallback path, so it can only ever name mailboxes from the group the thresholds can see - a short list there is not evidence that the rest of the estate is quiet. Alert on `Growing` alongside it, and on `GrowingRanked` for the part of the estate that has an order but no dates. See [When the posting list table reads 0 B](#when-the-posting-list-table-reads-0-b).
+
+#### How long a run takes, and where the time goes
+
+Every run measures itself. Five fields in `latest-summary.json` say how much work it did and how long each part of it took:
+
+| Field | Meaning |
+|---|---|
+| `MailboxesEvaluated` | How many mailboxes the run collected statistics for, after skips. The denominator for everything below. `0` on a run that aborted before it collected |
+| `DurationSeconds` | Wall clock for the whole run, from the moment it took the lock to the moment it wrote this file |
+| `BindSeconds` | Opening the Exchange runspace and confirming `Get-MailboxStatistics` came back with it |
+| `DiscoverSeconds` | Selecting the databases in scope |
+| `CollectSeconds` | The per-mailbox statistics loop, across every database in scope |
+
+The same breakdown prints on the console under `RESULT`, and each phase boundary is logged as it is crossed, so a run that is still going can be read from its log rather than waited out.
+
+**Three phases rather than one number, because they scale on different things.** `BindSeconds` is very nearly a fixed cost whatever the estate - a runspace to one Exchange server costs what it costs, and ten times the mailboxes do not make it slower. `DiscoverSeconds` tracks the database count. `CollectSeconds` tracks the mailbox population, and on any estate large enough for the question to be worth asking it is the whole of the answer. A single total averages a fixed cost across a variable population, which flatters a small estate and understates a large one - so a total cannot be extrapolated from one estate to another, and these three can. Measure a scope you already have, and the term that is going to grow is named rather than buried.
+
+The three do not sum to `DurationSeconds`. The difference is the setup before the bind and the reporting, publishing and retention sweep after the collection. That remainder is deliberately not broken out: it is small, and it does not scale with anything anyone is asking about.
+
+**A run that aborted still reports them, and that is when they are worth most.** A phase the run never reached reports `0`. A phase it died *inside* reports how long it had been in it when it failed, rather than `0` - so an abort carrying `BindSeconds 180` and `DiscoverSeconds 0` names the runspace as the thing that hung, which is otherwise a log-reading exercise. The two zeroes are told apart by the phase after: a `0` with a non-zero phase behind it means that phase was fast, and a `0` with nothing after it means the run never got there.
+
+> [!NOTE]
+> **The instrument is here; measurements from a large estate are not.** Every timing in this article was taken on a lab DAG of under 100 mailboxes, and a per-mailbox cost measured there does not transfer to an estate two orders of magnitude larger - different storage, different RBAC evaluation, different database layout. These fields exist so that the estate running the monitor can answer the scale question from its own runs instead of from ours: collect a week of summaries, and `CollectSeconds` over `MailboxesEvaluated` is the per-mailbox cost on your hardware. Size the `-MaxRunMinutes` budget and the schedule interval from that, not from any figure in this document.
 
 #### Which DAG node to schedule on
 
