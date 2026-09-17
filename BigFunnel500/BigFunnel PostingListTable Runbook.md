@@ -732,6 +732,17 @@ It checks, in both directions: the parameter block reproduced above against the 
 
 `Tests\runbook-checks-selftest.py` is the test for that checker, and it is worth knowing it exists before reading a `0 failed` line as an assurance. It builds a throwaway copy of this article and the script in a temp directory, breaks exactly one thing, and asserts on what the checker prints: a renamed table header, a count drifted by one, a link pointing into a code fence, a parameter whose type changed, an exit code carrying a trailing comment. Every case the checker is meant to tolerate is paired with its inverse, so "this link now resolves" can be told apart from "the link check stopped checking". It ends with `PROOFS: <n> failed`, writes only to a temp directory, and changes nothing in this folder.
 
+### Verifying the claims on real hardware
+
+Everything above is checked against a mock or against this article's own text. Some of what the monitor claims cannot be established that way at all, because the claim is about how Windows behaves rather than about how the script behaves. Two scripts in `Tests\` do that part, on a lab estate, and they are listed here because neither is discoverable by reading this article otherwise.
+
+| Script | What it settles that a mock cannot |
+|---|---|
+| `Tests\Verify-LabGates.ps1` | That a task registers with `LogonType Password` and then actually runs; that a **non-elevated** process can write to an existing event source, measured with an ordinary user rather than an admin with a filtered token; that per-mailbox events carry the right ID, entry type and fields when written by a real scheduled task; and that a run which cannot overwrite its stable files says so instead of exiting `0` beside a stale summary |
+| `Tests\Verify-PolicyRefusal.ps1` | That a **real** access-control denial - not an injected one - produces the error the script's policy diagnosis is written against. See [That refusal has been produced with a real access control](#that-refusal-has-been-produced-with-a-real-access-control) |
+
+Both need a lab box and both change state on it: `Verify-LabGates.ps1` creates an event source, registers tasks and runs real collections, and `Verify-PolicyRefusal.ps1` mutates a system ACL. Each reverts what it did and checks the revert rather than assuming it, and each says so in its own header. **Read that header before running either anywhere that matters.** One gate additionally stages a fabricated growth rate to reach the `Emerging` event, for the reason given under [Standing up a demonstration that already has findings](#standing-up-a-demonstration-that-already-has-findings), and prints that disclosure next to its own result.
+
 ### Rehearsing the alerting on a non-production estate
 
 `run-tests.ps1` proves the monitor behaves against a mock. It does not prove your alerting does. The route from an exit code to a ticket runs through a scheduled task, an account, a network path and whatever consumes the summary file, and the only state most estates ever produce naturally is the clean one. `Invoke-BigFunnelScenario.ps1` closes that gap by driving the monitor into each of its states against real mailboxes on a dev or lab estate.
@@ -815,6 +826,31 @@ Three registrations are refused rather than completed, each because the resultin
 One case is a loud warning rather than a refusal: **`-Scope` not passed explicitly**. The default is `All`, so leaving it off registers a task on every DAG member that sweeps the whole organization, writing several full sets of files describing the same estate. A deliberate `-Scope All` task on exactly one node is a legitimate thing to want, so this does not block - but pass `-Scope All` explicitly to say you meant it.
 
 **Where policy blocks registration**, the script says so rather than passing the exception through. A local administrator refused by a management policy gets `Access is denied` and no indication that the denial is an estate setting rather than a bug, so the script names it as a policy refusal, points at the manual registration below, and still records the underlying error. That is the common case in a locked-down estate, and the equivalent command exists precisely so it can be handed to whoever does hold the right.
+
+#### That refusal has been produced with a real access control
+
+The sentence above is a **diagnosis**, and a diagnosis that has only ever been produced by a test harness injecting its own exception says nothing about your estate. `run-tests.ps1` covers this path twice, but it does so by setting `MOCK_TASK_DENY`, which proves the handler behaves when handed a message it already expects. `Tests\Verify-PolicyRefusal.ps1` closes the remaining gap: it denies the right for real, on a live server, and measures what the script actually does.
+
+It tests both mechanisms an estate might use, because they are different things and could report differently:
+
+| Lever | What it changes |
+|---|---|
+| Filesystem | A deny ACE for one named principal on `%SystemRoot%\System32\Tasks` |
+| Native | A deny ACE in the Task Scheduler's own root-folder security descriptor, set through the `Schedule.Service` COM API |
+
+Measured on Windows Server 2025, **both produce exactly the same failure**: a `Microsoft.Management.Infrastructure.CimException`, HRESULT `0x80131500`, category `PermissionDenied`, message `Access is denied.` The script matches it, exits `7`, and writes the policy diagnosis quoted above. The wording is correct for both, and the exit code a scheduler sees is the documented one.
+
+**The controls are what make that mean anything.** The gate registers a task successfully before it denies anything, and again after it reverts, so the refusal in between is attributable to the access control and to nothing else - an `Access is denied` from an account that could never register a task anyway would prove nothing at all.
+
+```powershell
+# On a lab box, elevated. This mutates a system ACL and reverts it.
+# Read the script header before running it anywhere you care about.
+.\Tests\Verify-PolicyRefusal.ps1 -TaskCredential (Get-Credential)
+```
+
+Three properties of how it handles the estate are worth knowing, because each was paid for. The deny mask omits `WRITE_DAC` and `WRITE_OWNER` deliberately, so the principal applying the deny can always lift it. A SYSTEM self-heal task is registered **before** any deny is applied, not after, because once the deny is in place that account can no longer create one. And the revert is checked by comparing ACE *sets* rather than SDDL strings: `Set-Acl` canonicalises ACE order when it rewrites a DACL, and an earlier version of this gate failed its own revert check on a box that was already clean, because two adjacent allow ACEs had been transposed. Allow-ACE order does not affect an access check. The exact baseline is restored afterwards regardless, and that is checked separately.
+
+**What this does not cover.** Two lockdown mechanisms, on one operating system version. A policy that permits the registration and removes the task afterwards, or an estate whose real blocker is a missing *Log on as a batch job* right, both fail differently and neither would be named as a policy refusal - the first looks like a task that vanished, the second like a task that registers and then never runs. That second case is the one the [logon type](#the-logon-type-is-load-bearing) section covers.
 
 #### Registering it by hand
 
