@@ -26,7 +26,17 @@
 #>
 
 BeforeAll {
-    $script:ScriptPath = Join-Path $PSScriptRoot 'Get-ExoQueue.ps1'
+    # Resolved by searching rather than hardcoded, so the suite works whether it sits beside
+    # Get-ExoQueue.ps1 or one level down in Tests/. It has now lived in both places, and a hardcoded
+    # '..' would break the moment it moves back.
+    $script:ScriptPath = @(
+        (Join-Path $PSScriptRoot 'Get-ExoQueue.ps1')
+        (Join-Path (Split-Path -Parent $PSScriptRoot) 'Get-ExoQueue.ps1')
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+    if (-not $script:ScriptPath) {
+        throw "Get-ExoQueue.ps1 not found beside these tests or in the parent folder."
+    }
 
     function global:Get-MessageTraceV2 {
         [CmdletBinding()]

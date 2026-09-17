@@ -149,19 +149,34 @@ It is a diagnostic, not a control plane.
 
 ---
 
-## **Tests**
+## **What is in this folder**
+
+| | |
+|---|---|
+| [`Get-ExoQueue.ps1`](Get-ExoQueue.ps1) | **The tool.** This is the one you run. |
+| [`Test-ExoQueueTenantAssumption.ps1`](Test-ExoQueueTenantAssumption.ps1) | A read-only check against **your own** tenant. Worth running once somewhere unfamiliar - see below. |
+| [`docs/`](docs/) | Narrated walkthrough, transcript, screenshots. |
+| [`Tests/`](Tests/) | Verification of the tool itself. Not for customer work. |
+| [`archive/`](archive/) | The superseded 1.4.2, kept as a reference. Do not run it. |
+
+### **Checking a tenant before you trust the numbers**
 
 ```powershell
-Import-Module Pester -MinimumVersion 6.0.0
-Invoke-Pester -Path .\Get-ExoQueue.Tests.ps1 -Output Detailed
+.\Test-ExoQueueTenantAssumption.ps1
 ```
 
-160 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
+Seven **read-only** queries against the tenant you are connected to, answering the things no offline
+test can settle: whether the service reads its parameters in the clock this tool assumes, whether
+your role has `ResultSize` capped below what you asked for, and whether the received timestamp is
+where the tool looks for it. It writes nothing anywhere. All four of those assumptions fail
+*quietly* when wrong - they produce a plausible number rather than an error - which is exactly why
+it is worth five minutes in a tenant you do not know.
 
-`Test-ExoQueueTenantAssumption.ps1` is different: it runs **seven read-only queries against your own
-connected tenant** and reports whether the service behaves the way this script assumes. Worth running
-once in an unfamiliar tenant. `Test-ExoQueuePagingFidelity.ps1` proves the paging loop retrieves a
-known corpus exactly, offline.
+### **Tests**
+
+160 offline Pester tests in [`Tests/`](Tests/), plus a paging fidelity probe. They stub
+`Get-MessageTraceV2` and connect to nothing. See [`Tests/README.md`](Tests/README.md) - in
+particular the note on reading the paging probe, whose output says `MISSING` a lot on purpose.
 
 ---
 

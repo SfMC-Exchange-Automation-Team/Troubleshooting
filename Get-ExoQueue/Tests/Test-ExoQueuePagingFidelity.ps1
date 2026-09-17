@@ -43,7 +43,10 @@ and reporting it as a complete queue.
 
 $ErrorActionPreference = 'Stop'
 
-$root = $PSScriptRoot
+$root = @($PSScriptRoot, (Split-Path -Parent $PSScriptRoot)) |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Get-ExoQueue.ps1') } |
+    Select-Object -First 1
+if (-not $root) { throw "Get-ExoQueue.ps1 not found beside this probe or in the parent folder." }
 $out  = Join-Path $env:TEMP ('exoq-paging-{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
 New-Item -Path $out -ItemType Directory -Force | Out-Null
 

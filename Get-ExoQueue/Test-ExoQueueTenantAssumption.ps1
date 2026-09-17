@@ -3,20 +3,20 @@
 Answers, read-only, the four questions about a tenant that Get-ExoQueue.ps1 currently assumes.
 
 .DESCRIPTION
-Get-ExoQueue v1.5.1 was built and tested entirely offline against stubs. Four of its behaviours rest
-on assumptions about the live service that no offline test can settle, and all four fail QUIETLY -
-they produce a plausible number rather than an error. This script settles them with seven queries and
-writes nothing anywhere.
+Get-ExoQueue was built and tested offline against stubs. Four of its behaviours rest on assumptions
+about the live service that no offline test can settle, and all four fail QUIETLY - they produce a
+plausible number rather than an error. This script settles them with seven queries and writes nothing
+anywhere.
 
     1. Time basis. Get-ExoQueue feeds a received value from one page back in as the next page's
        EndDate. That round-trip only holds if the clock the service READS its parameters in is the
        same clock it WRITES its output in. If they differ by the machine's UTC offset, every page
        after the first silently queries the wrong window. -TimeBasis exists to correct it and
-       defaults to Utc (Get-ExoQueue.ps1:1656); this tells you whether that default is right here.
+       defaults to Local; this tells you whether that default is right here.
 
-    2. Received property name. The script reads the received time by trying a candidate list -
-       'Received', 'ReceivedTime', 'Received Time', 'ReceivedUtc' (Get-ExoQueue.ps1:27). A name
-       outside that list means no timestamp is read at all: every message is reported undated,
+    2. Received property name. The script reads the received time by trying the candidate list in
+       $script:ExoQueueReceivedNames - 'Received', 'ReceivedTime', 'Received Time', 'ReceivedUtc'.
+       A name outside that list means no timestamp is read at all: every message is reported undated,
        ordering degrades to arrival order, and the run warns instead of failing.
 
     3. Filter composition. -JournalOnly and -JournalExclude set -RecipientAddress, while paging sets
@@ -72,7 +72,7 @@ That is also read-only: -WhatIf suppresses the output folder and the trend-log a
 still queries and still reports EffectivePageSize, ResultSizeCapped, Truncated and TimeBasis on the
 returned object.
 
-Author: written 2026-08-14 alongside Get-ExoQueue v1.5.1.
+Author: written 2026-08-14 alongside Get-ExoQueue.
 #>
 
 [CmdletBinding()]
@@ -201,7 +201,7 @@ function Test-ExoQueueTenantAssumption {
             Write-Verdict 'Verdict' ('Recognised: {0}. No change needed.' -f ($matched -join ', ')) 'Good'
         }
         elseif ($dateNames.Count -gt 0) {
-            Write-Verdict 'Verdict' ("None of {0} is present. Add '{1}' to `$script:ExoQueueReceivedNames at Get-ExoQueue.ps1:27." -f `
+            Write-Verdict 'Verdict' ("None of {0} is present. Add '{1}' to `$script:ExoQueueReceivedNames in Get-ExoQueue.ps1." -f `
                 ($candidates -join ', '), $dateNames[0]) 'Bad'
         }
         else {
@@ -358,7 +358,7 @@ function Test-ExoQueueTenantAssumption {
         $actions   = [System.Collections.Generic.List[string]]::new()
 
         if (-not $nameKnown -and $dateNames.Count -gt 0) {
-            $actions.Add("Q2: add '{0}' to `$script:ExoQueueReceivedNames at Get-ExoQueue.ps1:27, or every message reports as undated." -f $dateNames[0])
+            $actions.Add("Q2: add '{0}' to `$script:ExoQueueReceivedNames in Get-ExoQueue.ps1, or every message reports as undated." -f $dateNames[0])
         }
         elseif (-not $nameKnown) {
             $actions.Add('Q2: no DateTime property was returned at all. The received time cannot be read; ordering and -AgeMinutes are both meaningless until this is explained.')
