@@ -4,7 +4,7 @@ A check that has never been watched catch anything is not a safety net, it is a
 line in a PR body. This builds a throwaway copy of the three files per case,
 breaks exactly one thing, and asserts on what the checker prints.
 
-The cases are the failure modes the hardening pass was for. Three of them were
+The cases are the failure modes the hardening pass was for. Five of them were
 real weaknesses in the version before it:
 
   * A moved anchor used to end the run with a ValueError traceback, taking the
@@ -14,13 +14,19 @@ real weaknesses in the version before it:
     link to one of those resolved happily. Now it does not.
   * The spelled-out count in the exclusion sentence was an anchor rather than a
     fact under test, so it could only ever be wrong silently.
+  * A parameter's type was required by the pattern and then discarded, so an
+    untyped parameter matched nothing and was invisible on BOTH sides at once -
+    the check passing by seeing neither of them.
+  * An exit code whose only sites carried a trailing comment disappeared from
+    the script side, and the check then failed the RUNBOOK for documenting a
+    code it could no longer see.
 
 Read-only against the repo, writes only to a temp directory, needs no Exchange,
 no elevation and no network.
 
     python Tests\\runbook-checks-selftest.py
 """
-import shutil, subprocess, sys, tempfile, pathlib
+import re, shutil, subprocess, sys, tempfile, pathlib
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
 MON = 'Monitor-BigFunnelPostingList.ps1'
@@ -126,6 +132,39 @@ run_case('a link to nothing at all still FAILS',
              '## Related articles',
              'See [that](#no-such-heading-anywhere).\n\n## Related articles', 1),
          want_in='#no-such-heading-anywhere', want_pass_count=7)
+
+# Both sides still declare 28 parameters, with the same names, the same defaults
+# and in the same order. Only the type moved. Matching on (name, default) passed
+# this, which is why the type is now captured and compared rather than merely
+# required by the pattern.
+run_case('the doc changes a parameter TYPE and nothing else: check 1 FAILS',
+         mutate_doc=lambda d: d.replace('[string]$TaskName', '[int]$TaskName', 1),
+         want_in='FAIL  1.', want_pass_count=7)
+
+# The case item 5 was actually about. Untyped on BOTH sides, so a pattern that
+# required a type matched neither one and the check passed by seeing neither -
+# with the defaults openly disagreeing.
+run_case('an untyped parameter is no longer invisible on both sides',
+         mutate_script=lambda s: s.replace('[string]$TaskName', '$TaskName', 1),
+         mutate_doc=lambda d: re.sub(r'\[string\]\$TaskName\s*=.*',
+                                     "$TaskName = 'a different default entirely',",
+                                     d, count=1),
+         want_in='FAIL  1.', want_pass_count=7)
+
+# Exit code 7 reaches the exit code only through `return 7`, nine times and never
+# once through $exitCode = 7. Anchored hard to end-of-line, putting a comment on
+# those lines removed the code from the script side entirely and check 3 failed
+# the RUNBOOK for documenting a code it could no longer see.
+run_case('an exit code written with a trailing comment is still seen',
+         mutate_script=lambda s: re.sub(r'(?m)^(\s*return 7)$',
+                                        r'\1  # policy refused the registration', s),
+         want_exit=0, want_pass_count=8)
+
+# The inverse of that one, for the same reason case 8 follows case 7: a code the
+# runbook genuinely does not document must still fail.
+run_case('a code missing from the Code table still FAILS',
+         mutate_doc=lambda d: re.sub(r'(?m)^\| `7` \|.*\n', '', d, count=1),
+         want_in='FAIL  3.', want_pass_count=7)
 
 print()
 bad = 0

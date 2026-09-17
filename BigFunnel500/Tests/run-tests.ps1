@@ -3,6 +3,24 @@
 # invokes it, so process exit codes are real rather than inferred.
 
 $ErrorActionPreference = 'Continue'
+
+# The monitor sets Set-StrictMode -Version 2.0 at its own top, so every function
+# lifted out of it and run in THIS process has to be held to the same rules. Most
+# cases here invoke the monitor as a child powershell.exe, where it sets its own
+# mode and this line changes nothing; the lifted-function cases are the ones that
+# were running under weaker rules than production, and T59 exists because that
+# gap let a real defect through - on the abort path [string]$null.Status threw on
+# hardware and did not throw here at all. T59 fixed it for T59, with a local
+# & { Set-StrictMode }. This fixes it for whatever gets lifted next.
+#
+# Measured when it was added: the suite went 505 -> 502 passed, 0 failed. The
+# three that stopped asserting were all this file calling .Count on a value that
+# can be $null or a scalar - Get-Csv returns @(), and PowerShell unrolls an empty
+# array on return. They are wrapped in @() where they sit rather than exempted,
+# because .Count on a possibly-empty result is a latent bug in an assertion, not
+# a quirk of the mode.
+Set-StrictMode -Version 2.0
+
 $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
 
 # Resolved from this script's own location, so the suite runs from wherever the
@@ -253,6 +271,31 @@ function Set-RunAge {
     Rename-Item -LiteralPath $old[0].FullName -NewName $name
     return $stamp
 }
+
+Write-Host ''
+Write-Host 'T0  the suite is running under the rules the monitor ships with' -ForegroundColor Cyan
+# The Set-StrictMode at the top of this file is a claim, and every claim in this
+# folder that had nothing testing it has been wrong at least once. Deleting that
+# line would leave every assertion below passing under weaker rules than
+# production with nothing saying so - which is how the T59 defect survived to
+# reach hardware: the monitor threw on w25-ex01 and this suite could not
+# reproduce it, because here the same expression quietly evaluated to $null.
+#
+# Probed behaviourally because PowerShell exposes no way to read the current
+# StrictMode level back. Both tiers are checked because the version matters: 1.0
+# catches the unset variable, and it takes 2.0 to catch the absent property that
+# $null.Status on the abort path actually was.
+$strictVar = $false
+try { $null = $NoSuchVariableIsDefinedAnywhereInThisSuite }
+catch { $strictVar = $true }
+Assert 'reading an unset variable throws, so StrictMode is on at all' $strictVar `
+    'Set-StrictMode is missing from the top of this file'
+
+$strictProp = $false
+try { $null = (New-Object PSObject).NoSuchPropertyExistsHere }
+catch { $strictProp = $true }
+Assert 'and reading an absent property throws, so it is 2.0 and not 1.0' $strictProp `
+    'StrictMode is on but below Version 2.0, which is what the monitor sets'
 
 Write-Host ''
 Write-Host 'T1  threshold validation: -WarningGB at or above -CriticalGB' -ForegroundColor Cyan
@@ -849,7 +892,7 @@ Write-Host 'T26  -TrendBaselineHours 0 is rejected at bind time' -ForegroundColo
 $d26 = Reset-Dir '_t26'
 $rc = Invoke-Monitor -OutputPath $d26 -Extra '-TrendBaselineHours 0'
 Assert 'zero is refused' ($rc -eq 1) ('got exit ' + $rc)
-Assert 'and nothing was collected under it' ((Get-Csv $d26).Count -eq 0) ('got ' + (Get-Csv $d26).Count + ' rows')
+Assert 'and nothing was collected under it' (@(Get-Csv $d26).Count -eq 0) ('got ' + @(Get-Csv $d26).Count + ' rows')
 $d26b = Reset-Dir '_t26b'
 $rc = Invoke-Monitor -OutputPath $d26b -Extra '-TrendBaselineHours 1'
 Assert 'the narrowest legal window is still accepted' ($rc -eq 0) ('got exit ' + $rc)
@@ -1160,8 +1203,8 @@ Assert 'the run says so rather than leaving it to be discovered' `
 # The stale file must not be mistaken for this run's output. Its own timestamped
 # CSV is the empty one, and the summary still counts zero.
 Assert 'this run wrote its own empty detail file' `
-    ((Get-Csv $d32).Count -eq 0) `
-    ('got ' + (Get-Csv $d32).Count + ' rows')
+    (@(Get-Csv $d32).Count -eq 0) `
+    ('got ' + @(Get-Csv $d32).Count + ' rows')
 
 Write-Host ''
 Write-Host 'T33  a mailbox missing from the baseline is counted, not dropped' -ForegroundColor Cyan
@@ -1665,7 +1708,7 @@ if ($fnAst.Count -eq 1) {
         Assert 'splitting a real array is a no-op, so an interactive caller is unaffected' `
             (((Split-BoundList @('DB one', 'DB two')) -join '/') -eq 'DB one/DB two')
         Assert 'an unbound parameter stays empty rather than becoming one blank entry' `
-            ((Split-BoundList $null).Count -eq 0)
+            (@(Split-BoundList $null).Count -eq 0)
         Assert 'and stray whitespace around a separator does not become a database name' `
             (((Split-BoundList 'DB one , DB two ,') -join '/') -eq 'DB one/DB two')
     }
@@ -2988,11 +3031,19 @@ Write-Host 'T59  the abort path emits without an at-risk list, under the real St
 #   1. Invoke-EmitChannel defaults $AtRisk = @() and $Emerging = @(), so every
 #      existing case passes an EMPTY ARRAY. Empty arrays survive the wrap; $null
 #      does not. The shape that actually ships was never once exercised.
-#   2. run-tests.ps1 sets NO StrictMode, and the monitor sets
+#   2. run-tests.ps1 used to set NO StrictMode while the monitor sets
 #      Set-StrictMode -Version 2.0 at its top. Without it $null.Status is
 #      silently $null and the buggy code does not throw AT ALL - measured. Every
-#      lifted-function test in T55-T58 has been running under weaker rules than
-#      production, so this block sets the real one.
+#      lifted-function test in T55-T58 was running under weaker rules than
+#      production, so this block set the real one.
+#
+# That second reason no longer describes the file: the suite now sets
+# Set-StrictMode -Version 2.0 at its own top, so every case here runs under the
+# rules the monitor ships with and a later lifted function inherits it without
+# anyone remembering. The & {} below is kept anyway, and is now belt and braces
+# rather than the only thing holding this case to production rules - it is also
+# the line that says out loud which rules this case depends on, which a reader
+# 3,000 lines from the top would otherwise have to go and look up.
 #
 # Scoped with & {} because Set-StrictMode is dynamically scoped: inside it the
 # lifted function runs under production rules, and it does not leak out to the

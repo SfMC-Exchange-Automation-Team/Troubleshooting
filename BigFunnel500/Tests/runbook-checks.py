@@ -15,6 +15,11 @@ version before it:
     .index() calls meant that renaming one table header ended the run with a
     ValueError traceback - no PASS lines, no FAIL lines, and nothing naming the
     anchor that had moved. The five checks that would have passed went with it.
+  * Its patterns match what the script is ALLOWED to contain, not what it happens
+    to contain today. An untyped parameter and an `exit 7  # why` both existed
+    nowhere when this was written, and both would have been read as absent rather
+    than reported. A check that quietly stops seeing things is worse than one that
+    was never written, because its PASS line still appears.
 """
 import re, sys, pathlib
 
@@ -77,31 +82,41 @@ def run(label, fn):
         report(name, ok, detail)
 
 
-def param_pairs(text):
-    """(name, default) in declaration order, comments and attributes stripped."""
+def param_triples(text):
+    """(name, type, default) in declaration order, comments and attributes stripped.
+
+    The type is OPTIONAL in the pattern and CAPTURED in the result, and those two
+    changes only make sense together. Requiring it meant an untyped `$Foo` matched
+    nothing at all, so a parameter declared without a type was invisible on both
+    sides and the check passed by seeing neither of them. Making it optional
+    without capturing it would trade that for a worse blind spot: a script's
+    `[int]$Foo = 4` and a runbook that had dropped the `[int]` would both reduce
+    to ('Foo', '4') and match. All 28 parameters are typed today and the types
+    agree, so capturing it changes no verdict - it only removes somewhere to hide.
+    """
     out = []
-    for m in re.finditer(r'^\s*\[[\w\.\[\]]+\]\$(\w+)(\s*=\s*(.+?))?\s*,?\s*$',
+    for m in re.finditer(r'^\s*(\[[\w\.\[\]]+\])?\$(\w+)(\s*=\s*(.+?))?\s*,?\s*$',
                          text, re.MULTILINE):
-        default = (m.group(3) or '').strip().rstrip(',').strip()
-        out.append((m.group(1), default))
+        default = (m.group(4) or '').strip().rstrip(',').strip()
+        out.append((m.group(2), (m.group(1) or '').strip(), default))
     return out
 
 
-# 1. param (name, default) pairs, both sides, in order.
+# 1. param (name, type, default) triples, both sides, in order.
 def check_1():
     what = 'check 1, the parameter blocks'
     s_block = upto(anchor(SCRIPT, '\nparam(', what), '\n)\n', what)
     d_block = upto(anchor(DOC, '[CmdletBinding()]\nparam(', what), '\n)\n```', what)
 
-    sp, dp = param_pairs(s_block), param_pairs(d_block)
+    sp, dp = param_triples(s_block), param_triples(d_block)
     diff = []
     for i in range(max(len(sp), len(dp))):
-        a = sp[i] if i < len(sp) else ('-', '-')
-        b = dp[i] if i < len(dp) else ('-', '-')
+        a = sp[i] if i < len(sp) else ('-', '-', '-')
+        b = dp[i] if i < len(dp) else ('-', '-', '-')
         if a != b:
-            diff.append('  %-2d script %-24s = %-55s' % (i, a[0], a[1]))
-            diff.append('     doc    %-24s = %-55s' % (b[0], b[1]))
-    return [('1. param (name, default) pairs match in name, default and order  '
+            diff.append('  %-2d script %-16s %-24s = %s' % (i, a[1], a[0], a[2]))
+            diff.append('     doc    %-16s %-24s = %s' % (b[1], b[0], b[2]))
+    return [('1. param (name, type, default) triples match, and in order  '
              '[script %d, doc %d]' % (len(sp), len(dp)), not diff, '\n'.join(diff))]
 
 
@@ -135,8 +150,13 @@ def check_2():
 def check_3():
     what = 'check 3, the exit-code table'
     codes = set(re.findall(r'\$exitCode\s*=\s*(\d+)', SCRIPT))
-    codes |= set(re.findall(r'(?m)^\s*exit\s+(\d+)\s*$', SCRIPT))
-    codes |= set(re.findall(r'(?m)^\s*return\s+(\d+)\s*$', SCRIPT))
+    # The trailing (?:#.*)? is what lets `exit 7  # policy refused the
+    # registration` be seen at all. Anchored hard to end-of-line, a code whose
+    # only unconditional site carried a trailing comment vanished from the
+    # script side and the check failed the RUNBOOK for documenting it - a FAIL
+    # pointing at the wrong file, over a comment. No such line exists today.
+    codes |= set(re.findall(r'(?m)^\s*exit\s+(\d+)\s*(?:#.*)?$', SCRIPT))
+    codes |= set(re.findall(r'(?m)^\s*return\s+(\d+)\s*(?:#.*)?$', SCRIPT))
     ctbl = upto(anchor(DOC, '| Code | Meaning | Alert |', what), '\n\n', what)
     doc_codes = set(re.findall(r'^\| `(\d+)`', ctbl, re.MULTILINE))
     return [('3. every exit code in the script is in the Code table, and vice versa',
@@ -223,7 +243,7 @@ def check_6():
     return out
 
 
-for label, fn in (('1. param (name, default) pairs', check_1),
+for label, fn in (('1. param (name, type, default) triples', check_1),
                   ('2. the status precedence chain', check_2),
                   ('3. the exit-code table', check_3),
                   ('4. in-page links', check_4),
