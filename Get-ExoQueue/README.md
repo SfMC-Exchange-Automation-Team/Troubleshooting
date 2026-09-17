@@ -14,6 +14,8 @@ destinations it is going to.
 version under-reports on any tenant where the queue exceeds one page, and reports the run as
 complete while doing so.
 
+> **New here?** There is a narrated walkthrough in [`docs/`](docs/) - loading the tool, running it, reading the output, and the one check to do before quoting a number. A [transcript](docs/Get-ExoQueue-HowTo.transcript.md) is there too if you would rather read it.
+
 ---
 
 ## **Quick start**
@@ -58,20 +60,10 @@ first.**
 
 ## **Reading the output**
 
-```
-Number of messages in the queue: 52  (154 recipient deliveries)
-Queue age: oldest 1.8 hr, median 64.8 min, newest 14.1 min
-Retrieved in 8.2 s over 3 pages.
+![A real Get-ExoQueue run](docs/images/01-first-run.png)
 
-Queued by destination domain (4):
-
-Domain                 Deliveries  Age
-------                 ----------  --------
-contoso-partner.com           131  1.8 hr
-fabrikam.com                   12  42.1 min
-northwind-traders.com           8  31.7 min
-adventure-works.com             3  14.1 min
-```
+*A real run against a lab tenant. Every screenshot in this README and in the walkthrough is
+generated from actual output rather than typed by hand - see [`docs/`](docs/).*
 
 - **Two counts, not one.** Messages and recipient deliveries differ whenever one message fans out to
   many recipients. Conflating them makes a queue look far worse than it is. The bracketed delivery

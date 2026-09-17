@@ -1,0 +1,364 @@
+1
+00:00:00,000 --> 00:00:03,066
+This is a practical walkthrough of Get-ExoQueue.
+
+2
+00:00:03,066 --> 00:00:08,368
+Everything you are about to see is a real run against a real tenant, not a mock-up.
+
+3
+00:00:08,368 --> 00:00:11,178
+One thing to be clear about before we start.
+
+4
+00:00:11,178 --> 00:00:14,372
+Exchange Online does not expose a transport queue.
+
+5
+00:00:14,372 --> 00:00:19,993
+There is no queue object to read, so this tool approximates one from message trace data.
+
+6
+00:00:19,993 --> 00:00:28,488
+That approximation is genuinely useful, but please repeat that caveat to customers, because a message trace row is not a queue entry.
+
+7
+00:00:29,088 --> 00:00:30,598
+Step one, load the tool.
+
+8
+00:00:30,598 --> 00:00:35,256
+Get-ExoQueue is a function in a script file, so you have to dot-source it.
+
+9
+00:00:35,256 --> 00:00:37,962
+That is a dot, then a space, then the path.
+
+10
+00:00:37,962 --> 00:00:49,164
+If you run the file normally instead, the function is defined inside a scope that is thrown away the moment the file finishes, so nothing is loaded and nothing appears to happen.
+
+11
+00:00:49,164 --> 00:00:55,080
+The script notices when you have done that and tells you, which saves a confusing few minutes.
+
+12
+00:00:55,680 --> 00:00:58,001
+Step two, connect to Exchange Online.
+
+13
+00:00:58,001 --> 00:01:03,457
+You need the Exchange Online Management module, and a role that can read message trace.
+
+14
+00:01:03,457 --> 00:01:05,402
+View-Only Recipients is enough.
+
+15
+00:01:05,402 --> 00:01:09,290
+If you are already connected, the tool just uses that session.
+
+16
+00:01:09,290 --> 00:01:12,113
+If you are not, it offers to connect for you.
+
+17
+00:01:12,113 --> 00:01:14,308
+The exception is an unattended run.
+
+18
+00:01:14,308 --> 00:01:23,904
+Under quiet mode the tool cannot show you a prompt, so connect first and pass the force switch, or it will stop waiting for an answer you will never see.
+
+19
+00:01:24,504 --> 00:01:25,731
+Step three, run it.
+
+20
+00:01:25,731 --> 00:01:30,830
+Here is a real run against a lab tenant, asking for the last seventy two hours.
+
+21
+00:01:30,830 --> 00:01:32,444
+Notice the status filter.
+
+22
+00:01:32,444 --> 00:01:42,386
+Get me into the habit early, because it is the single most common source of confusion with this tool: the status parameter defaults to Pending on its own.
+
+23
+00:01:42,386 --> 00:01:50,713
+A tenant full of failed or delivered mail will report zero, correctly, and that looks exactly like an empty queue when it is not.
+
+24
+00:01:50,713 --> 00:01:54,264
+Naming the statuses you want removes all of that doubt.
+
+25
+00:01:54,864 --> 00:01:56,967
+Step four, reading what came back.
+
+26
+00:01:56,967 --> 00:02:00,122
+There are four things on this screen worth knowing.
+
+27
+00:02:00,122 --> 00:02:01,545
+The first is the count.
+
+28
+00:02:01,545 --> 00:02:06,804
+Fifty two messages, and in brackets, one hundred and fifty four recipient deliveries.
+
+29
+00:02:06,804 --> 00:02:08,660
+Those are different questions.
+
+30
+00:02:08,660 --> 00:02:16,702
+One message to a distribution list is one message but many deliveries, so conflating them makes a queue look far worse than it is.
+
+31
+00:02:16,702 --> 00:02:19,362
+Quote the message count as the queue depth.
+
+32
+00:02:19,362 --> 00:02:20,847
+The second is queue age.
+
+33
+00:02:20,847 --> 00:02:22,950
+This matters as much as the depth.
+
+34
+00:02:22,950 --> 00:02:27,961
+A hundred thousand messages thirty seconds old is a burst that will clear itself.
+
+35
+00:02:27,961 --> 00:02:31,240
+The same hundred thousand six hours old is an outage.
+
+36
+00:02:31,240 --> 00:02:33,900
+The count on its own cannot tell you which.
+
+37
+00:02:33,900 --> 00:02:36,313
+The third is the destination breakdown.
+
+38
+00:02:36,313 --> 00:02:41,633
+Exchange Online has no real next hop domain, so the recipient domain stands in for it.
+
+39
+00:02:41,633 --> 00:02:46,396
+When one destination is deferring, its domain climbs to the top of that list.
+
+40
+00:02:46,396 --> 00:02:53,201
+The heading tells you how many domains there are in total, so you know whether you are looking at all of them.
+
+41
+00:02:53,201 --> 00:02:57,408
+And at the bottom, every file the run wrote, collected in one place.
+
+42
+00:02:58,008 --> 00:03:02,685
+Step five, and if you remember one thing from this video, make it this one.
+
+43
+00:03:02,685 --> 00:03:08,858
+This is the same tenant and the same time window as before, but with the paging limits turned down.
+
+44
+00:03:08,858 --> 00:03:10,729
+It reports seventeen messages.
+
+45
+00:03:10,729 --> 00:03:12,537
+The true answer is fifty two.
+
+46
+00:03:12,537 --> 00:03:15,592
+The number is not wrong, exactly - it is a floor.
+
+47
+00:03:15,592 --> 00:03:18,959
+The run stopped before it reached the end of the data.
+
+48
+00:03:18,959 --> 00:03:21,204
+What makes that safe is the warning.
+
+49
+00:03:21,204 --> 00:03:29,248
+The run says, in plain language, that the results are incomplete and that the count above is a floor rather than the queue depth.
+
+50
+00:03:29,248 --> 00:03:32,179
+The older version of this tool did not do that.
+
+51
+00:03:32,179 --> 00:03:40,784
+It stopped after one page, reported whatever it had, and called itself complete, which is how an under-reported number reaches a customer.
+
+52
+00:03:40,784 --> 00:03:45,024
+So before you quote a queue depth to anybody, look for that warning.
+
+53
+00:03:45,624 --> 00:03:46,154
+Step six.
+
+54
+00:03:46,154 --> 00:03:52,751
+If you are collecting this on a schedule rather than watching it, you do not want to read warnings off a screen.
+
+55
+00:03:52,751 --> 00:03:56,049
+Pass the pass-through switch and you get an object back.
+
+56
+00:03:56,049 --> 00:03:59,819
+Check the truncated property before you trust the message count.
+
+57
+00:03:59,819 --> 00:04:07,653
+If it is true, truncation reason tells you which limit you hit, so you know whether to widen the page limit or narrow the time range.
+
+58
+00:04:07,653 --> 00:04:13,896
+This is the right way to build a trend: gate on truncated, and only record counts from runs that finished.
+
+59
+00:04:14,496 --> 00:04:18,153
+Step seven, the zero case, because it will happen to you.
+
+60
+00:04:18,153 --> 00:04:20,591
+A bare run here reports zero messages.
+
+61
+00:04:20,591 --> 00:04:26,430
+That is correct, and it is also almost certainly not what the person asking wanted to know.
+
+62
+00:04:26,430 --> 00:04:34,386
+The tool now explains itself: it names the status filter it actually used, and points out that the default is Pending alone.
+
+63
+00:04:34,386 --> 00:04:37,338
+This is worth knowing for lab work especially.
+
+64
+00:04:37,338 --> 00:04:46,962
+Nothing in a test lab is ever genuinely pending, because Exchange treats an unroutable destination as a permanent failure rather than a temporary one.
+
+65
+00:04:46,962 --> 00:04:52,865
+So synthetic test mail lands as failed, and a bare run will honestly report a queue of zero.
+
+66
+00:04:52,865 --> 00:04:55,752
+Add failed to the status list and it appears.
+
+67
+00:04:56,352 --> 00:04:58,543
+Step eight, getting the data out.
+
+68
+00:04:58,543 --> 00:05:05,516
+Ask for CSV output and you get three files: the full result set, the top senders, and the top recipients.
+
+69
+00:05:05,516 --> 00:05:10,032
+XML works the same way if you would rather reload the objects later.
+
+70
+00:05:10,032 --> 00:05:17,469
+Every file the run produced is listed together at the end, so you are not hunting through scrollback for a path.
+
+71
+00:05:17,469 --> 00:05:22,848
+Use the output path parameter to put them somewhere sensible, like a case folder.
+
+72
+00:05:23,448 --> 00:05:27,738
+One more thing worth knowing about, particularly in regulated tenants.
+
+73
+00:05:27,738 --> 00:05:36,441
+Journaling copies every message to an archive address, which can roughly double the delivery count and make a queue look far worse than it is.
+
+74
+00:05:36,441 --> 00:05:38,402
+There are two switches for this.
+
+75
+00:05:38,402 --> 00:05:41,466
+Journal-only sizes the journal backlog on its own.
+
+76
+00:05:41,466 --> 00:05:44,040
+Journal-exclude gives you everything else.
+
+77
+00:05:44,040 --> 00:05:50,904
+The journal address is discovered from the tenant's own journal rules, so you do not need to know it in advance.
+
+78
+00:05:51,504 --> 00:05:57,719
+Now the limits, because a confident walkthrough that skipped these would do more harm than good.
+
+79
+00:05:57,719 --> 00:06:03,870
+On premises you can suspend a queue, resume it, force a retry, remove messages, or export them.
+
+80
+00:06:03,870 --> 00:06:05,489
+None of that exists here.
+
+81
+00:06:05,489 --> 00:06:13,387
+Exchange Online exposes no queue control plane whatsoever, so this tool reads and reports, and that is all it can ever do.
+
+82
+00:06:13,387 --> 00:06:15,135
+It only sees outbound flow.
+
+83
+00:06:15,135 --> 00:06:20,056
+Message trace is not real time, so very recent mail may not have landed yet.
+
+84
+00:06:20,056 --> 00:06:27,048
+And it remains an approximation built from trace data, which is why every single run prints that disclaimer.
+
+85
+00:06:27,648 --> 00:06:28,207
+To recap.
+
+86
+00:06:28,207 --> 00:06:31,500
+Dot-source the file, because running it does nothing.
+
+87
+00:06:31,500 --> 00:06:36,782
+Always pass the status parameter explicitly, so a zero means what you think it means.
+
+88
+00:06:36,782 --> 00:06:40,199
+Check truncated before you quote any number to anybody.
+
+89
+00:06:40,199 --> 00:06:48,028
+And read the queue age alongside the depth, because the two together tell you whether you are looking at a burst or an outage.
+
+90
+00:06:48,028 --> 00:06:53,309
+The current version lives in the team troubleshooting repository, under Get-ExoQueue.
+
+91
+00:06:53,309 --> 00:06:54,552
+Thanks for watching.
+
