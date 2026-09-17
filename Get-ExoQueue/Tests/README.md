@@ -11,6 +11,7 @@ own correctness and these are what back them up.
 |---|---|
 | `Get-ExoQueue.Tests.ps1` | 160 Pester tests. Stubs `Get-MessageTraceV2`; connects to nothing. |
 | `Test-ExoQueuePagingFidelity.ps1` | Drives the paging loop against a simulated service whose contents are known, and checks the retrieved set against them. |
+| `Test-ExoQueueVideoDrift.ps1` | Checks the how-to video still matches the tool. **Run this after changing anything an operator sees.** |
 
 ## Running them
 
@@ -46,3 +47,21 @@ rather than somewhere an operator might run it by accident and conclude the tool
 [`../archive/`](../archive/) holds 1.4.2 along with tests that assert its *buggy* behaviour. That is
 deliberate: "1.4.2 under-reports on a queue deeper than one page" is a claim, whereas a test that
 fails against 1.4.2 and passes against the current version is a measurement.
+
+## If you change the console output
+
+The walkthrough in [`../docs/`](../docs/) is a snapshot. When the tool's wording, parameters or
+result properties move, the video keeps playing and keeps teaching the old behaviour — nothing
+announces the divergence. `Test-ExoQueueVideoDrift.ps1` is what announces it:
+
+```powershell
+.\Test-ExoQueueVideoDrift.ps1
+```
+
+It reads the claims out of the video's own transcript rather than restating them, so it cannot go
+stale relative to the video, and checks each against the current script: every parameter named on
+screen, every result property the `-PassThru` scene displays, and the console phrases legible in the
+screenshots. It exits with the number of drifted claims, so it can gate a release.
+
+If it reports drift, the video and its screenshots need regenerating from the authoring workspace —
+the builders are not in this repo because they need a lab tenant and a local toolchain.
