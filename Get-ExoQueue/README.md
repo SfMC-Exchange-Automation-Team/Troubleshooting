@@ -63,11 +63,14 @@ Number of messages in the queue: 52  (154 recipient deliveries)
 Queue age: oldest 1.8 hr, median 64.8 min, newest 14.1 min
 Retrieved in 8.2 s over 3 pages.
 
-Queued by destination domain (top 10 of 37):
+Queued by destination domain (4):
 
 Domain                 Deliveries  AgeMinutes
 ------                 ----------  ----------
-contoso-partner.com           154       106.5
+contoso-partner.com           131       106.5
+fabrikam.com                   12        42.1
+northwind-traders.com           8        31.7
+adventure-works.com             3        14.1
 ```
 
 - **Two counts, not one.** Messages and recipient deliveries differ whenever one message fans out to
@@ -78,9 +81,10 @@ contoso-partner.com           154       106.5
   same hundred thousand six hours old is an outage. The count alone cannot tell them apart. The unit
   scales — seconds, minutes, hours, days — so the outage case does not arrive as `404.0 min`.
 - **Destination.** There is no real `NextHopDomain` in Exchange Online, so the recipient domain
-  stands in for it. When one destination defers, its domain rises to the top of this list. The
-  heading names the total number of domains, so `top 10 of 37` tells you a tail is hidden and
-  `(4)` tells you it is not.
+  stands in for it. When one destination defers, its domain rises to the top of this list — the shape
+  above, where 131 of 154 deliveries are waiting on one partner, is what a single deferring
+  destination looks like. The heading names the domain total, so `(4)` means you are seeing all of
+  them and `top 10 of 37` means a tail is hidden.
 - **Paging is quiet.** Per-page detail goes to a progress bar rather than scrollback. Add `-Verbose`
   for the page-by-page trail when you are diagnosing paging itself.
 
