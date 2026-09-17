@@ -57,6 +57,14 @@ param(
     # to this server; the default of All would sweep the organisation.
     [int]$RunTimeoutMinutes = 15,
 
+    # Gate C drives a NON-elevated write, which needs a filtered token this elevated
+    # session cannot produce for itself. Needs -TaskCredential for the same reason B does.
+    [switch]$RunGateC,
+
+    # Gate D forces per-mailbox classifications by moving the thresholds under real
+    # measured sizes. Two real collections, so it is opt-in and it is not quick.
+    [switch]$RunGateD,
+
     # Leave the source behind by default: production wants it, and creating it is the
     # one administrator-only step in the whole emit path.
     [switch]$RemoveEventSource
@@ -388,6 +396,350 @@ else {
             catch { $gone = $true }
             Write-Check 'the task is really gone' $gone `
                 $(if (-not $gone) { "REMOVE IT BY HAND: Unregister-ScheduledTask -TaskName '$TaskName'" } else { '' })
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# GATE C - the non-elevated write, which an elevated session cannot fake
+# ---------------------------------------------------------------------------
+# THIS IS THE HALF OF GATE A THAT USED TO BE LEFT MANUAL, and why it was manual is
+# worth keeping rather than deleting: an elevated process cannot drop its own token
+# honestly enough to prove that a NON-elevated caller can write to a source that
+# already exists. The whole emit design rests on that asymmetry - create the source
+# once as administrator, write to it forever after under whatever token the run
+# happens to hold - so asserting it from an elevated session assumes the thing being
+# tested.
+#
+# WINRM CANNOT DO IT EITHER, and that is the trap that makes this gate necessary
+# rather than merely convenient. A PSSession hands a domain administrator a FULL
+# token, so a remote probe measures the elevated case a second time and reports a
+# confident pass having proved nothing. Measured 2026-09-16: the manual attempt
+# instead went into the wrong window entirely and failed on a machine where the
+# source had never existed, which looks identical to a real failure.
+#
+# A scheduled task with RunLevel Limited is the one remotely-drivable way to get a
+# genuinely filtered token - TASK_RUNLEVEL_LUA is the same UAC split token an
+# ordinary window gets.
+#
+# THE VERDICT TRAVELS AS AN EXIT CODE, not as a file. The probe runs under a filtered
+# token that may have write access nowhere useful, so a result file is best-effort
+# detail only; LastTaskResult is always readable and cannot be denied to us.
+#   10 = not elevated, write SUCCEEDED   <- the gate
+#   11 = not elevated, write FAILED
+#   12 = token was ELEVATED, so RunLevel Limited did not filter: INCONCLUSIVE, not a
+#        pass and not a fail, because it measured the wrong thing
+#   13 = the probe threw before it could decide
+if (-not $RunGateC) {
+    Write-Head 'GATE C - SKIPPED'
+    Write-Host '  Re-run with -RunGateC and -TaskCredential for the non-elevated write.' -ForegroundColor Yellow
+}
+else {
+    Write-Head 'GATE C - a genuinely non-elevated write'
+
+    if (-not $TaskCredential) {
+        $TaskCredential = Get-Credential -Message 'Account for the Limited-runlevel probe task (a PASSWORD is required)'
+    }
+
+    $gateCTask = 'BFGATEC Non-Elevated Event Write'
+    $probeDir  = Join-Path $env:ProgramData 'BFGateC'
+    $probeFile = Join-Path $probeDir 'nonelev-probe.ps1'
+    $resultFn  = Join-Path $probeDir 'result.txt'
+
+    # Taken before registration, and used both to decide whether the task really ran
+    # and to bound the event query. A second early rather than late: LastRunTime has
+    # whole-second resolution, so a mark taken in the same second as the start can be
+    # equal to it and read as "never ran".
+    $startedAtC = (Get-Date).AddSeconds(-1)
+
+    try {
+        if (-not (Test-Path -LiteralPath $probeDir)) {
+            New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+        }
+
+        # Best-effort only, and deliberately not asserted. A filtered admin token keeps
+        # the USER sid and loses the Administrators one, so it inherits ProgramData's
+        # read-only-for-Users ACL. Granting Modify lets the probe leave a message
+        # behind; if the grant fails the exit code still carries the verdict.
+        try {
+            $acl  = Get-Acl -LiteralPath $probeDir
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $TaskCredential.UserName, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($rule)
+            Set-Acl -LiteralPath $probeDir -AclObject $acl
+        }
+        catch {
+            Write-Host ('  (could not grant write on {0}: {1} - relying on the exit code)' -f $probeDir, $_.Exception.Message) -ForegroundColor DarkGray
+        }
+
+        # Placeholders rather than -f, because the body is full of braces.
+        $probeBody = @'
+$ErrorActionPreference = 'Stop'
+$src  = '__SOURCE__'
+$out  = '__OUT__'
+$elev = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+$code = 13
+$msg  = 'the probe threw before deciding'
+try {
+    if ($elev) {
+        $code = 12
+        $msg  = 'token was ELEVATED - RunLevel Limited did not filter, so this measured the wrong thing'
+    }
+    else {
+        try {
+            Write-EventLog -LogName Application -Source $src -EventId 1000 -EntryType Information -Message 'Gate C: non-elevated write to an existing source'
+            $code = 10
+            $msg  = 'write succeeded under a filtered token'
+        }
+        catch {
+            $code = 11
+            $msg  = $_.Exception.Message
+        }
+    }
+}
+catch { $code = 13; $msg = $_.Exception.Message }
+try { Set-Content -LiteralPath $out -Encoding UTF8 -Value @("elevated=$elev", "code=$code", "message=$msg") } catch { }
+exit $code
+'@
+        $probeBody = $probeBody.Replace('__SOURCE__', $EventLogSource).Replace('__OUT__', $resultFn)
+        Set-Content -LiteralPath $probeFile -Value $probeBody -Encoding UTF8
+
+        if (Test-Path -LiteralPath $resultFn) { Remove-Item -LiteralPath $resultFn -Force }
+
+        # -File, never -Command, for the same reason the monitor's own action uses it:
+        # -Command collapses every non-zero exit to 1, and this gate reads the exit code.
+        $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+            -Argument ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $probeFile)
+        $trigger = New-ScheduledTaskTrigger -Once -At ([DateTime]::Now.Date.AddDays(1).AddHours(23).AddMinutes(55))
+
+        Register-ScheduledTask -TaskName $gateCTask -Action $action -Trigger $trigger `
+            -User $TaskCredential.UserName `
+            -Password $TaskCredential.GetNetworkCredential().Password `
+            -RunLevel Limited -Force | Out-Null
+
+        $ct = Get-ScheduledTask -TaskName $gateCTask -ErrorAction Stop
+        $results['GateC_RunLevel']  = $ct.Principal.RunLevel
+        $results['GateC_LogonType'] = $ct.Principal.LogonType
+        Write-Check 'probe task registered with RunLevel Limited' `
+            ($ct.Principal.RunLevel -eq 'Limited') ('RunLevel ' + $ct.Principal.RunLevel)
+        Write-Check 'probe task LogonType is Password' `
+            ($ct.Principal.LogonType -eq 'Password') ('LogonType ' + $ct.Principal.LogonType)
+
+        Start-ScheduledTask -TaskName $gateCTask
+
+        # Same two-stage wait Gate B learned the hard way: a task about to run correctly
+        # must not be read as one that never ran.
+        $deadline = (Get-Date).AddMinutes(3)
+        $everRan  = $false
+        while ((Get-Date) -lt $deadline) {
+            $info = Get-ScheduledTaskInfo -TaskName $gateCTask
+            $st   = (Get-ScheduledTask -TaskName $gateCTask).State
+            if ($st -eq 'Running') { $everRan = $true }
+            if ($everRan -and $st -ne 'Running') { break }
+            if ($info.LastRunTime -gt $startedAtC) { $everRan = $true }
+            Start-Sleep -Seconds 2
+        }
+        Start-Sleep -Seconds 2
+
+        $info = Get-ScheduledTaskInfo -TaskName $gateCTask
+        $code = $info.LastTaskResult
+        $results['GateC_LastTaskResult'] = ('0x{0:X}' -f $code)
+        Write-Measured 'LastTaskResult' ('0x{0:X} ({0})' -f $code)
+
+        $msg = ''
+        if (Test-Path -LiteralPath $resultFn) {
+            $msg = ((Get-Content -LiteralPath $resultFn) -join '; ')
+            Write-Measured 'probe said' $msg
+        }
+        $results['GateC_ProbeDetail'] = $msg
+
+        Write-Check 'the probe task actually ran' ($code -ne 0x41303) `
+            $(if ($code -eq 0x41303) { '0x41303 = never ran. Nothing was measured.' } else { '' })
+
+        # THE GATE. 12 is called out separately because it is not a failure of the
+        # feature - it is a failure of the harness to create the conditions, and
+        # reporting it as a feature failure would condemn working code.
+        if ($code -eq 12) {
+            Write-Check 'the probe token was NOT elevated' $false `
+                'RunLevel Limited did not filter the token. INCONCLUSIVE - the write was never tested non-elevated.'
+        }
+        else {
+            Write-Check 'the probe token was NOT elevated' ($code -eq 10 -or $code -eq 11) ''
+            Write-Check 'NON-ELEVATED write to an existing source SUCCEEDS' ($code -eq 10) `
+                $(if ($code -eq 10) { 'this is the assumption the whole emit path rests on' }
+                  elseif ($code -eq 11) { 'IT DOES NOT. The runbook and the script comment at Monitor:1726 are both wrong.' }
+                  else { 'the probe threw before deciding - see GateC_ProbeDetail' })
+        }
+
+        # Corroborate from the log itself rather than trusting the probe's own word.
+        $cEv = @(Get-WinEvent -FilterHashtable @{
+                    LogName      = 'Application'
+                    ProviderName = $EventLogSource
+                    StartTime    = $startedAtC
+                } -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Message -like '*Gate C*' })
+        $results['GateC_EventLanded'] = $cEv.Count
+        Write-Check 'and the event is really in the log' ($cEv.Count -ge 1) `
+            ('{0} matching event(s)' -f $cEv.Count)
+    }
+    catch {
+        Write-Check 'Gate C ran to completion' $false $_.Exception.Message
+        $results['GateC_Exception'] = $_.Exception.Message
+    }
+    finally {
+        # Ask the scheduler, never a flag - see Gate B.
+        $present = $false
+        try { Get-ScheduledTask -TaskName $gateCTask -ErrorAction Stop | Out-Null; $present = $true } catch { }
+        if ($present) {
+            try {
+                Unregister-ScheduledTask -TaskName $gateCTask -Confirm:$false
+                $gone = $false
+                try { Get-ScheduledTask -TaskName $gateCTask -ErrorAction Stop | Out-Null } catch { $gone = $true }
+                Write-Check 'probe task removed' $gone `
+                    $(if (-not $gone) { "REMOVE IT BY HAND: Unregister-ScheduledTask -TaskName '$gateCTask'" } else { '' })
+            }
+            catch { Write-Check 'probe task removed' $false $_.Exception.Message }
+        }
+        try { if (Test-Path -LiteralPath $probeDir) { Remove-Item -LiteralPath $probeDir -Recurse -Force } } catch { }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# GATE D - the per-mailbox event path, 1010 / 1011 / 1012
+# ---------------------------------------------------------------------------
+# UNEXERCISED ON REAL HARDWARE UNTIL NOW, and for an honest reason: the lab estate is
+# healthy, so Status came back OK and MailboxEventCount was 0. The suite covers this
+# path against fixtures, but fixtures cannot show that a real row from a real
+# Get-MailboxStatistics survives ConvertTo-KeyValueText and lands as an event.
+#
+# THE THRESHOLDS ARE MOVED, NOT THE DATA. Sizes stay whatever the estate really
+# reports; -WarningGB and -CriticalGB are placed underneath them so real mailboxes
+# classify. Classification is `$Bytes -ge $CriticalBytes -> Critical`, else
+# `-ge $WarningBytes -> Warning` (Monitor:1145-1146), so bracketing is exact.
+#
+# OUTPUT GOES SOMEWHERE ELSE ON PURPOSE. These runs produce CSV and JSON full of
+# Critical classifications that are artefacts of the thresholds, not findings about
+# the estate. Writing them into the real output directory would leave evidence that
+# reads as a genuine incident to anyone who finds it later.
+#
+# 1012 (Emerging) IS NOT FORCEABLE THIS WAY and the gate says so rather than
+# failing: Emerging needs Status Normal AND DaysToCritical <= 3, which needs a growth
+# rate, which needs the estate to actually be growing between baselines. A static lab
+# cannot produce one. Reported as NOT-MEASURED, which is different from failed.
+if (-not $RunGateD) {
+    Write-Head 'GATE D - SKIPPED'
+    Write-Host '  Re-run with -RunGateD to exercise the per-mailbox event path.' -ForegroundColor Yellow
+}
+else {
+    Write-Head 'GATE D - per-mailbox events against real rows'
+
+    $gateDOut = Join-Path $env:ProgramData 'BFGateD'
+    try {
+        # Read what the estate really reports before choosing anything.
+        $csv = Get-ChildItem -LiteralPath $OutputPath -Filter '*.csv' -ErrorAction SilentlyContinue |
+               Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $csv) { throw ('No CSV under {0} to size the thresholds from. Run the monitor once first.' -f $OutputPath) }
+
+        Write-Measured 'sizing from' $csv.Name
+        $rows  = @(Import-Csv -LiteralPath $csv.FullName)
+        $sizes = @($rows | ForEach-Object { [double]$_.PostingListGB } | Where-Object { $_ -gt 0 })
+        $maxGB = if ($sizes.Count) { ($sizes | Measure-Object -Maximum).Maximum } else { 0 }
+
+        $results['GateD_RowsInCsv']    = $rows.Count
+        $results['GateD_RowsWithSize'] = $sizes.Count
+        $results['GateD_MaxGB']        = $maxGB
+        Write-Measured 'rows / with a size / largest GB' ('{0} / {1} / {2}' -f $rows.Count, $sizes.Count, $maxGB)
+
+        # -WarningGB and -CriticalGB are ValidateRange(0.001, 1024), so a mailbox under
+        # 1 MB cannot be reached by any legal threshold. Say that plainly instead of
+        # running twice and reporting two empty passes.
+        if ($maxGB -lt 0.001) {
+            Write-Check 'the estate can support this test' $false `
+                'no mailbox reaches 0.001 GB, the floor of -CriticalGB. NOT MEASURED, not failed.'
+            $results['GateD_Verdict'] = 'NOT-MEASURED: estate below the threshold floor'
+        }
+        else {
+            Write-Check 'the estate can support this test' $true ('largest posting list is {0} GB' -f $maxGB)
+
+            $runs = @(
+                @{ Label = 'Critical'; Id = 1010; Warn = 0.001; Crit = 0.001 }
+                @{ Label = 'Warning';  Id = 1011; Warn = 0.001; Crit = 1024  }
+            )
+
+            foreach ($r in $runs) {
+                Write-Host ''
+                Write-Host ('  Forcing {0} (-WarningGB {1} -CriticalGB {2}) - a real collection, please wait.' -f
+                    $r.Label, $r.Warn, $r.Crit) -ForegroundColor DarkGray
+
+                $mark = Get-Date
+                Start-Sleep -Seconds 1
+                & $monitor -Scope Local -RetentionDays 30 `
+                    -WarningGB $r.Warn -CriticalGB $r.Crit `
+                    -EmitTo EventLog,RunJson -EventLogSource $EventLogSource `
+                    -OutputPath $gateDOut
+                $ex = $LASTEXITCODE
+
+                $ev = @(Get-WinEvent -FilterHashtable @{
+                            LogName      = 'Application'
+                            ProviderName = $EventLogSource
+                            StartTime    = $mark
+                        } -ErrorAction SilentlyContinue)
+                $hit = @($ev | Where-Object { $_.Id -eq $r.Id })
+
+                $results[('GateD_{0}_ExitCode' -f $r.Label)] = $ex
+                $results[('GateD_{0}_{1}Count' -f $r.Label, $r.Id)] = $hit.Count
+                Write-Measured ('{0} run exit code' -f $r.Label) $ex
+                Write-Check ('{0} run emits event {1}' -f $r.Label, $r.Id) ($hit.Count -ge 1) `
+                    ('{0} event(s) of id {1}' -f $hit.Count, $r.Id)
+
+                if ($hit.Count -ge 1) {
+                    $first = $hit[0]
+                    Write-Check ('  {0} event is a Warning, not an Error' -f $r.Id) `
+                        ($first.LevelDisplayName -eq 'Warning') $first.LevelDisplayName
+                    Write-Check ('  {0} payload is key=value' -f $r.Id) `
+                        ($first.Message -match '(?m)^\s*Finding=') ''
+                    Write-Check ('  {0} payload names the finding correctly' -f $r.Id) `
+                        ($first.Message -match ('(?m)^\s*Finding=' + $r.Label)) ''
+                    # The field-disclosure claim in the runbook, checked against a real event.
+                    Write-Check ('  {0} carries MailboxGuid and DisplayName' -f $r.Id) `
+                        (($first.Message -match '(?m)^\s*MailboxGuid=') -and
+                         ($first.Message -match '(?m)^\s*DisplayName=')) `
+                        'the runbook states these leave the box - this is the check that it is true'
+                }
+            }
+
+            # 1012 is reported, never forced. See the header.
+            $emergingRows = @($rows | Where-Object {
+                $_.Status -eq 'Normal' -and $_.DaysToCritical -and ([double]$_.DaysToCritical -le 3) })
+            $results['GateD_EmergingCandidates'] = $emergingRows.Count
+            if ($emergingRows.Count -ge 1) {
+                Write-Measured '1012 candidates present' $emergingRows.Count
+            }
+            else {
+                Write-Host ''
+                Write-Host '  1012 (Emerging) NOT MEASURED - no row has DaysToCritical <= 3, which needs a' -ForegroundColor Yellow
+                Write-Host '  real growth rate between baselines. A static lab cannot manufacture one, and' -ForegroundColor Yellow
+                Write-Host '  moving thresholds cannot either. This is a gap, not a failure.' -ForegroundColor Yellow
+                $results['GateD_1012'] = 'NOT-MEASURED: no growth rate in this estate'
+            }
+        }
+    }
+    catch {
+        Write-Check 'Gate D ran to completion' $false $_.Exception.Message
+        $results['GateD_Exception'] = $_.Exception.Message
+    }
+    finally {
+        # The forced-threshold output is misleading evidence if it survives.
+        try {
+            if (Test-Path -LiteralPath $gateDOut) {
+                Remove-Item -LiteralPath $gateDOut -Recurse -Force
+                Write-Host ('  Removed {0} - its CSV/JSON describe thresholds, not the estate.' -f $gateDOut) -ForegroundColor DarkGray
+            }
+        }
+        catch {
+            Write-Host ('  COULD NOT REMOVE {0}: {1}' -f $gateDOut, $_.Exception.Message) -ForegroundColor Red
+            Write-Host '  Delete it by hand - its contents read as a real incident.' -ForegroundColor Red
         }
     }
 }
