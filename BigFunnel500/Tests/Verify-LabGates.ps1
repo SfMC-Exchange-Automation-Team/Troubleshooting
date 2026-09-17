@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Closes the two Monitor-BigFunnelPostingList gates that no automated test can reach.
+    Closes the Monitor-BigFunnelPostingList gates that no automated test can reach.
 
 .DESCRIPTION
-    Two things about this feature are unprovable from the test suite, for the same
-    reason in both cases: the suite runs NON-ELEVATED and against a mock, and both
-    gates are about what the real, elevated machine actually does.
+    Several things about this feature are unprovable from the test suite, for the
+    same reason in every case: the suite runs NON-ELEVATED and against a mock, and
+    the gates are about what the real, elevated machine actually does.
 
       GATE A  The Event Log rights split. Measured non-elevated on a workstation:
               creating a source needs administrator, writing to an existing source
@@ -46,6 +46,13 @@
     Gates C and D. -ProbeCredential is the one that matters where UAC is off: an
     ordinary user has no elevated half, so Gate C's probe measures the non-elevated
     write instead of reporting that it could not produce a filtered token.
+
+.EXAMPLE
+    .\Verify-LabGates.ps1 -RunGateE -TaskCredential (Get-Credential CONTOSO\svc-bfmon)
+    Gate E only - event 1012, the one per-mailbox event no threshold can force.
+    Stages a growth rate with Set-BigFunnelDemoState.ps1, then runs the monitor
+    against it as a real scheduled task. The rate is a fixture and the gate says
+    so; the classifier, the projection and the event are real.
 #>
 [CmdletBinding()]
 param(
@@ -87,6 +94,24 @@ param(
     # Gate D forces per-mailbox classifications by moving the thresholds under real
     # measured sizes. Two real collections, so it is opt-in and it is not quick.
     [switch]$RunGateD,
+
+    # THE ONLY GATE THAT USES A FIXTURE, AND IT SAYS SO IN ITS OWN OUTPUT.
+    #
+    # Gate D can force Critical and Warning by moving the thresholds under real
+    # sizes, because those two are decided by one reading. 1012 is not: Emerging
+    # is Status Normal AND 0 < DaysToCritical <= 3, which needs a growth RATE,
+    # which needs two readings that differ. This estate has read the same three
+    # values since 2026-09-11, so no threshold anywhere reaches 1012.
+    #
+    # Set-BigFunnelDemoState.ps1 manufactures the missing earlier reading - one
+    # cell in one back-dated CSV - and that is what this gate drives. So what is
+    # measured here is the CLASSIFIER AND THE EVENT PATH on a real mailbox, from
+    # a growth rate that is fabricated. Everything downstream of the rate is
+    # genuine; the rate is not. The gate prints that distinction next to its own
+    # result so a PASS cannot be quoted as "we observed growth in the lab".
+    #
+    # Three real collections. Slower than Gate D, and opt-in for the same reason.
+    [switch]$RunGateE,
 
     # Leave the source behind by default: production wants it, and creating it is the
     # one administrator-only step in the whole emit path.
@@ -989,7 +1014,9 @@ else {
                 }
             }
 
-            # 1012 is reported, never forced. See the header.
+            # 1012 is reported here, never forced here. Gate D moves thresholds,
+            # and no threshold can produce Emerging: it needs a growth RATE, not a
+            # size. Gate E stages one and measures the event for real.
             $emergingRows = @($rows | Where-Object {
                 $_.Status -eq 'Normal' -and $_.DaysToCritical -and ([double]$_.DaysToCritical -le 3) })
             $results['GateD_EmergingCandidates'] = $emergingRows.Count
@@ -998,10 +1025,11 @@ else {
             }
             else {
                 Write-Host ''
-                Write-Host '  1012 (Emerging) NOT MEASURED - no row has DaysToCritical <= 3, which needs a' -ForegroundColor Yellow
-                Write-Host '  real growth rate between baselines. A static lab cannot manufacture one, and' -ForegroundColor Yellow
-                Write-Host '  moving thresholds cannot either. This is a gap, not a failure.' -ForegroundColor Yellow
-                $results['GateD_1012'] = 'NOT-MEASURED: no growth rate in this estate'
+                Write-Host '  1012 (Emerging) is out of reach of THIS gate - no row has DaysToCritical <= 3,' -ForegroundColor DarkGray
+                Write-Host '  which needs a real growth rate between baselines. Moving thresholds cannot' -ForegroundColor DarkGray
+                Write-Host '  manufacture one. Run -RunGateE, which stages the rate and then measures the' -ForegroundColor DarkGray
+                Write-Host '  event. Not counted as a gap here: Gate E is where that verdict belongs.' -ForegroundColor DarkGray
+                $results['GateD_1012'] = 'OUT-OF-SCOPE: needs a growth rate, see Gate E'
             }
         }
     }
@@ -1020,6 +1048,472 @@ else {
         catch {
             Write-Host ('  COULD NOT REMOVE {0}: {1}' -f $gateDOut, $_.Exception.Message) -ForegroundColor Red
             Write-Host '  Delete it by hand - its contents read as a real incident.' -ForegroundColor Red
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# GATE E - event 1012, the one no threshold can force
+# ---------------------------------------------------------------------------
+if (-not $RunGateE) {
+    Write-Head 'GATE E - SKIPPED'
+    Write-Host '  Re-run with -RunGateE to measure 1012 (Emerging) against a staged growth rate.' -ForegroundColor Yellow
+}
+else {
+    Write-Head 'GATE E - 1012 (Emerging), from a STAGED growth rate'
+
+    Write-Host '  WHAT IS REAL HERE AND WHAT IS NOT, before any result below is read:' -ForegroundColor Yellow
+    Write-Host '    REAL       the mailbox, its live size, the classifier, the projection' -ForegroundColor Yellow
+    Write-Host '               arithmetic, the event write and everything read back out.' -ForegroundColor Yellow
+    Write-Host '    FABRICATED the earlier reading the growth rate is differenced against.' -ForegroundColor Yellow
+    Write-Host '               One cell, in one back-dated CSV, in a scratch directory.' -ForegroundColor Yellow
+    Write-Host '    A PASS HERE IS NOT "we observed growth in the lab". It is "given a' -ForegroundColor Yellow
+    Write-Host '    growth rate, the monitor classifies Emerging and emits 1012".' -ForegroundColor Yellow
+
+    $gateEOut   = Join-Path $env:ProgramData 'BFGateE'
+    $gateEShim  = Join-Path $env:ProgramData 'BFGateE-stage.ps1'
+    $gateELog   = Join-Path $env:ProgramData 'BFGateE-stage.log'
+
+    # Two tasks, two names, and neither is $TaskName or Gate D's - see the note on
+    # $gateDTask. A gate that dies between register and unregister leaves its task
+    # behind, and a shared name means the next gate's cleanup removes it out from
+    # under the one still using it.
+    $gateEStageTask = 'BFGATEE Stage BigFunnel Growth Fixture'
+    $gateETask      = 'BFGATEE Exchange BigFunnel PostingListTable Emerging'
+
+    # 30, not the demo script's default 48, and the difference is load-bearing.
+    # The fixture works backwards from today's real size:
+    #     perDay   = (critical - current) / TargetDaysToCritical
+    #     baseline = current - perDay * (BaselineAgeHours / 24)
+    # so a WIDER baseline age demands a SMALLER earlier reading, and at 48 hours
+    # with TargetDaysToCritical 2.5 the earlier reading has to satisfy
+    # current > 0.444 * critical or it comes out negative and the script refuses.
+    # At 30 hours that relaxes to current > critical / 3, which this estate clears
+    # comfortably. It still has to exceed the monitor's -TrendBaselineHours (24)
+    # or the join rejects it as too recent to divide by - 30 clears that by six
+    # hours, which is margin enough for a multi-minute gate.
+    $baselineHours = 30
+    $targetDays    = 2.5
+
+    try {
+        $demo = Join-Path (Split-Path $PSScriptRoot -Parent) 'Set-BigFunnelDemoState.ps1'
+        if (-not (Test-Path -LiteralPath $demo)) {
+            Write-NotMeasured 'the growth fixture is available' `
+                ('Set-BigFunnelDemoState.ps1 not found beside the monitor at {0}' -f $demo)
+            $results['GateE_Verdict'] = 'NOT-MEASURED: fixture script not deployed'
+        }
+        else {
+
+        # Size from what the estate really reports, exactly as Gate D does, rather
+        # than from the demo script's defaults. Those defaults were chosen against
+        # one estate on one day; a gate that inherits them reports a mailbox-name
+        # failure on any other box and looks like a product fault.
+        $eCsv = Get-ChildItem -LiteralPath $OutputPath -Filter '*.csv' -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $eCsv) { throw ('No CSV under {0} to pick mailboxes from. Run the monitor once first.' -f $OutputPath) }
+
+        Write-Measured 'sizing from' $eCsv.Name
+        $eRows  = @(Import-Csv -LiteralPath $eCsv.FullName)
+        $eSized = @($eRows | Where-Object { $_.PostingListBytes -and ([double]$_.PostingListGB -gt 0) } |
+                    Sort-Object { [double]$_.PostingListBytes } -Descending)
+
+        $results['GateE_RowsWithSize'] = $eSized.Count
+        Write-Measured 'rows with a measurable posting list' $eSized.Count
+
+        if ($eSized.Count -lt 3) {
+            # THREE distinct sizes, not three mailboxes. Emerging only applies to a
+            # row still reading Normal, so the staged estate needs one mailbox above
+            # Critical, one between the thresholds, and one below Warning - which
+            # cannot be built out of two.
+            Write-NotMeasured 'the estate can support this test' `
+                ('{0} mailbox(es) have a measurable posting list; the three tiers need three.' -f $eSized.Count)
+            $results['GateE_Verdict'] = 'NOT-MEASURED: fewer than three sized mailboxes'
+        }
+        else {
+            $cName = [string]$eSized[0].DisplayName
+            $wName = [string]$eSized[1].DisplayName
+            $eName = [string]$eSized[2].DisplayName
+            $cGB   = [double]$eSized[0].PostingListGB
+            $wGB   = [double]$eSized[1].PostingListGB
+            $eGB   = [double]$eSized[2].PostingListGB
+
+            # MIDPOINTS, not the measured sizes themselves. -CriticalGB set exactly
+            # to the largest mailbox's rounded GB is a coin toss: the CSV column is
+            # rounded and the comparison is not, so a mailbox reading 0.704 GB can
+            # sit a few hundred KB under a 0.704 threshold and quietly classify
+            # Normal. Half the gap to the next mailbox is margin in both directions.
+            $eCrit = [math]::Round((($wGB + $cGB) / 2), 4)
+            $eWarn = [math]::Round((($eGB + $wGB) / 2), 4)
+
+            Write-Measured 'Critical  (real size / threshold)' ('{0} {1} GB / {2} GB' -f $cName.PadRight(14), $cGB, $eCrit)
+            Write-Measured 'Warning   (real size / threshold)' ('{0} {1} GB / {2} GB' -f $wName.PadRight(14), $wGB, $eWarn)
+            Write-Measured 'Emerging  (real size, below both)' ('{0} {1} GB' -f $eName.PadRight(14), $eGB)
+
+            # Every one of these is a condition the demo script asserts for itself
+            # and fails on. Checked here first so an estate that cannot be staged
+            # costs nothing instead of costing three collections.
+            $separated = ($eWarn -gt $eGB) -and ($eWarn -le $wGB) -and
+                         ($eCrit -gt $wGB) -and ($eCrit -le $cGB) -and
+                         ($eWarn -lt $eCrit) -and ($eWarn -ge 0.001) -and ($eCrit -le 1024)
+
+            # The fixture arithmetic, run before the fixture is built - see
+            # $baselineHours. Reproduced rather than approximated, because a
+            # near-miss here surfaces 20 minutes later as a bare exit code.
+            $curBytes  = [int64]$eSized[2].PostingListBytes
+            $critBytes = [int64]($eCrit * 1GB)
+            $perDay    = ($critBytes - $curBytes) / $targetDays
+            $baseBytes = $curBytes - [int64]($perDay * ($baselineHours / 24.0))
+            $reachable = ($baseBytes -gt 0)
+
+            if (-not $separated) {
+                Write-NotMeasured 'the three tiers separate' `
+                    ('sizes {0} / {1} / {2} GB do not admit an ordered threshold pair' -f $cGB, $wGB, $eGB)
+                $results['GateE_Verdict'] = 'NOT-MEASURED: mailbox sizes do not separate into three tiers'
+            }
+            elseif (-not $reachable) {
+                Write-NotMeasured 'the growth rate is constructible' `
+                    ('{0} at {1} GB would need a negative earlier reading to reach {2} GB in {3} days' -f
+                     $eName, $eGB, $eCrit, $targetDays)
+                $results['GateE_Verdict'] = 'NOT-MEASURED: fixture baseline would be negative'
+            }
+            else {
+                Write-Check 'the estate can support this test' $true `
+                    ('three tiers separate, and the fixture baseline lands at {0} GB' -f [math]::Round($baseBytes / 1GB, 3))
+
+                if (-not $TaskCredential) {
+                    $TaskCredential = Get-Credential -Message 'Account to stage and run the Emerging fixture (a PASSWORD is required - it is what carries the network credential)'
+                }
+                if (-not $TaskCredential) { throw 'Gate E needs -TaskCredential to reach a collection. Nothing was run.' }
+
+                # -------------------------------------------------------------
+                # 1. Stage the fixture, AS A SCHEDULED TASK
+                # -------------------------------------------------------------
+                # Same double hop Gate D hit, same remedy. Set-BigFunnelDemoState
+                # calls the monitor twice and the monitor opens an Exchange
+                # runspace, which is a network logon; over WinRM the credential
+                # that authenticated this session cannot be delegated onward.
+                #
+                # THIS ONE DOES NOT GO THROUGH THE PRODUCT'S -RegisterScheduledTask,
+                # and that is deliberate rather than an oversight: that switch
+                # registers the MONITOR, and what has to run here is the fixture
+                # builder. Gate D exercises the product's registration path; this
+                # task exists only to carry a credential, so it is registered
+                # directly and the emit run below goes through the product switch.
+                #
+                # Wrapped in a generated shim for one reason: a scheduled task
+                # discards console output, and Set-BigFunnelDemoState has six
+                # distinct refusals each naming exactly what was wrong. Without a
+                # transcript a staging failure arrives as "LastTaskResult 1" and
+                # costs a second trip to diagnose. The shim is one file, removed
+                # in the finally with everything else.
+                $sq = { param([string]$s) return ($s -replace "'", "''") }
+                $shim = @(
+                    "`$ErrorActionPreference = 'Continue'"
+                    ("Start-Transcript -LiteralPath '{0}' -Force | Out-Null" -f (& $sq $gateELog))
+                    "`$rc = 99"
+                    'try {'
+                    # One line, no continuations. A trailing backtick followed by a
+                    # stray space is a syntax error in a file nobody will ever read.
+                    ("    & '{0}' -OutputPath '{1}' -MonitorPath '{2}' -CriticalGB {3} -WarningGB {4} -CriticalMailbox '{5}' -WarningMailbox '{6}' -EmergingMailbox '{7}' -BaselineAgeHours {8} -TargetDaysToCritical {9} -Scope Local" -f
+                        (& $sq $demo), (& $sq $gateEOut), (& $sq $monitor), $eCrit, $eWarn,
+                        (& $sq $cName), (& $sq $wName), (& $sq $eName), $baselineHours, $targetDays)
+                    "    `$rc = `$LASTEXITCODE"
+                    '}'
+                    'catch {'
+                    "    Write-Host ('SHIM CAUGHT: ' + `$_.Exception.Message)"
+                    "    `$rc = 98"
+                    '}'
+                    'finally { try { Stop-Transcript | Out-Null } catch { } }'
+                    "exit `$rc"
+                )
+                Set-Content -LiteralPath $gateEShim -Value $shim -Encoding UTF8
+
+                $stageAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                    -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $gateEShim)
+                # NO TRIGGER. A task with none registers fine and can only be started
+                # on demand, which is exactly what this is - it must never fire on
+                # its own, least of all after the gate has gone.
+                #
+                # DOUBLE the per-run timeout, because this task is TWO collections:
+                # Set-BigFunnelDemoState collects the estate to build the baseline
+                # from, then collects again to verify the fixture took. Giving it a
+                # single run's budget kills it partway through the second one, which
+                # lands as a staging failure that reads exactly like a product fault.
+                $stageTimeout  = $RunTimeoutMinutes * 2
+                $stageSettings = New-ScheduledTaskSettingsSet `
+                    -ExecutionTimeLimit (New-TimeSpan -Minutes $stageTimeout) `
+                    -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
+                $null = Register-ScheduledTask -TaskName $gateEStageTask `
+                    -Action $stageAction -Settings $stageSettings `
+                    -User $TaskCredential.UserName `
+                    -Password $TaskCredential.GetNetworkCredential().Password `
+                    -RunLevel Highest -Force
+
+                $sTask = Get-ScheduledTask -TaskName $gateEStageTask -ErrorAction Stop
+                Write-Measured 'staging task LogonType' $sTask.Principal.LogonType
+
+                if ($sTask.Principal.LogonType -ne 'Password') {
+                    # Not a FAIL: this task is harness, not product. Anything other
+                    # than Password means it will sit at Ready and never run - the
+                    # 54ebad7 failure - so nothing downstream gets measured either
+                    # way, and scoring it as a defect would condemn working code.
+                    Write-NotMeasured 'the fixture could be staged' `
+                        ('staging task registered as {0}, which carries no network credential' -f $sTask.Principal.LogonType)
+                    $results['GateE_Verdict'] = 'NOT-MEASURED: staging task logon type'
+                }
+                else {
+                    Write-Host ('  Staging the fixture - three collections, this is the slow part.') -ForegroundColor DarkGray
+                    Start-ScheduledTask -TaskName $gateEStageTask -ErrorAction Stop
+
+                    # Two-stage wait, for the reason Gate D documents: a slow
+                    # Ready->Running transition is indistinguishable from a run
+                    # that already finished.
+                    $sBy = (Get-Date).AddSeconds(90)
+                    $sRan = $false
+                    do {
+                        Start-Sleep -Seconds 2
+                        if ((Get-ScheduledTask -TaskName $gateEStageTask).State -eq 'Running') { $sRan = $true }
+                    } while (-not $sRan -and (Get-Date) -lt $sBy)
+
+                    $sState = (Get-ScheduledTask -TaskName $gateEStageTask).State
+                    $sBy    = (Get-Date).AddMinutes($stageTimeout)
+                    do {
+                        Start-Sleep -Seconds 10
+                        $sState = (Get-ScheduledTask -TaskName $gateEStageTask).State
+                        $sInfo  = Get-ScheduledTaskInfo -TaskName $gateEStageTask
+                        Write-Host ('    staging: state {0}, last result 0x{1:X}' -f $sState, $sInfo.LastTaskResult) -ForegroundColor DarkGray
+                    } while ($sState -eq 'Running' -and (Get-Date) -lt $sBy)
+
+                    $sInfo = Get-ScheduledTaskInfo -TaskName $gateEStageTask
+                    $results['GateE_StageResult'] = ('0x{0:X}' -f $sInfo.LastTaskResult)
+
+                    # THE TRANSCRIPT IS PRINTED WHENEVER STAGING DID NOT RETURN 0,
+                    # here, in this output, rather than left on the box for someone
+                    # to go and find. The trip script captures this stream; it does
+                    # not capture C:\ProgramData.
+                    if ($sInfo.LastTaskResult -ne 0 -and (Test-Path -LiteralPath $gateELog)) {
+                        Write-Host ''
+                        Write-Host '  --- staging transcript, last 30 lines --------------------' -ForegroundColor DarkGray
+                        Get-Content -LiteralPath $gateELog -Tail 30 |
+                            ForEach-Object { Write-Host ('  | ' + $_) -ForegroundColor DarkGray }
+                        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+                    }
+
+                    # ASSERT THE STAGED STATE FROM THE MONITOR'S OWN OUTPUT, not
+                    # from the staging exit code. The demo script verifies itself,
+                    # but reading latest.csv here means the gate's precondition is
+                    # established by the gate rather than taken on trust from the
+                    # thing it is about to test.
+                    $eLatest = Join-Path $gateEOut 'latest.csv'
+                    $staged  = $null
+                    if (Test-Path -LiteralPath $eLatest) {
+                        $staged = @(Import-Csv -LiteralPath $eLatest | Where-Object { $_.DisplayName -eq $eName })[0]
+                    }
+
+                    # Emerging is not a Status. It is Normal AND a projection inside
+                    # three days, which is how the monitor decides it and therefore
+                    # how this is checked - not by looking for a word that never
+                    # appears in the column.
+                    $stagedDays = if ($staged -and -not [string]::IsNullOrWhiteSpace($staged.DaysToCritical)) {
+                        [double]$staged.DaysToCritical } else { $null }
+                    $stagedOk = ($null -ne $staged) -and ($staged.Status -eq 'Normal') -and
+                                ($null -ne $stagedDays) -and ($stagedDays -gt 0) -and ($stagedDays -le 3)
+
+                    if (-not $stagedOk) {
+                        Write-NotMeasured 'the fixture reached an Emerging row' `
+                            $(if ($null -eq $staged) { ('no row for {0} in {1}' -f $eName, $eLatest) }
+                              else { ('{0}: Status {1}, DaysToCritical [{2}]' -f $eName, $staged.Status, $staged.DaysToCritical) })
+                        $results['GateE_Verdict'] = 'NOT-MEASURED: fixture did not produce an Emerging row'
+                    }
+                    else {
+                        Write-Check 'the fixture reached an Emerging row' $true `
+                            ('{0}: Normal, {1} GB/day, critical in {2} day(s)' -f
+                             $eName, $staged.GrowthGBPerDay, $staged.DaysToCritical)
+                        $results['GateE_StagedDaysToCritical'] = $staged.DaysToCritical
+                        $results['GateE_StagedGrowthGBPerDay'] = $staged.GrowthGBPerDay
+
+                        # ---------------------------------------------------------
+                        # 2. Run the monitor over it, THROUGH THE PRODUCT'S OWN
+                        #    registration switch, exactly as Gate D does
+                        # ---------------------------------------------------------
+                        # Same thresholds as the staging run, or the Emerging row
+                        # reclassifies and the event under test never had a chance.
+                        # The fixture baseline is 30 hours old and the staging run's
+                        # own CSV is minutes old, so Get-PreviousRunBaseline - newest
+                        # run at least -TrendBaselineHours old - can only pick the
+                        # fixture. -RetentionDays 30 keeps it: at 1 it would be swept
+                        # before it was read.
+                        $mark = Get-Date
+                        Start-Sleep -Seconds 1
+
+                        & $monitor -RegisterScheduledTask -TaskName $gateETask `
+                            -Scope Local -RetentionDays 30 `
+                            -WarningGB $eWarn -CriticalGB $eCrit `
+                            -EmitTo EventLog,RunJson -EventLogSource $EventLogSource `
+                            -OutputPath $gateEOut `
+                            -TaskIntervalHours 24 -TaskStartTime '23:53' `
+                            -TaskCredential $TaskCredential
+                        $eRegEx = $LASTEXITCODE
+                        Write-Check 'emit run registered (exit 0)' ($eRegEx -eq 0) ('exit ' + $eRegEx)
+
+                        if ($eRegEx -ne 0) {
+                            Write-NotMeasured '1012 emitted' 'the emit run could not be registered, so it never ran'
+                            $results['GateE_Verdict'] = 'NOT-MEASURED: emit task registration failed'
+                        }
+                        else {
+                            $eTask = Get-ScheduledTask -TaskName $gateETask -ErrorAction Stop
+                            Write-Check 'emit run: LogonType is Password' `
+                                ($eTask.Principal.LogonType -eq 'Password') `
+                                ([string]$eTask.Principal.LogonType + ' - anything else carries no network credential and cannot open the runspace')
+
+                            Start-ScheduledTask -TaskName $gateETask -ErrorAction Stop
+
+                            $eBy  = (Get-Date).AddSeconds(90)
+                            $eRan = $false
+                            do {
+                                Start-Sleep -Seconds 2
+                                if ((Get-ScheduledTask -TaskName $gateETask).State -eq 'Running') { $eRan = $true }
+                            } while (-not $eRan -and (Get-Date) -lt $eBy)
+
+                            $eState = (Get-ScheduledTask -TaskName $gateETask).State
+                            $eBy    = (Get-Date).AddMinutes($RunTimeoutMinutes)
+                            do {
+                                Start-Sleep -Seconds 10
+                                $eState = (Get-ScheduledTask -TaskName $gateETask).State
+                                $eInfo  = Get-ScheduledTaskInfo -TaskName $gateETask
+                                Write-Host ('    emit: state {0}, last result 0x{1:X}' -f $eState, $eInfo.LastTaskResult) -ForegroundColor DarkGray
+                            } while ($eState -eq 'Running' -and (Get-Date) -lt $eBy)
+
+                            $eInfo = Get-ScheduledTaskInfo -TaskName $gateETask
+                            $results['GateE_EmitResult'] = ('0x{0:X}' -f $eInfo.LastTaskResult)
+
+                            # A run that COMPLETED, by exit code: 0 clean, 1 alert,
+                            # 2 partial, 6 emerging. 3 fatal / 4 already running /
+                            # 5 blind / 7 task failure all mean the thresholds never
+                            # reached a single mailbox, so an absent 1012 would say
+                            # nothing at all about the event path.
+                            $eCollected = @(0, 1, 2, 6) -contains [int]$eInfo.LastTaskResult
+
+                            if (-not $eCollected) {
+                                Write-NotMeasured '1012 emitted' `
+                                    ('the emit run exited 0x{0:X}, which means it never classified a mailbox' -f $eInfo.LastTaskResult)
+                                $results['GateE_Verdict'] = 'NOT-MEASURED: emit run did not complete a collection'
+                            }
+                            else {
+                                $eEv = @(Get-WinEvent -FilterHashtable @{
+                                            LogName      = 'Application'
+                                            ProviderName = $EventLogSource
+                                            StartTime    = $mark
+                                        } -ErrorAction SilentlyContinue)
+
+                                $e1012 = @($eEv | Where-Object { $_.Id -eq 1012 })
+                                $results['GateE_1012Count'] = $e1012.Count
+                                # Recorded, not asserted: the staged estate also puts
+                                # one mailbox over each threshold, so this run emits
+                                # 1010 and 1011 as a side effect. Gate D is where
+                                # those two are the claim.
+                                $results['GateE_1010Count'] = @($eEv | Where-Object { $_.Id -eq 1010 }).Count
+                                $results['GateE_1011Count'] = @($eEv | Where-Object { $_.Id -eq 1011 }).Count
+
+                                # THE VERDICT. Everything above this line established
+                                # that a mailbox really was classified Emerging by
+                                # the monitor's own published output. If no 1012
+                                # followed, the event path is broken - that is a
+                                # product failure and it is scored as one.
+                                Write-Check 'Emerging run emits event 1012' ($e1012.Count -ge 1) `
+                                    ('{0} event(s) of id 1012' -f $e1012.Count)
+
+                                if ($e1012.Count -ge 1) {
+                                    $f = $e1012[0]
+                                    Write-Check '  1012 is a Warning, not an Error' `
+                                        ($f.LevelDisplayName -eq 'Warning') $f.LevelDisplayName
+                                    Write-Check '  1012 payload is key=value' `
+                                        ($f.Message -match '(?m)^\s*Finding=') ''
+                                    Write-Check '  1012 payload names the finding correctly' `
+                                        ($f.Message -match '(?m)^\s*Finding=Emerging') ''
+                                    Write-Check '  1012 carries MailboxGuid and DisplayName' `
+                                        (($f.Message -match '(?m)^\s*MailboxGuid=') -and
+                                         ($f.Message -match '(?m)^\s*DisplayName=')) `
+                                        'the runbook states these leave the box - this is the check that it is true'
+
+                                    # THE TWO ASSERTIONS ONLY THIS GATE CAN MAKE.
+                                    #
+                                    # Gate D proves 1010/1011 carry a payload. It
+                                    # cannot prove the event describes the mailbox
+                                    # that caused it, because it forces whole tiers
+                                    # at once. Exactly one mailbox was staged
+                                    # Emerging here, so the event has a name to match.
+                                    Write-Check '  1012 names the mailbox that was staged' `
+                                        ($f.Message -match ('(?m)^\s*DisplayName="?' + [regex]::Escape($eName) + '"?\s*$')) `
+                                        $eName
+
+                                    # And Emerging is the one finding whose whole
+                                    # substance is the projection. A 1012 that
+                                    # arrives without it tells a forwarder that
+                                    # something is growing and nothing about how
+                                    # fast or how long is left.
+                                    $dtcOk = $false
+                                    $dtcTxt = ''
+                                    if ($f.Message -match '(?m)^\s*DaysToCritical="?([0-9.]+)"?\s*$') {
+                                        $dtcTxt = $Matches[1]
+                                        $dtc = [double]$dtcTxt
+                                        $dtcOk = ($dtc -gt 0) -and ($dtc -le 3)
+                                    }
+                                    Write-Check '  1012 carries the projection that defines it' $dtcOk `
+                                        ('DaysToCritical=[{0}] - must be inside (0, 3]' -f $dtcTxt)
+                                    $results['GateE_EventDaysToCritical'] = $dtcTxt
+
+                                    $results['GateE_Verdict'] = 'MEASURED: 1012 emitted from a staged growth rate'
+                                }
+                                else {
+                                    $results['GateE_Verdict'] = 'FAILED: row was Emerging, no 1012 followed'
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        }
+    }
+    catch {
+        Write-Check 'Gate E ran to completion' $false $_.Exception.Message
+        $results['GateE_Exception'] = $_.Exception.Message
+    }
+    finally {
+        # ASK THE SCHEDULER, never a flag this block set itself: a registration
+        # that threw partway can still have left a task behind, and every path
+        # above jumps straight here.
+        foreach ($t in @($gateEStageTask, $gateETask)) {
+            $present = $false
+            try { $null = Get-ScheduledTask -TaskName $t -ErrorAction Stop; $present = $true } catch { }
+            if ($present) {
+                try { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction Stop }
+                catch {
+                    Write-Host ('  COULD NOT REMOVE TASK "{0}": {1}' -f $t, $_.Exception.Message) -ForegroundColor Red
+                    Write-Host '  Remove it by hand.' -ForegroundColor Red
+                }
+            }
+        }
+
+        # THE FIXTURE MUST NOT SURVIVE THE GATE. Set-BigFunnelDemoState writes
+        # DEMO-FIXTURE.txt precisely because a demo directory looks exactly like a
+        # production one; leaving the directory behind on a server means the next
+        # person to find it has a CSV containing one fabricated cell and a note
+        # saying so, sitting beside real monitoring output.
+        foreach ($p in @($gateEOut, $gateEShim, $gateELog)) {
+            try {
+                if (Test-Path -LiteralPath $p) {
+                    Remove-Item -LiteralPath $p -Recurse -Force
+                    Write-Host ('  Removed {0}' -f $p) -ForegroundColor DarkGray
+                }
+            }
+            catch {
+                Write-Host ('  COULD NOT REMOVE {0}: {1}' -f $p, $_.Exception.Message) -ForegroundColor Red
+                Write-Host '  Delete it by hand - it contains a fabricated growth rate.' -ForegroundColor Red
+            }
         }
     }
 }
