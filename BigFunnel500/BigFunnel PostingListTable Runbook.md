@@ -719,6 +719,19 @@ function Get-PostingListStatus {
 
 It ends with a `RESULT: <n> passed, <n> failed` line and exits non-zero if anything failed. Run it after any local edit to the monitor, and run it before trusting a copy that reached you by some route other than this repository.
 
+### Verifying this article against the script
+
+`run-tests.ps1` proves the monitor works. It does not prove this article still describes it, and those are different failures. The second is the quieter one: a parameter default, an exit code or an event ID can change in the script without anything here looking wrong, because drift of that kind reads perfectly well as prose and is only ever found by comparison. `Tests\runbook-checks.py` does that comparison mechanically.
+
+```powershell
+# From this folder. Python 3, no Exchange, no elevation, no network.
+python Tests\runbook-checks.py
+```
+
+It checks, in both directions: the parameter block reproduced above against the script's own, as `(name, type, default)` triples and in declaration order; every status in the precedence chain against the Status table and against the ordering of the worst-first sentence; every exit code the script can return against the Code table; every in-page link against every heading slug; every event ID and entry type against the two maps in the script; and every parameter excluded from the scheduled task's argument string against the sentence that names them, including the spelled-out count in it, which has already been wrong once. It prints a PASS or FAIL line per assertion, ends with `CHECKS: <n> failed`, and exits non-zero if anything failed. **Run it after editing this article, and after any change to the monitor's parameters, exit codes or event IDs.**
+
+`Tests\runbook-checks-selftest.py` is the test for that checker, and it is worth knowing it exists before reading a `0 failed` line as an assurance. It builds a throwaway copy of this article and the script in a temp directory, breaks exactly one thing, and asserts on what the checker prints: a renamed table header, a count drifted by one, a link pointing into a code fence, a parameter whose type changed, an exit code carrying a trailing comment. Every case the checker is meant to tolerate is paired with its inverse, so "this link now resolves" can be told apart from "the link check stopped checking". It ends with `PROOFS: <n> failed`, writes only to a temp directory, and changes nothing in this folder.
+
 ### Rehearsing the alerting on a non-production estate
 
 `run-tests.ps1` proves the monitor behaves against a mock. It does not prove your alerting does. The route from an exit code to a ticket runs through a scheduled task, an account, a network path and whatever consumes the summary file, and the only state most estates ever produce naturally is the clean one. `Invoke-BigFunnelScenario.ps1` closes that gap by driving the monitor into each of its states against real mailboxes on a dev or lab estate.
