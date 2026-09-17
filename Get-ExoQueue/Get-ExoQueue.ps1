@@ -10,7 +10,7 @@
 #>
 
 
-$script:ExoQueueVersion = '1.6.6'
+$script:ExoQueueVersion = '1.6.7'
 
 # Documented service limit: 100 query requests per rolling 5 minutes. Tracked at script scope so
 # two runs in the same session share one budget rather than each believing it has the whole of it.
@@ -1599,11 +1599,21 @@ function Get-ExoQueueDestination {
 
     $output = foreach ($entry in $ranked) {
         $old = if ($oldest.ContainsKey($entry.Key)) { $oldest[$entry.Key] } else { $null }
+        $minutes = if ($null -eq $old) { $null } else { [math]::Round(([datetime]::UtcNow - $old).TotalMinutes, 1) }
         [pscustomobject]@{
             Domain     = $entry.Key
             Deliveries = $entry.Value
             OldestUtc  = $old
-            AgeMinutes = if ($null -eq $old) { $null } else { [math]::Round(([datetime]::UtcNow - $old).TotalMinutes, 1) }
+
+            # Kept numeric and in minutes. This is what a -PassThru caller sorts, filters and
+            # thresholds on, so it must stay a number - Age below is the display form, not a
+            # replacement.
+            AgeMinutes = $minutes
+
+            # The same value rendered for reading. Without it the console printed "AgeMinutes 3003.7"
+            # directly underneath "Queue age: oldest 2.1 d" - the identical division-in-your-head
+            # problem that 1.6.6 fixed one line higher up, left in place one line lower down.
+            Age        = Format-ExoQueueDuration -Minutes $minutes
 
             # Repeated on every row because the function returns a collection and there is nowhere
             # else to hang it. Without it neither the console nor a -PassThru caller can tell a
@@ -2301,6 +2311,19 @@ function Get-ExoQueue {
                       stray "}        if (" that put a closing brace and the next statement on one
                       line is split; and run time over pages is reported when the run was slow
                       enough or long enough to matter.
+    9/17/26 | 1.6.7 - The destination table still reported raw minutes. Found by looking at a real
+                      lab screenshot rather than by reading the code: the console printed
+                      "AgeMinutes 3003.7" directly underneath "Queue age: oldest 2.1 d". Same
+                      elapsed time, same screen, one of them needing division in your head - which
+                      is the exact problem 1.6.6 fixed one line further up and then left in place
+                      one line lower down.
+                      The table now shows a scaled Age column. AgeMinutes is KEPT on the object and
+                      still numeric, because that is what a -PassThru caller sorts, filters and
+                      thresholds on; Age is the display form beside it, not a replacement.
+                      Worth recording how this was caught. It came from generating genuine
+                      screenshots against the CDX lab for the how-to video. Reading the code would
+                      not have found it - both lines are individually correct, and it is only
+                      seeing them stacked in one console that makes the mismatch obvious.
 #>
     [CmdletBinding(DefaultParameterSetName = 'AgeMinutes', SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
     [OutputType([pscustomobject])]
@@ -2984,7 +3007,7 @@ function Get-ExoQueue {
                 "Queued by destination domain ({0}):" -f $totalDomains
             }
             Write-Ui $heading -ForegroundColor Cyan
-            Show-ExoQueueTable -Row $destinations -Property 'Domain', 'Deliveries', 'AgeMinutes'
+            Show-ExoQueueTable -Row $destinations -Property 'Domain', 'Deliveries', 'Age'
             Write-Ui "  Recipient domain, not the actual next hop - a connector can route several domains to one host."
             Write-Ui ""
         }

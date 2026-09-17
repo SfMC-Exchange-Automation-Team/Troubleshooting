@@ -745,6 +745,30 @@ Describe 'Get-ExoQueue v1.5.x' {
 
             $text | Should -Match 'Queued by destination domain \(top 2 of 3\):'
         }
+
+        It 'renders the domain age in the same scaled unit as the queue age line' {
+            # Found by looking at a real lab screenshot: the console printed "AgeMinutes 3003.7"
+            # directly underneath "Queue age: oldest 2.1 d". Same number, same screen, one of them
+            # needing division - which is the exact problem 1.6.6 fixed one line further up.
+            $global:ExoPages.Add(@(
+                New-Row -MessageId 'old1' -Recipient 'a@slow.com' -ReceivedUtc ([datetime]::UtcNow.AddMinutes(-3003.7))
+            ))
+
+            $text = (Get-ExoQueue @script:Loud -StartDate ([datetime]::UtcNow.AddDays(-4)) 6>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData } else { [string]$_ } }) -join "`n"
+
+            $text | Should -Match '2\.1 d'
+            $text | Should -Not -Match '3003\.7'
+            $text | Should -Not -Match 'AgeMinutes'
+        }
+
+        It 'keeps AgeMinutes on the object as a number for callers to sort and threshold on' {
+            # The scaled Age is for reading. Replacing the numeric property rather than adding
+            # alongside it would break any caller doing "where AgeMinutes -gt 60".
+            $rows = @(Get-ExoQueueDestination -Row $script:ThreeDomains -First 5)
+            $rows[0].AgeMinutes | Should -BeOfType [double]
+            $rows[0].Age        | Should -BeOfType [string]
+        }
     }
 
     Context '1.6.3: the repeated hour is not ambiguous when the value carries an offset' {

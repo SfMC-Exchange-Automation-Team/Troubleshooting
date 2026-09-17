@@ -10,7 +10,7 @@ destinations it is going to.
 > there is nothing to read directly. Every run prints a disclaimer saying so. Please repeat that to
 > customers — a message trace row is not a queue entry.
 
-**Current version: 1.6.6.** It supersedes 1.4.2, which has moved to [`archive/`](archive/) — that
+**Current version: 1.6.7.** It supersedes 1.4.2, which has moved to [`archive/`](archive/) — that
 version under-reports on any tenant where the queue exceeds one page, and reports the run as
 complete while doing so.
 
@@ -65,12 +65,12 @@ Retrieved in 8.2 s over 3 pages.
 
 Queued by destination domain (4):
 
-Domain                 Deliveries  AgeMinutes
-------                 ----------  ----------
-contoso-partner.com           131       106.5
-fabrikam.com                   12        42.1
-northwind-traders.com           8        31.7
-adventure-works.com             3        14.1
+Domain                 Deliveries  Age
+------                 ----------  --------
+contoso-partner.com           131  1.8 hr
+fabrikam.com                   12  42.1 min
+northwind-traders.com           8  31.7 min
+adventure-works.com             3  14.1 min
 ```
 
 - **Two counts, not one.** Messages and recipient deliveries differ whenever one message fans out to
@@ -164,7 +164,7 @@ Import-Module Pester -MinimumVersion 6.0.0
 Invoke-Pester -Path .\Get-ExoQueue.Tests.ps1 -Output Detailed
 ```
 
-158 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
+160 tests, offline — they stub `Get-MessageTraceV2` and connect to nothing.
 
 `Test-ExoQueueTenantAssumption.ps1` is different: it runs **seven read-only queries against your own
 connected tenant** and reports whether the service behaves the way this script assumes. Worth running
