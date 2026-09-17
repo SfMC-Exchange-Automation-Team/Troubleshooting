@@ -2872,10 +2872,11 @@ Assert 'and a source that could not be prepared writes nothing at all' `
     ($w56s.Count -eq 0) ('wrote ' + $w56s.Count)
 
 Write-Host ''
-Write-Host 'T57  the key=value payload a forwarder reads with no configuration' -ForegroundColor Cyan
-# Splunk extracts key=value with no configuration, and Event Viewer renders it
-# with no parser. Both matter: the operator triaging at 3am is reading the
-# event, not the index.
+Write-Host 'T57  the key=value payload a forwarder reads, and the blank line that makes it one transform' -ForegroundColor Cyan
+# Event Viewer renders this with no parser, which is half the point. The other
+# half is Splunk, and Splunk needs a props.conf - measured, and said plainly in
+# the runbook. What the payload itself controls is whether that configuration is
+# one transform or two, which is what the leading newline is about.
 $kv57 = ConvertTo-KeyValueText ([ordered]@{
     Status    = 'OK'
     Server    = 'EXCH-01'
@@ -2888,7 +2889,18 @@ $kv57 = ConvertTo-KeyValueText ([ordered]@{
 })
 $lines57 = @($kv57 -split '\r?\n')
 
-Assert 'one line per field, and no field split across two' ($lines57.Count -eq 8) ('got ' + $lines57.Count)
+# Splunk renders a Windows event body as Message=<body>. Without a blank first
+# line the payload's first field arrives as Message=RunId=... and the pair split
+# consumes RunId into Message - so RunId, the field that joins a run event to its
+# per-mailbox events and to its per-run JSON, never becomes a field at all.
+# Asserted on the string rather than on the split, because the split is exactly
+# what would hide it.
+Assert 'the payload opens with a blank line, so a pair split cannot swallow the first field' `
+    ($kv57.StartsWith([Environment]::NewLine)) ('starts [' + $kv57.Substring(0, [Math]::Min(40, $kv57.Length)) + ']')
+Assert 'and that blank line is the only empty one, not a gap between fields' `
+    ((@($lines57 | Where-Object { $_ -eq '' }).Count -eq 1) -and ($lines57[0] -eq '')) ($kv57)
+
+Assert 'one line per field, and no field split across two' ($lines57.Count -eq 9) ('got ' + $lines57.Count)
 Assert 'a value with no whitespace is left unquoted, the way Splunk prefers it' `
     (($lines57 -contains 'Status=OK') -and ($lines57 -contains 'Server=EXCH-01')) ($kv57)
 # An unquoted value containing a space is where field extraction stops - and it

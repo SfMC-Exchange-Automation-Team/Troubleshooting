@@ -745,7 +745,7 @@ foreach ($e in $EmitTo) {
     }
 }
 
-$script:ScriptVersion   = '1.13.0'
+$script:ScriptVersion   = '1.14.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
@@ -1737,9 +1737,14 @@ $script:MailboxEventMap = @{
 }
 
 function ConvertTo-KeyValueText {
-    # Splunk extracts key=value with no configuration, and Event Viewer shows it
-    # readably with no parser at all. Both matter: the operator triaging at 3am
-    # is reading the event, not the index.
+    # Event Viewer shows this readably with no parser at all, which matters
+    # because the operator triaging at 3am is reading the event, not the index.
+    #
+    # Splunk does NOT extract it without configuration - that was measured, and
+    # an earlier version of this comment said otherwise. It needs a props.conf
+    # REPORT- with a DELIMS transform; the runbook carries the stanzas. What this
+    # function can do from here is make sure that one transform is enough, which
+    # is what the leading newline below is for.
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Values)
 
@@ -1763,7 +1768,28 @@ function ConvertTo-KeyValueText {
         if ($v -match '[\s"]') { $v = '"' + ($v -replace '"', "'") + '"' }
         $lines.Add(('{0}={1}' -f $k, $v))
     }
-    return ($lines -join [Environment]::NewLine)
+
+    # THE LEADING NEWLINE IS LOAD-BEARING, and it is not for Event Viewer.
+    #
+    # Splunk renders a Windows event body as "Message=<body>". Without a blank
+    # first line the payload's FIRST field arrives as
+    #
+    #     Message=RunId=20260917-163859-15964
+    #
+    # and any pair split on the first "=" resolves that to Message -> "RunId=...".
+    # RunId is consumed by the Message key and never becomes a field of its own.
+    # Measured on Splunk Enterprise 10.4.3, on run events and per-mailbox events
+    # alike, and it is always RunId, because RunId is always emitted first.
+    #
+    # That is the field the whole channel hangs off: it joins a run event to its
+    # own per-mailbox events, and to its per-run JSON file on the other channel.
+    # Losing it does not look like a fault - the events arrive, the searches run -
+    # so it is worth one character to make it structurally impossible.
+    #
+    # With the blank line, that Message pair arrives empty and every real pair sits
+    # on a line of its own, so one DELIMS transform extracts all of them. Event
+    # Viewer renders the blank line and nothing else changes.
+    return ([Environment]::NewLine + ($lines -join [Environment]::NewLine))
 }
 
 function Initialize-EmitEventSource {
