@@ -73,6 +73,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $results = [ordered]@{}
 $script:Failed = 0
+$script:NotMeasured = 0
 
 function Write-Head { param($Text) Write-Host ''; Write-Host $Text -ForegroundColor Cyan; Write-Host ('-' * $Text.Length) -ForegroundColor DarkGray }
 function Write-Measured { param($Label, $Value) Write-Host ('  {0} {1}' -f $Label.PadRight(46), $Value) }
@@ -82,6 +83,29 @@ function Write-Check {
     $tag = if ($Ok) { 'PASS' } else { 'FAIL' }
     $col = if ($Ok) { 'Green' } else { 'Red' }
     Write-Host ('  {0}  {1} {2}' -f $tag, $Label.PadRight(46), $Detail) -ForegroundColor $col
+}
+
+function Write-NotMeasured {
+    # A THIRD OUTCOME, and the gates were wrong without it.
+    #
+    # A check can fail three ways, and only one of them is the product's fault:
+    # the thing is broken, the harness could not create the conditions to look at
+    # it, or the estate cannot reach the case at all. The first is a FAIL. The
+    # other two are NOT MEASURED - the measurement did not happen, so there is no
+    # verdict to report in either direction.
+    #
+    # Measured on w25-ex01 2026-09-17: the gates reported "4 failed" and every
+    # one of the four was this. Two were Gate C's token never being filtered, two
+    # were Gate D's runs aborting before they collected anything. Nothing was
+    # learned about the product, and the tally said it had failed four times.
+    # Both gates already SAID "INCONCLUSIVE" and "NOT MEASURED" in their detail
+    # text while scoring the line as a failure anyway.
+    #
+    # Deliberately does NOT touch $script:Failed. A gap that inflates the failure
+    # count trains whoever reads it to discount failures.
+    param($Label, $Detail = '')
+    $script:NotMeasured++
+    Write-Host ('  {0}  {1} {2}' -f 'N/M ', $Label.PadRight(46), $Detail) -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
@@ -557,12 +581,46 @@ exit $code
         Write-Check 'the probe task actually ran' ($code -ne 0x41303) `
             $(if ($code -eq 0x41303) { '0x41303 = never ran. Nothing was measured.' } else { '' })
 
-        # THE GATE. 12 is called out separately because it is not a failure of the
-        # feature - it is a failure of the harness to create the conditions, and
-        # reporting it as a feature failure would condemn working code.
+        # THE GATE. 12 is not a failure of the feature - it is a failure of the
+        # harness to create the conditions, and reporting it as a feature failure
+        # would condemn working code on evidence about the test.
+        #
+        # MEASURED ON w25-ex01 2026-09-17: this is exactly what came back. The
+        # first version of this branch still called Write-Check with $false, so
+        # it printed the word INCONCLUSIVE next to the word FAIL and added two to
+        # the failure count. It now scores as NOT MEASURED, which is what the
+        # surrounding comment always claimed it did.
         if ($code -eq 12) {
-            Write-Check 'the probe token was NOT elevated' $false `
-                'RunLevel Limited did not filter the token. INCONCLUSIVE - the write was never tested non-elevated.'
+            Write-NotMeasured 'the probe token was NOT elevated' `
+                'RunLevel Limited did not filter the token, so the write was never tested non-elevated.'
+
+            # WHY it did not filter, because "inconclusive" without a cause is a
+            # dead end that gets re-run identically next trip. TASK_RUNLEVEL_LUA
+            # asks for the filtered half of a UAC split token - and if UAC is off
+            # there is no split token to take a half of, so every admin process
+            # runs full and Limited is silently a no-op. Exchange servers and lab
+            # builds are both common places to find EnableLUA=0.
+            $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+            $enableLua = $null; $filterAdmin = $null
+            try { $enableLua   = (Get-ItemProperty -Path $uacKey -Name EnableLUA -ErrorAction Stop).EnableLUA } catch { }
+            try { $filterAdmin = (Get-ItemProperty -Path $uacKey -Name FilterAdministratorToken -ErrorAction Stop).FilterAdministratorToken } catch { }
+
+            $results['GateC_EnableLUA']               = $(if ($null -eq $enableLua)   { 'unreadable' } else { $enableLua })
+            $results['GateC_FilterAdministratorToken'] = $(if ($null -eq $filterAdmin) { 'unreadable' } else { $filterAdmin })
+            Write-Measured 'EnableLUA' $results['GateC_EnableLUA']
+            Write-Measured 'FilterAdministratorToken' $results['GateC_FilterAdministratorToken']
+
+            if ($enableLua -eq 0) {
+                Write-Host ''
+                Write-Host '  CAUSE: UAC is OFF on this machine (EnableLUA=0). There is no split token,' -ForegroundColor Yellow
+                Write-Host '  so RunLevel Limited cannot filter anything and this gate can never pass' -ForegroundColor Yellow
+                Write-Host '  here. Measure it on a box with UAC on, or use a non-administrator account' -ForegroundColor Yellow
+                Write-Host '  for the probe - a plain user has no elevated half to drop in the first place.' -ForegroundColor Yellow
+                $results['GateC_Verdict'] = 'NOT-MEASURED: UAC disabled, RunLevel Limited is a no-op here'
+            }
+            else {
+                $results['GateC_Verdict'] = 'NOT-MEASURED: token was elevated, cause not established'
+            }
         }
         else {
             Write-Check 'the probe token was NOT elevated' ($code -eq 10 -or $code -eq 11) ''
@@ -580,8 +638,19 @@ exit $code
                 } -ErrorAction SilentlyContinue |
                  Where-Object { $_.Message -like '*Gate C*' })
         $results['GateC_EventLanded'] = $cEv.Count
-        Write-Check 'and the event is really in the log' ($cEv.Count -ge 1) `
-            ('{0} matching event(s)' -f $cEv.Count)
+
+        # ON 12 THE PROBE DELIBERATELY DID NOT WRITE, so an absent event is the
+        # correct outcome and asserting on it measures nothing. Scoring it FAIL -
+        # which is what happened on w25-ex01 - turns one gap into two, and the
+        # second one reads like a broken event channel.
+        if ($code -eq 12) {
+            Write-NotMeasured 'and the event is really in the log' `
+                'the probe returned 12 without writing, so there was never an event to find'
+        }
+        else {
+            Write-Check 'and the event is really in the log' ($cEv.Count -ge 1) `
+                ('{0} matching event(s)' -f $cEv.Count)
+        }
     }
     catch {
         Write-Check 'Gate C ran to completion' $false $_.Exception.Message
@@ -627,6 +696,11 @@ exit $code
 # failing: Emerging needs Status Normal AND DaysToCritical <= 3, which needs a growth
 # rate, which needs the estate to actually be growing between baselines. A static lab
 # cannot produce one. Reported as NOT-MEASURED, which is different from failed.
+#
+# ATTEMPTED ONCE AND ABORTED, 2026-09-17 on w25-ex01. The first version ran the
+# monitor inline and both runs died on the WinRM double hop before collecting.
+# The collection is now a registered scheduled task - the reasoning is at the run
+# loop below, because that is where someone tempted to simplify it will be.
 if (-not $RunGateD) {
     Write-Head 'GATE D - SKIPPED'
     Write-Host '  Re-run with -RunGateD to exercise the per-mailbox event path.' -ForegroundColor Yellow
@@ -635,6 +709,13 @@ else {
     Write-Head 'GATE D - per-mailbox events against real rows'
 
     $gateDOut = Join-Path $env:ProgramData 'BFGateD'
+
+    # A name of its own, not $TaskName. Gate B's task and this one can be present
+    # at the same moment if a gate dies between register and unregister, and two
+    # gates sharing a name means the survivor's cleanup removes the other's task
+    # out from under it.
+    $gateDTask = 'BFGATED Exchange BigFunnel PostingListTable Forced Thresholds'
+
     try {
         # Read what the estate really reports before choosing anything.
         $csv = Get-ChildItem -LiteralPath $OutputPath -Filter '*.csv' -ErrorAction SilentlyContinue |
@@ -655,57 +736,156 @@ else {
         # 1 MB cannot be reached by any legal threshold. Say that plainly instead of
         # running twice and reporting two empty passes.
         if ($maxGB -lt 0.001) {
-            Write-Check 'the estate can support this test' $false `
-                'no mailbox reaches 0.001 GB, the floor of -CriticalGB. NOT MEASURED, not failed.'
+            Write-NotMeasured 'the estate can support this test' `
+                'no mailbox reaches 0.001 GB, the floor of -CriticalGB. Unreachable by any legal threshold.'
             $results['GateD_Verdict'] = 'NOT-MEASURED: estate below the threshold floor'
         }
         else {
             Write-Check 'the estate can support this test' $true ('largest posting list is {0} GB' -f $maxGB)
+
+            # THE COLLECTION RUNS AS A SCHEDULED TASK, NOT IN THIS SESSION.
+            #
+            # The first version ran the monitor inline with & $monitor, on the
+            # reasoning that a collection in the session is not a second hop.
+            # That was wrong, and w25-ex01 proved it on 2026-09-17: the MONITOR
+            # opens an Exchange runspace, which is a network logon, and over WinRM
+            # the credential that authenticated the PSSession cannot be delegated
+            # onward. Both runs exited 3 with "A specified logon session does not
+            # exist" before collecting a single mailbox - and the gate then scored
+            # two FAILs for events that never had a chance to be emitted.
+            #
+            # A task registered with -User AND -Password gets LogonType Password,
+            # which DOES carry a network credential. That is precisely the
+            # asymmetry Gate B exists to prove, so Gate D now leans on it - and it
+            # is also the configuration a customer actually deploys, which makes
+            # this the more faithful test of the two rather than merely the one
+            # that works.
+            if (-not $TaskCredential) {
+                $TaskCredential = Get-Credential -Message 'Account to run the forced-threshold collection (a PASSWORD is required - it is what carries the network credential)'
+            }
+            if (-not $TaskCredential) { throw 'Gate D needs -TaskCredential to reach a collection. Nothing was run.' }
 
             $runs = @(
                 @{ Label = 'Critical'; Id = 1010; Warn = 0.001; Crit = 0.001 }
                 @{ Label = 'Warning';  Id = 1011; Warn = 0.001; Crit = 1024  }
             )
 
+            # A run that completed, by exit code: 0 clean, 1 alert, 2 partial,
+            # 6 emerging. 3 fatal / 4 already running / 5 blind / 7 task failure
+            # all mean the thresholds were never applied to a single mailbox, so
+            # an absent 1010 says nothing at all about the event path.
+            $collectedCodes = @(0, 1, 2, 6)
+
             foreach ($r in $runs) {
                 Write-Host ''
-                Write-Host ('  Forcing {0} (-WarningGB {1} -CriticalGB {2}) - a real collection, please wait.' -f
+                Write-Host ('  Forcing {0} (-WarningGB {1} -CriticalGB {2}) as a scheduled task - a real collection, please wait.' -f
                     $r.Label, $r.Warn, $r.Crit) -ForegroundColor DarkGray
 
                 $mark = Get-Date
                 Start-Sleep -Seconds 1
-                & $monitor -Scope Local -RetentionDays 30 `
-                    -WarningGB $r.Warn -CriticalGB $r.Crit `
-                    -EmitTo EventLog,RunJson -EventLogSource $EventLogSource `
-                    -OutputPath $gateDOut
-                $ex = $LASTEXITCODE
+                try {
+                    # Registered through the PRODUCT's own switch rather than
+                    # Register-ScheduledTask directly, so the argument line is
+                    # built by ConvertTo-RelaunchArguments exactly as it would be
+                    # for a customer. A parameter this gate silently loses is a
+                    # parameter the feature silently loses.
+                    & $monitor -RegisterScheduledTask -TaskName $gateDTask `
+                        -Scope Local -RetentionDays 30 `
+                        -WarningGB $r.Warn -CriticalGB $r.Crit `
+                        -EmitTo EventLog,RunJson -EventLogSource $EventLogSource `
+                        -OutputPath $gateDOut `
+                        -TaskIntervalHours 24 -TaskStartTime '23:57' `
+                        -TaskCredential $TaskCredential
+                    $regEx = $LASTEXITCODE
+                    $results[('GateD_{0}_RegisterExit' -f $r.Label)] = $regEx
 
-                $ev = @(Get-WinEvent -FilterHashtable @{
-                            LogName      = 'Application'
-                            ProviderName = $EventLogSource
-                            StartTime    = $mark
-                        } -ErrorAction SilentlyContinue)
-                $hit = @($ev | Where-Object { $_.Id -eq $r.Id })
+                    if ($regEx -ne 0) {
+                        Write-NotMeasured ('{0} run registers its task' -f $r.Label) `
+                            ('registration exited {0} - 7 is a policy refusal. Nothing was collected.' -f $regEx)
+                        continue
+                    }
 
-                $results[('GateD_{0}_ExitCode' -f $r.Label)] = $ex
-                $results[('GateD_{0}_{1}Count' -f $r.Label, $r.Id)] = $hit.Count
-                Write-Measured ('{0} run exit code' -f $r.Label) $ex
-                Write-Check ('{0} run emits event {1}' -f $r.Label, $r.Id) ($hit.Count -ge 1) `
-                    ('{0} event(s) of id {1}' -f $hit.Count, $r.Id)
+                    $dTask = Get-ScheduledTask -TaskName $gateDTask -ErrorAction Stop
+                    Write-Check ('{0} run: LogonType is Password' -f $r.Label) `
+                        ($dTask.Principal.LogonType -eq 'Password') `
+                        ([string]$dTask.Principal.LogonType + ' - anything else carries no network credential and cannot open the runspace')
 
-                if ($hit.Count -ge 1) {
-                    $first = $hit[0]
-                    Write-Check ('  {0} event is a Warning, not an Error' -f $r.Id) `
-                        ($first.LevelDisplayName -eq 'Warning') $first.LevelDisplayName
-                    Write-Check ('  {0} payload is key=value' -f $r.Id) `
-                        ($first.Message -match '(?m)^\s*Finding=') ''
-                    Write-Check ('  {0} payload names the finding correctly' -f $r.Id) `
-                        ($first.Message -match ('(?m)^\s*Finding=' + $r.Label)) ''
-                    # The field-disclosure claim in the runbook, checked against a real event.
-                    Write-Check ('  {0} carries MailboxGuid and DisplayName' -f $r.Id) `
-                        (($first.Message -match '(?m)^\s*MailboxGuid=') -and
-                         ($first.Message -match '(?m)^\s*DisplayName=')) `
-                        'the runbook states these leave the box - this is the check that it is true'
+                    Start-ScheduledTask -TaskName $gateDTask -ErrorAction Stop
+
+                    # Two-stage wait, for the reason spelled out in Gate B: a slow
+                    # Ready->Running transition is indistinguishable from a run
+                    # that already finished, and reading the second as the first
+                    # condemns a task that was about to work.
+                    $startBy = (Get-Date).AddSeconds(90)
+                    $ran = $false
+                    do {
+                        Start-Sleep -Seconds 2
+                        if ((Get-ScheduledTask -TaskName $gateDTask).State -eq 'Running') { $ran = $true }
+                    } while (-not $ran -and (Get-Date) -lt $startBy)
+
+                    $dInfo = Get-ScheduledTaskInfo -TaskName $gateDTask
+                    $by    = (Get-Date).AddMinutes($RunTimeoutMinutes)
+                    do {
+                        Start-Sleep -Seconds 10
+                        $dState = (Get-ScheduledTask -TaskName $gateDTask).State
+                        $dInfo  = Get-ScheduledTaskInfo -TaskName $gateDTask
+                        Write-Host ('    state {0}, last result 0x{1:X}' -f $dState, $dInfo.LastTaskResult) -ForegroundColor DarkGray
+                    } while ($dState -eq 'Running' -and (Get-Date) -lt $by)
+
+                    $ex = $dInfo.LastTaskResult
+                    $results[('GateD_{0}_ExitCode' -f $r.Label)] = $ex
+                    Write-Measured ('{0} run exit code' -f $r.Label) $ex
+
+                    if (-not $ran) {
+                        Write-NotMeasured ('{0} run emits event {1}' -f $r.Label, $r.Id) `
+                            'the scheduler never moved the task out of Ready in 90s'
+                        continue
+                    }
+                    if ($collectedCodes -notcontains $ex) {
+                        Write-NotMeasured ('{0} run emits event {1}' -f $r.Label, $r.Id) `
+                            ('the run exited {0} without collecting, so the thresholds were never applied to a mailbox' -f $ex)
+                        continue
+                    }
+
+                    $ev = @(Get-WinEvent -FilterHashtable @{
+                                LogName      = 'Application'
+                                ProviderName = $EventLogSource
+                                StartTime    = $mark
+                            } -ErrorAction SilentlyContinue)
+                    $hit = @($ev | Where-Object { $_.Id -eq $r.Id })
+                    $results[('GateD_{0}_{1}Count' -f $r.Label, $r.Id)] = $hit.Count
+
+                    Write-Check ('{0} run emits event {1}' -f $r.Label, $r.Id) ($hit.Count -ge 1) `
+                        ('{0} event(s) of id {1}' -f $hit.Count, $r.Id)
+
+                    if ($hit.Count -ge 1) {
+                        $first = $hit[0]
+                        Write-Check ('  {0} event is a Warning, not an Error' -f $r.Id) `
+                            ($first.LevelDisplayName -eq 'Warning') $first.LevelDisplayName
+                        Write-Check ('  {0} payload is key=value' -f $r.Id) `
+                            ($first.Message -match '(?m)^\s*Finding=') ''
+                        Write-Check ('  {0} payload names the finding correctly' -f $r.Id) `
+                            ($first.Message -match ('(?m)^\s*Finding=' + $r.Label)) ''
+                        # The field-disclosure claim in the runbook, checked against a real event.
+                        Write-Check ('  {0} carries MailboxGuid and DisplayName' -f $r.Id) `
+                            (($first.Message -match '(?m)^\s*MailboxGuid=') -and
+                             ($first.Message -match '(?m)^\s*DisplayName=')) `
+                            'the runbook states these leave the box - this is the check that it is true'
+                    }
+                }
+                finally {
+                    # ASK THE SCHEDULER, never a flag this loop set itself: a
+                    # registration that threw partway can still have left a task
+                    # behind, and every `continue` above jumps straight here.
+                    $dPresent = $false
+                    try { $null = Get-ScheduledTask -TaskName $gateDTask -ErrorAction Stop; $dPresent = $true } catch { }
+                    if ($dPresent) {
+                        try { Unregister-ScheduledTask -TaskName $gateDTask -Confirm:$false -ErrorAction Stop }
+                        catch {
+                            Write-Check ('{0} run: probe task removed' -f $r.Label) $false $_.Exception.Message
+                            Write-Host ('  Remove the task "{0}" by hand.' -f $gateDTask) -ForegroundColor Red
+                        }
+                    }
                 }
             }
 
@@ -763,10 +943,22 @@ Write-Head 'RESULTS - paste this block into the branch-state log'
 Write-Host ('  machine={0}  ps={1}  utc={2}' -f $env:COMPUTERNAME, $PSVersionTable.PSVersion, [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
 foreach ($k in $results.Keys) { Write-Host ('  {0}={1}' -f $k, $results[$k]) }
 Write-Host ''
+
+# NOT MEASURED IS REPORTED ON ITS OWN LINE, never folded into the failure count.
+# A gate that could not create its conditions has proved nothing, and rolling
+# that into "N failed" both condemns working code and hides the real gaps behind
+# a number that looks like a test result.
+if ($script:NotMeasured -gt 0) {
+    Write-Host ('  NOT MEASURED: {0} - conditions could not be created, so there is no verdict' -f $script:NotMeasured) -ForegroundColor Yellow
+}
 if ($script:Failed -eq 0) {
-    Write-Host ('  GATES: 0 failed' -f $script:Failed) -ForegroundColor Green
+    Write-Host '  GATES: 0 failed' -ForegroundColor Green
 }
 else {
     Write-Host ('  GATES: {0} failed' -f $script:Failed) -ForegroundColor Red
 }
+
+# Exit reflects FAILURES ONLY. A run that measured nothing exits 0 with the gaps
+# named above it - it has not found a defect, and saying otherwise would make the
+# trip script treat an inconclusive trip as a broken product.
 exit $(if ($script:Failed) { 1 } else { 0 })

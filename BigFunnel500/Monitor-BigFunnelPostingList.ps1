@@ -1953,9 +1953,25 @@ function Write-EmitEventChannel {
     # them against, and every one of them would fail the same way.
     if (-not $runWritten) { return }
 
+    # @($null) IS NOT EMPTY. It is a ONE-element array whose single element is
+    # $null, so the loop below ran once with $r = $null and [string]$r.Status
+    # threw under the Set-StrictMode 2.0 this script sets at the top.
+    #
+    # The abort path reaches here with BOTH unbound - it calls Invoke-RunEmit
+    # with neither -AtRisk nor -Emerging - so this fired on every aborted run
+    # that had an emit channel. Measured on w25-ex01 2026-09-17: "The property
+    # 'Status' cannot be found on this object." The run event had already been
+    # written by then, so the monitor-stopped signal survived; what did not was
+    # everything after it, and the Event Log channel runs BEFORE the RunJson one,
+    # so the per-run file was never written on precisely the runs that most need
+    # one. The completed path never saw it because its lists come from
+    # Where-Object, which yields an empty array rather than $null.
+    #
+    # Filtered AFTER the wrap, not before: @() around $null is what creates the
+    # element, so nothing done to $AtRisk itself can prevent it.
     $groups = @(
-        @{ Rows = @($AtRisk);   Label = '' }          # '' = take the row's own Status
-        @{ Rows = @($Emerging); Label = 'Emerging' }  # not a row Status; a trend verdict
+        @{ Rows = @(@($AtRisk)   | Where-Object { $null -ne $_ }); Label = '' }          # '' = take the row's own Status
+        @{ Rows = @(@($Emerging) | Where-Object { $null -ne $_ }); Label = 'Emerging' }  # not a row Status; a trend verdict
     )
 
     foreach ($g in $groups) {
@@ -2772,23 +2788,49 @@ try {
             # server, so it fails before any of the things the WinRM text
             # suggests are ever reached.
             #
-            # Session 0 is the discriminator: a scheduled task or a service runs
-            # there, an interactive console does not. Both conditions together
-            # make the cause near-certain, but it is still phrased as the likely
-            # one, because a locked-out or expired account presents identically.
+            # Session 0 says "not an interactive console". It does NOT say
+            # "scheduled task", and that distinction cost a lab trip on
+            # 2026-09-17: a WinRM remote session runs wsmprovhost.exe in session
+            # 0 as well, so this block fired on a PSSession and confidently told
+            # the operator to re-register a scheduled task that did not exist.
+            # A diagnostic that names the wrong cause is worse than none, because
+            # it is followed.
+            #
+            # $PSSenderInfo exists ONLY inside a remote session, which separates
+            # the two. It has to be probed with Test-Path rather than referenced:
+            # under Set-StrictMode 2.0 a bare $PSSenderInfo THROWS when unset, and
+            # throwing here would take down the fatal path that is already
+            # reporting a failure.
+            #
+            # Still phrased as the likely cause rather than the certain one,
+            # because a locked-out or expired account presents identically.
             $noCredential = ($script:EmsSession.Error -match '0x8009030e' -or
                              $script:EmsSession.Error -match 'Default credentials with Negotiate')
             $inSession0 = $false
             try { $inSession0 = ((Get-Process -Id $PID).SessionId -eq 0) } catch { }
+            $inRemoteSession = $false
+            try { $inRemoteSession = (Test-Path variable:PSSenderInfo) } catch { }
 
-            if ($noCredential -and $inSession0) {
-                Write-RunLog 'Most likely cause: this run has no network credential to authenticate with. It is in session 0, so it is a scheduled task or a service, and opening the runspace is a network logon even though the target is this same server. A task registered with -User but no -Password gets an Interactive or an S4U logon, and neither one carries a network credential.' 'FATAL'
+            if ($noCredential -and $inRemoteSession) {
+                Write-RunLog 'Most likely cause: this run is inside a WinRM remote session, and opening the Exchange runspace is a SECOND HOP. The credential that authenticated the PSSession cannot be delegated onward, so the runspace attempt goes out with no network credential - even though the target is this same server. This is not a scheduled task problem and re-registering a task will not change it.' 'FATAL'
+                Write-RunLog 'Fix it one of three ways: run the monitor directly on the server (an interactive logon or a scheduled task with LogonType Password both carry a network credential), pass -Credential so the runspace authenticates with an explicit credential of its own, or enable CredSSP on both ends so the first hop can delegate.' 'FATAL'
+            }
+            elseif ($noCredential -and $inSession0) {
+                Write-RunLog 'Most likely cause: this run has no network credential to authenticate with. It is in session 0 and is not a remote session, so it is a scheduled task or a service, and opening the runspace is a network logon even though the target is this same server. A task registered with -User but no -Password gets an Interactive or an S4U logon, and neither one carries a network credential.' 'FATAL'
                 Write-RunLog "Check it with: (Get-ScheduledTask -TaskName '<name>').Principal.LogonType. It has to read Password. Re-register with -User '<account>' -Password '<password>', or in Task Scheduler select 'Run whether user is logged on or not' and leave 'Do not store password' clear. A gMSA cannot be used here for the same reason." 'FATAL'
             }
 
             Write-RunLog 'This monitor requires one: the in-process snap-in cannot read a database mounted on another DAG member, and a run under it reports a subset of the estate as though it were the whole of it. Check that the Exchange PowerShell vdir is reachable and that this account has an Exchange RBAC role, or pass -ConnectionUri to point at another Exchange server in the organisation.' 'FATAL'
             $abortReason = 'Cannot open an Exchange runspace'
-            if ($noCredential -and $inSession0) { $abortReason = 'No network credential to open an Exchange runspace' }
+            if ($noCredential -and $inRemoteSession) {
+                # Distinct from the task case on purpose: this one reaches the
+                # Status field, and a forwarder that sees it needs to know the
+                # remedy is not the one the other message prescribes.
+                $abortReason = 'No delegated credential to open an Exchange runspace (WinRM second hop)'
+            }
+            elseif ($noCredential -and $inSession0) {
+                $abortReason = 'No network credential to open an Exchange runspace'
+            }
             $exitCode = 3
             exit $exitCode
         }

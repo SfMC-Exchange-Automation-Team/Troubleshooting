@@ -847,6 +847,23 @@ Measured on a lab DAG member, same account and same argument string, three regis
 
 Only the third is a working monitor. This is a consequence of binding through a runspace rather than the snap-in, so it is specific to `1.7.0` and later; the same registration under an older build ran, and quietly collected only the local node. **A gMSA cannot be used for this task**, for the same reason S4U cannot.
 
+##### `0x8009030e` has a second cause, and the remedies do not overlap
+
+The table above is about scheduled tasks, and for years that was the only place this error turned up. It is not. **Running the monitor inside a WinRM remote session produces the identical error for an unrelated reason**, and every instruction in this section is useless against it.
+
+A `New-PSSession`/`Invoke-Command` connection authenticates you to the target. Opening the Exchange runspace from inside it is a *second* hop - a fresh network logon - and the credential that got you there cannot be delegated onward. **This is true even when the runspace target is the same server you are already connected to**, which is the part that makes it look like something else. Measured on `w25-ex01`, 2026-09-17: the monitor exited `3` at the binding step with `A specified logon session does not exist`, from a session where the account had every right it needed.
+
+Tell the two apart before changing anything:
+
+| | Scheduled task / service | WinRM session |
+|---|---|---|
+| Session ID | `0` | `0` - **identical, so this is not the discriminator** |
+| `Test-Path variable:PSSenderInfo` | `False` | `True` |
+| Host | `ConsoleHost` | `ServerRemoteHost` |
+| Remedy | Re-register with `-User` **and** `-Password` | Re-registering changes nothing |
+
+The monitor now makes this distinction itself and says which one it is, rather than assuming session 0 means a task. If you see the WinRM wording, there are three ways out: run the monitor directly on the server, pass `-Credential` so it authenticates the runspace itself rather than relying on delegation, or enable CredSSP on both ends so the first hop can delegate. The first is almost always the right answer for a monitor.
+
 `-RegisterScheduledTask` enforces all of this rather than asking you to remember it: it refuses to register without a password, it registers `-RunLevel Highest`, and it reads the task back and fails the registration if the resulting `LogonType` is anything but `Password` - naming which of the two failures you are looking at, because `Interactive` and `S4U` break in completely different ways. Registering by hand, you are the one checking; see below.
 
 Where a stored password is not permitted, pass `-Credential` to the script instead and supply it from whatever secret store your estate uses. That moves the credential out of the task definition without giving up the runspace.
@@ -880,6 +897,7 @@ Get-Content 'C:\ProgramData\ExchangeBigFunnelPostingListMonitor\latest-summary.j
 | `LogonType` is not `Password` | Re-register. See above |
 | `LastTaskResult 267011` and `LastRunTime` in 1999 | The task never ran. `LogonType Interactive` |
 | `LastTaskResult 3`, summary `Status` names a credential | S4U, or the account has no Exchange RBAC |
+| Exit `3`, `A specified logon session does not exist`, **and you are in a PSSession** | Not a task fault at all. See [`0x8009030e` has a second cause](#0x8009030e-has-a-second-cause-and-the-remedies-do-not-overlap) |
 | `LastTaskResult 3`, `DatabasesInScope 0` | Expected on a passive-only member |
 | `LastTaskResult` and summary `ExitCode` disagree | The action is using `-Command`. Re-register with `-File` |
 | `LastTaskResult 0`, summary `Status OK` | Working, and it found nothing |

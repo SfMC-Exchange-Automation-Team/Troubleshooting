@@ -2973,6 +2973,191 @@ Assert 'EmitErrors reaches the stable summary despite being filled in after it w
 Reset-TaskStore
 
 Write-Host ''
+Write-Host 'T59  the abort path emits without an at-risk list, under the real StrictMode' -ForegroundColor Cyan
+# FOUND ON HARDWARE, not here: w25-ex01, 2026-09-17 03:20 UTC, an aborted run
+# logged "The emit channels could not run on the abort path: The property
+# 'Status' cannot be found on this object."
+#
+# The abort path calls Invoke-RunEmit with NEITHER -AtRisk NOR -Emerging, so both
+# reach Write-EmitEventChannel as $null. @($null) is a ONE-element array holding
+# $null - not an empty one - so the per-mailbox loop ran once with $r = $null and
+# [string]$r.Status threw.
+#
+# TWO REASONS THIS SUITE MISSED IT, and both are fixed here rather than noted:
+#
+#   1. Invoke-EmitChannel defaults $AtRisk = @() and $Emerging = @(), so every
+#      existing case passes an EMPTY ARRAY. Empty arrays survive the wrap; $null
+#      does not. The shape that actually ships was never once exercised.
+#   2. run-tests.ps1 sets NO StrictMode, and the monitor sets
+#      Set-StrictMode -Version 2.0 at its top. Without it $null.Status is
+#      silently $null and the buggy code does not throw AT ALL - measured. Every
+#      lifted-function test in T55-T58 has been running under weaker rules than
+#      production, so this block sets the real one.
+#
+# Scoped with & {} because Set-StrictMode is dynamically scoped: inside it the
+# lifted function runs under production rules, and it does not leak out to the
+# tests after this one. Both verified before this test was written.
+#
+# The stubs are rebuilt here rather than borrowed. T57 tears down its own at
+# line 2873 precisely so a later case cannot inherit one by accident - and the
+# first draft of this test walked into exactly the trap that teardown exists to
+# set, failing with "Initialize-EmitEventSource is not recognized". Rebuilt and
+# then torn down again below, same convention.
+function Initialize-EmitEventSource { param([string]$Source) return $true }
+function Write-EmitEvent {
+    param([string]$Source, [int]$EventId, [string]$EntryType, [string]$Message)
+    $null = $script:EmitWritten.Add([pscustomobject]@{
+        Source = $Source; EventId = $EventId; EntryType = $EntryType; Message = $Message })
+    return $true
+}
+# Reached only by the -MaxAlertDetail overflow branch, which none of the cases
+# below trip. Defined anyway: if one ever does, the failure should be an
+# assertion rather than a missing-command error that reads like a broken test.
+function Write-RunLog {
+    param([string]$Message, [string]$Level = 'INFO', [switch]$RowDetail, [string[]]$ConsoleText)
+    $null = $script:Logged.Add($Message)
+}
+
+& {
+    Set-StrictMode -Version 2.0
+
+    $abortPayload = New-EmitPayload -Status 'Cannot open an Exchange runspace' -Completed $false
+
+    # a) EXACTLY the abort path's call shape: neither parameter bound at all.
+    $script:EmitWritten.Clear(); $script:EmitErrors.Clear()
+    $threw59a = ''
+    try {
+        Write-EmitEventChannel -Source 'BFTest' -Payload $abortPayload -MaxDetail 25
+    }
+    catch { $threw59a = $_.Exception.Message }
+
+    Assert 'an aborted run with no at-risk list does not throw' `
+        ($threw59a -eq '') $threw59a
+    Assert 'and still writes its run event, which is the whole point of the channel' `
+        ($script:EmitWritten.Count -eq 1) ('wrote ' + $script:EmitWritten.Count + ' event(s)')
+    if ($script:EmitWritten.Count -eq 1) {
+        Assert '  as 1007/Error - the monitor stopped, by name' `
+            (($script:EmitWritten[0].EventId -eq 1007) -and ($script:EmitWritten[0].EntryType -eq 'Error')) `
+            ('got ' + $script:EmitWritten[0].EventId + '/' + $script:EmitWritten[0].EntryType)
+    }
+
+    # b) Both explicitly $null, which is what Invoke-RunEmit actually forwards.
+    $script:EmitWritten.Clear(); $script:EmitErrors.Clear()
+    $threw59b = ''
+    try {
+        Write-EmitEventChannel -Source 'BFTest' -Payload $abortPayload `
+            -AtRisk $null -Emerging $null -MaxDetail 25
+    }
+    catch { $threw59b = $_.Exception.Message }
+
+    Assert 'an explicit $null for both lists does not throw either' `
+        ($threw59b -eq '') $threw59b
+    Assert 'and emits no mailbox events, there being no mailboxes' `
+        ($script:EmitWritten.Count -eq 1) ('wrote ' + $script:EmitWritten.Count + ' event(s)')
+
+    # c) A null sitting INSIDE a real list. Nothing produces this today, but the
+    #    filter is what makes that stay true, and one bad element must not cost
+    #    the events either side of it.
+    $script:EmitWritten.Clear(); $script:EmitErrors.Clear()
+    $mixed59 = @(
+        [pscustomobject]@{ Status = 'Critical'; Database = 'MDB01'; DisplayName = 'A User'
+                           MailboxGuid = '11111111-1111-1111-1111-111111111111'; PostingListGB = 9.1
+                           TotalItemSize = '1 GB'; ItemCount = 10; BigFunnelIndexedCount = 9
+                           Trend = 'Rising'; GrowthGBPerDay = 0.5; DaysToCritical = 2 }
+        $null
+        [pscustomobject]@{ Status = 'Warning';  Database = 'MDB01'; DisplayName = 'B User'
+                           MailboxGuid = '22222222-2222-2222-2222-222222222222'; PostingListGB = 4.4
+                           TotalItemSize = '2 GB'; ItemCount = 20; BigFunnelIndexedCount = 19
+                           Trend = 'Flat'; GrowthGBPerDay = 0.0; DaysToCritical = $null }
+    )
+    $threw59c = ''
+    try {
+        Write-EmitEventChannel -Source 'BFTest' -Payload (New-EmitPayload -Status 'Alert') `
+            -AtRisk $mixed59 -Emerging $null -MaxDetail 25
+    }
+    catch { $threw59c = $_.Exception.Message }
+
+    Assert 'a null inside a real at-risk list does not throw' ($threw59c -eq '') $threw59c
+    Assert 'and the two real rows either side of it both still emit' `
+        ($script:EmitWritten.Count -eq 3) ('wrote ' + $script:EmitWritten.Count + ', expected run + 2')
+    if ($script:EmitWritten.Count -eq 3) {
+        $ids59 = @($script:EmitWritten | Select-Object -Skip 1 | ForEach-Object { $_.EventId })
+        Assert '  as 1010 and 1011, the null contributing no event of its own' `
+            (($ids59 -join ',') -eq '1010,1011') ('got ' + ($ids59 -join ','))
+    }
+
+    # d) The shape that always worked, re-checked so the fix is not a swap of one
+    #    broken case for another.
+    $script:EmitWritten.Clear(); $script:EmitErrors.Clear()
+    $threw59d = ''
+    try {
+        Write-EmitEventChannel -Source 'BFTest' -Payload (New-EmitPayload -Status 'OK') `
+            -AtRisk @() -Emerging @() -MaxDetail 25
+    }
+    catch { $threw59d = $_.Exception.Message }
+    Assert 'empty arrays still behave exactly as they did before the fix' `
+        (($threw59d -eq '') -and ($script:EmitWritten.Count -eq 1)) `
+        ($threw59d + ' wrote ' + $script:EmitWritten.Count)
+}
+
+# Torn down again, for the same reason T57 tears its own down.
+foreach ($f in 'Initialize-EmitEventSource', 'Write-EmitEvent', 'Write-RunLog') {
+    Remove-Item -Path ('function:' + $f) -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host ''
+Write-Host 'T60  session 0 does not mean "scheduled task"' -ForegroundColor Cyan
+# Also found on w25-ex01 on 2026-09-17. The runspace failed inside a WinRM
+# session and the script reported, with confidence, that the cause was a
+# scheduled task registered without -Password - then told the operator to check
+# a task that did not exist. A WinRM session runs wsmprovhost.exe in session 0
+# too, so session 0 alone cannot tell the two apart.
+#
+# Checked against the SOURCE rather than by running it: the branch needs a real
+# remote session to enter, which is the same problem Gate C has. The one thing
+# that must be true statically is the one that would turn a better diagnostic
+# into a new crash.
+$src60 = Get-Content -LiteralPath $monitor -Raw
+
+Assert 'the WinRM case is distinguished from the scheduled-task case at all' `
+    ($src60 -match 'PSSenderInfo') 'no PSSenderInfo check in the monitor'
+
+# THE LOAD-BEARING ONE. Under Set-StrictMode -Version 2.0 a bare $PSSenderInfo
+# reference THROWS when it is unset, which is every local run - so the obvious
+# spelling would crash the fatal path that is already reporting a failure.
+# Measured on PS 5.1.26100: "The variable '$PSSenderInfo' cannot be retrieved
+# because it has not been set."
+Assert 'and it is probed with Test-Path, not referenced directly' `
+    ($src60 -match 'Test-Path\s+variable:PSSenderInfo') 'not probed via Test-Path variable:'
+
+# Asked of the AST, not of a regex over the text. The first draft matched the
+# raw source and failed on the monitor's own COMMENT explaining this rule - the
+# comment has to spell $PSSenderInfo to be worth reading. The parser sees only
+# code, so a mention in prose cannot fail it and a real reference cannot hide in
+# one. `Test-Path variable:PSSenderInfo` has no sigil and is not a variable
+# expression, which is the whole point of writing it that way.
+$ast60  = [System.Management.Automation.Language.Parser]::ParseFile($monitor, [ref]$null, [ref]$null)
+$bare60 = @($ast60.FindAll({ param($x)
+    $x -is [System.Management.Automation.Language.VariableExpressionAst] -and
+    $x.VariablePath.UserPath -eq 'PSSenderInfo'
+}, $true))
+Assert 'with no bare $PSSenderInfo in CODE, which StrictMode 2.0 would throw on' `
+    ($bare60.Count -eq 0) `
+    ('found ' + $bare60.Count + ' at line(s) ' + ((@($bare60) | ForEach-Object { $_.Extent.StartLineNumber }) -join ', '))
+
+# The two remedies are different and must not be swapped: a second hop is not
+# fixed by re-registering a task, and a task with no password is not fixed by
+# enabling CredSSP.
+Assert 'the WinRM branch names the second hop' `
+    ($src60 -match 'SECOND HOP') 'the phrase does not appear'
+Assert 'and says plainly that re-registering a task will not help' `
+    ($src60 -match 'not a scheduled task problem') 'no such disclaimer'
+Assert 'while the scheduled-task branch still prescribes LogonType Password' `
+    ($src60 -match 'It has to read Password') 'the original remedy was lost'
+Assert 'and the two abort reasons stay distinguishable to a forwarder' `
+    ($src60 -match 'WinRM second hop') 'both branches share one abort reason'
+
+Write-Host ''
 
 Write-Host ('RESULT: ' + $pass + ' passed, ' + $fail + ' failed') -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
 if ($fail -gt 0) { exit 1 }
