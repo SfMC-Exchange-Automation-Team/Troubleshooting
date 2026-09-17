@@ -425,7 +425,7 @@ Three of those need explaining before you build a search on them.
 
 **`1006` can only be raised here.** `latest-summary.json` is built before it is written, so it can never report its own failure to be written - the file cannot describe its own absence. The emit runs after that attempt and after the exit code is final, so a run whose summary could not be published still emits `PublishFailed` with the reason in `PublishErrors`. For an estate collecting by forwarder that is not a detail; it is the reason to run this channel at all, because it is the only one that stays up when the file a poller reads goes stale.
 
-The payload is `key=value`, one field per line - Splunk extracts it with no configuration, and Event Viewer renders it with no parser, which matters because the person triaging at 3am is reading the event, not the index:
+The payload is `key=value`, one field per line. Event Viewer renders it with no parser, which matters because the person triaging at 3am is reading the event, not the index:
 
 ```text
 RunId=20260916-120000-4242
@@ -444,12 +444,17 @@ FailedDatabases=""
 PublishErrors=""
 ```
 
+> [!WARNING]
+> **Splunk does not parse this payload without configuration, and an earlier revision of this article said it did.** Measured on Splunk Enterprise 10.4.3 against this monitor's own events: the Windows event *header* is extracted as usual - `EventCode`, `SourceName`, `ComputerName`, `Type` and the rest, 32 fields in all - and the entire `key=value` body arrives intact inside the `Message` field and is **not** broken out. `Status`, `MailboxesEvaluated`, `BindSeconds` and the other 47 do not exist as fields, so every search in this section returns nothing until a `props.conf` is in place. Setting `KV_MODE = auto` on the sourcetype does **not** fix it; the stanzas that do are in [A worked Splunk configuration](#a-worked-splunk-configuration) below, and they were applied to a live indexer and re-measured rather than proposed. The `RunJson` channel needs none of this - Splunk parses JSON at index time on its own.
+
 Four encoding rules, each of which exists because the alternative breaks a search silently:
 
 - A value with no whitespace is left **unquoted**, which is the form field extraction prefers.
 - A value containing a space is **quoted**, because an unquoted space is where extraction stops - silently, taking every later field on the line with it.
 - A newline inside a value is **folded to a space**. A line break splits one record into two at the forwarder, and the second half arrives with no timestamp and no context.
 - An embedded `"` becomes `'`. Backslash-escaping is what a JSON reader expects and not what Event Viewer renders, and here both read the same string.
+
+The quoting rule survives the extraction intact, which is worth knowing because it is not obvious from either side: with the configuration below, `ExchangeVersion="Version 15.2 (Build 2562.17)"` extracts as `Version 15.2 (Build 2562.17)` - the quotes are consumed by the extraction, not carried into the value - so a search matches the bare string and `Binding="EMS (Kerberos)"` finds the events it should. Quote the value in the payload; do not quote it in the search.
 
 A boolean is rendered lower case, a null is an empty value rather than the word `null` or a missing key, and a payload approaching the event log's 32,766-character ceiling is clipped at 31,000 with a `[truncated]` marker - an event that silently stops mid-field is worse than one that says it was cut, because the missing fields read as absent rather than as elided.
 
@@ -490,6 +495,49 @@ index = exchange_bigfunnel
 sourcetype = _json
 ```
 
+That glob was the thing most worth checking, because getting it wrong is silent in both directions, and it holds: on a live indexer, each of the four per-run files present on disk was indexed exactly once, and `source="*latest-summary.json"` matched **zero** events. The `_json` channel also needs no extraction configuration at all - all 50 summary fields came out by name, Splunk having parsed the JSON at index time.
+
+The `index` both stanzas name has to exist before either input will land anything, which is a separate `indexes.conf` change and is easy to forget because nothing complains loudly:
+
+```ini
+# indexes.conf
+[exchange_bigfunnel]
+homePath   = $SPLUNK_DB\exchange_bigfunnel\db
+coldPath   = $SPLUNK_DB\exchange_bigfunnel\colddb
+thawedPath = $SPLUNK_DB\exchange_bigfunnel\thaweddb
+```
+
+The event log channel needs one more file, and this is the part that is easy to get wrong because nothing fails - the events arrive, the searches run, and they return nothing:
+
+```ini
+# props.conf - without this, the key=value body is not parsed at all. Splunk
+# extracts the Windows event header and leaves the whole payload sitting
+# inside the Message field. KV_MODE = auto does NOT do it; measured.
+[WinEventLog:Application]
+REPORT-bigfunnel_kv    = bigfunnel_kv
+REPORT-bigfunnel_runid = bigfunnel_runid
+
+# transforms.conf
+[bigfunnel_kv]
+# The config-file equivalent of: | extract pairdelim="\r\n" kvdelim="="
+DELIMS = "\r\n", "="
+
+[bigfunnel_runid]
+# Splunk renders the event body as Message=<body>, so the payload's first line
+# arrives as Message=RunId=... and the pair split above consumes RunId into
+# Message. RunId is the only field this happens to, because it is always
+# emitted first - and it is the one that joins a run event to its per-mailbox
+# events and to its per-run JSON file, so it is worth recovering by name.
+SOURCE_KEY = Message
+REGEX = ^RunId=([^\r\n]+)
+FORMAT = RunId::$1
+```
+
+> [!NOTE]
+> **What that was measured on, and what it cost.** Splunk Enterprise 10.4.3 on Windows Server 2025, both channels fed by a real scheduled-task run of this script against a 50-mailbox lab. Before the `props.conf`: 32 fields, none of them the monitor's. After: 92, with `Status`, `MailboxesEvaluated`, `BindSeconds`, `ExchangeVersion` and the rest extracting correctly, and `stats avg(BindSeconds) by ...` working as you would expect. 46 of the summary's 50 fields extract directly; `RunId` is the 47th and comes from the second transform; the remaining three - `EmitErrors`, `FailedDatabases`, `PublishErrors` - are empty on a clean run, and Splunk creates no field for an empty value. That is the correct behaviour rather than a gap: it is exactly what makes `EmitErrors!=""` below a search that stays silent until something is wrong.
+>
+> The cost to declare: `props.conf` is scoped by **sourcetype**, so `[WinEventLog:Application]` applies that extraction to every Application-channel event reaching the same sourcetype, not only this monitor's. On an indexer already collecting the Application log for other purposes, that is a search-time cost on those events too, and a `DELIMS` split will manufacture fields from any other `key=value` text it finds there. Scoping it to a dedicated sourcetype on the input avoids that, at the price of losing Splunk's built-in handling of the Windows event header - which is a trade for the Splunk team to make, not this article.
+
 Set `-RetentionDays` with the forwarder in mind. The sweep deletes per-run files on a schedule that knows nothing about whether they were collected, so a retention window shorter than the forwarder's worst-case backlog loses runs silently. The default of `30` is not close to that for any healthy forwarder.
 
 Searches worth having on day one, in that order:
@@ -500,8 +548,11 @@ Searches worth having on day one, in that order:
 | No `EventCode=10*` from a server in 3× the task interval | The task stopped running altogether - the failure no event can report |
 | `EventCode=1002` grouped by `Database` | Where the estate is actually getting worse |
 | `EmitErrors!=""` | The feed you are reading this with is itself broken |
+| `stats values(EventCode) by RunId` | The run event and its per-mailbox events, as one run. This is what the second transform above exists for |
 
 That second one is the reason to alert on absence as well as on content: every other row here depends on an event arriving.
+
+The first of those was run against the live indexer during the validation described above, and returned `EventCode=1007 Status="No network credential to open an Exchange runspace"` for three aborted runs - a monitor that could not reach Exchange, surfaced by the search meant to surface exactly that. The last one grouped a run event with its three per-mailbox events under one `RunId`, and joined that same run across both channels.
 
 > [!IMPORTANT]
 > **State plainly which fields leave the server.** Run events carry no mailbox identity at all - they are counts, thresholds, verdicts and paths. Per-mailbox events (`1010`, `1011`, `1012`) carry `DisplayName` and `MailboxGuid` alongside the measurements, because an alert that cannot name a mailbox is an alert somebody has to open a CSV to act on. That is ordinarily unremarkable for a customer's own estate and their own index, but it is a decision to make knowingly rather than to discover in a search result: those two fields, and no others, identify a person's mailbox. The same two fields are already in `latest.csv`. If they must not leave the box, use `RunJson` only, or leave `-EmitTo` unset and keep reading the files.
