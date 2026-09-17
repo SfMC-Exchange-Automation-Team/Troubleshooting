@@ -737,6 +737,22 @@ The eight states are `Healthy`, `Warning`, `Critical`, `Emerging`, `Shrinking`, 
 
 Two cautions. **The thresholds it computes are demonstration values, not production values** - they are scaled to whatever your dev estate holds, so a lab with a 30 MB posting list table produces thresholds three orders of magnitude below the shipped defaults. Use it to exercise the alerting path, never to choose thresholds. And `Emerging` and `Shrinking` are statements about change over time, so they need an earlier reading to difference against; the script writes a clearly marked synthetic baseline CSV into its own run directory, with a `SYNTHETIC-BASELINE.txt` beside it. **Never copy one into a real monitor output directory** - the monitor cannot tell it from a genuine earlier run, which is exactly why it works here.
 
+#### Standing up a demonstration that already has findings
+
+`Invoke-BigFunnelScenario.ps1` drives the estate into one state at a time and reports on it. A demonstration usually wants the opposite - a directory that shows Critical, Warning and Emerging together, from an ordinary monitor run with no special arguments, every time it is run in front of an audience. `Set-BigFunnelDemoState.ps1` prepares that once, and then prints the single command to demonstrate with.
+
+```powershell
+# Prepares the state and prints the command to run in front of an audience.
+# -OutputPath defaults to ...-demo, NOT the production directory. See below.
+.\Set-BigFunnelDemoState.ps1
+```
+
+**Two of those three findings are real and the third is a fixture, and that distinction is why this is documented rather than left as a convenience.** Critical and Warning are the live sizes of two real mailboxes, measured during the preparation run, compared against a threshold pair scaled to a lab estate instead of the production 1.7 / 2.0 GB: genuine rows, scaled thresholds, nothing invented. Emerging cannot be produced that way at all. It is `Normal` plus a projection inside three days, so it needs two observations that differ, and an estate whose posting list tables have not moved has only one. The script writes the earlier observation itself - it collects the real population, back-dates that CSV, and lowers exactly one cell in it, the Emerging mailbox's `PostingListBytes`, by the amount that makes today's real size project across critical inside the window. One cell, in one file. What was fabricated is written to `DEMO-FIXTURE.txt` beside the data as well as printed, because a demo directory looks exactly like a production one and that is how a fixture ends up being quoted as a measurement.
+
+**Never point `-OutputPath` at a directory you care about.** It defaults to `C:\ProgramData\ExchangeBigFunnelPostingListMonitor-demo` - deliberately not the production path - and the script empties it twice: once before collecting, and again afterwards so the back-dated baseline is the only history left. That is not tidiness. `Get-PreviousRunBaseline` takes the newest run at least `-TrendBaselineHours` old, so one leftover real run wins over the fixture and the Emerging row quietly goes flat, which reads like the script did nothing rather than like a stale directory. The same mechanism is why the state expires: **re-run the script before each demonstration**, because once a demo run itself ages past 24 hours it becomes a baseline candidate and Emerging goes flat again.
+
+Two details worth knowing before changing a parameter. Back-dating is a rename, not a timestamp change - the monitor reads the trend window from the run-id stamp in the file name, which a copy cannot clobber the way it clobbers a file time - so `-BaselineAgeHours` must stay above the monitor's `-TrendBaselineHours` or the join rejects the baseline as too recent to divide by. And the script refuses rather than improvising: ten named failures, among them a nominated mailbox that was not collected, one that does not sit between the thresholds it was nominated for, and an Emerging target so far below critical that the implied earlier reading would have to be negative. Each names the parameter to change. No mailbox, database or index is modified at any point, and nothing needs undoing beyond deleting the directory.
+
 ### Scheduling
 
 The script registers its own task. It is already running as administrator at that point - it self-elevates - which makes it the right place to do this, and it builds the task out of the run you typed rather than out of a second set of parameters that can disagree with it.
