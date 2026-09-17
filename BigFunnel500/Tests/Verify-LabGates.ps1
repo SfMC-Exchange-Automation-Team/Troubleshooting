@@ -38,6 +38,14 @@
 .EXAMPLE
     .\Verify-LabGates.ps1 -RunGateB -TaskCredential (Get-Credential CONTOSO\svc-bfmon)
     Both gates. Registers, forces one run, checks what landed, then unregisters.
+
+.EXAMPLE
+    .\Verify-LabGates.ps1 -RunGateC -RunGateD `
+        -TaskCredential (Get-Credential CONTOSO\svc-bfmon) `
+        -ProbeCredential (Get-Credential CONTOSO\ordinary.user)
+    Gates C and D. -ProbeCredential is the one that matters where UAC is off: an
+    ordinary user has no elevated half, so Gate C's probe measures the non-elevated
+    write instead of reporting that it could not produce a filtered token.
 #>
 [CmdletBinding()]
 param(
@@ -60,6 +68,21 @@ param(
     # Gate C drives a NON-elevated write, which needs a filtered token this elevated
     # session cannot produce for itself. Needs -TaskCredential for the same reason B does.
     [switch]$RunGateC,
+
+    # THE ONLY WAY GATE C MEASURES ANYTHING WHERE UAC IS OFF.
+    #
+    # RunLevel Limited (TASK_RUNLEVEL_LUA) asks for the filtered half of a UAC split
+    # token. With EnableLUA=0 there is no split token to take a half of, so an admin
+    # account runs full, the probe reports 12, and the gate is permanently
+    # inconclusive - measured on w25-ex01 2026-09-17, where this is exactly what
+    # happened. Exchange servers and lab builds are both common places to find UAC off.
+    #
+    # A NON-ADMINISTRATOR account has no elevated half in the first place, so it needs
+    # no filtering and RunLevel stops mattering. Supply an ordinary domain user here
+    # and the claim gets measured for real rather than diagnosed.
+    #
+    # Falls back to -TaskCredential when absent, which is the old behaviour.
+    [System.Management.Automation.PSCredential]$ProbeCredential,
 
     # Gate D forces per-mailbox classifications by moving the thresholds under real
     # measured sizes. Two real collections, so it is opt-in and it is not quick.
@@ -457,12 +480,26 @@ else {
 if (-not $RunGateC) {
     Write-Head 'GATE C - SKIPPED'
     Write-Host '  Re-run with -RunGateC and -TaskCredential for the non-elevated write.' -ForegroundColor Yellow
+    Write-Host '  Add -ProbeCredential with an ORDINARY USER if UAC is off on this box, or the' -ForegroundColor Yellow
+    Write-Host '  probe can only report 12 (token was never filtered).' -ForegroundColor Yellow
 }
 else {
     Write-Head 'GATE C - a genuinely non-elevated write'
 
     if (-not $TaskCredential) {
         $TaskCredential = Get-Credential -Message 'Account for the Limited-runlevel probe task (a PASSWORD is required)'
+    }
+
+    # The account the PROBE runs as, which is not necessarily the account that
+    # registers it. A non-admin here is what turns a 12 into a 10 or an 11 - see
+    # the -ProbeCredential comment in the param block.
+    $probeCred = if ($ProbeCredential) { $ProbeCredential } else { $TaskCredential }
+    $results['GateC_ProbeAccount']   = $probeCred.UserName
+    $results['GateC_ProbeIsDistinct'] = [bool]$ProbeCredential
+    Write-Measured 'probe runs as' ($probeCred.UserName + $(if ($ProbeCredential) { '' } else { ' (same as -TaskCredential)' }))
+    if (-not $ProbeCredential) {
+        Write-Host '  No -ProbeCredential: if that account is an administrator and UAC is off, this' -ForegroundColor DarkGray
+        Write-Host '  gate can only report 12. Pass an ordinary user to measure it.' -ForegroundColor DarkGray
     }
 
     $gateCTask = 'BFGATEC Non-Elevated Event Write'
@@ -485,10 +522,11 @@ else {
         # the USER sid and loses the Administrators one, so it inherits ProgramData's
         # read-only-for-Users ACL. Granting Modify lets the probe leave a message
         # behind; if the grant fails the exit code still carries the verdict.
+        # Granted to the PROBE account, which may not be the registering one.
         try {
             $acl  = Get-Acl -LiteralPath $probeDir
             $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                $TaskCredential.UserName, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+                $probeCred.UserName, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
             $acl.AddAccessRule($rule)
             Set-Acl -LiteralPath $probeDir -AclObject $acl
         }
@@ -537,10 +575,25 @@ exit $code
             -Argument ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $probeFile)
         $trigger = New-ScheduledTaskTrigger -Once -At ([DateTime]::Now.Date.AddDays(1).AddHours(23).AddMinutes(55))
 
-        Register-ScheduledTask -TaskName $gateCTask -Action $action -Trigger $trigger `
-            -User $TaskCredential.UserName `
-            -Password $TaskCredential.GetNetworkCredential().Password `
-            -RunLevel Limited -Force | Out-Null
+        try {
+            Register-ScheduledTask -TaskName $gateCTask -Action $action -Trigger $trigger `
+                -User $probeCred.UserName `
+                -Password $probeCred.GetNetworkCredential().Password `
+                -RunLevel Limited -Force | Out-Null
+        }
+        catch {
+            # A NON-ADMIN PROBE ACCOUNT NEEDS "Log on as a batch job". Without
+            # SeBatchLogonRight the registration fails here rather than at run time,
+            # and the message names the account rather than the missing right - which
+            # reads as a bad password. That is a property of the estate, not of the
+            # monitor, so it is NOT MEASURED rather than a failure.
+            Write-NotMeasured 'probe task registered' $_.Exception.Message
+            Write-Host ''
+            Write-Host ('  LIKELY CAUSE: {0} may lack "Log on as a batch job" on this machine.' -f $probeCred.UserName) -ForegroundColor Yellow
+            Write-Host '  Grant it in secpol.msc under Local Policies > User Rights Assignment, or use' -ForegroundColor Yellow
+            Write-Host '  an account that already has it. The monitor is not involved in this either way.' -ForegroundColor Yellow
+            throw ('NOT-MEASURED: the probe task could not be registered as {0}' -f $probeCred.UserName)
+        }
 
         $ct = Get-ScheduledTask -TaskName $gateCTask -ErrorAction Stop
         $results['GateC_RunLevel']  = $ct.Principal.RunLevel
@@ -614,9 +667,30 @@ exit $code
                 Write-Host ''
                 Write-Host '  CAUSE: UAC is OFF on this machine (EnableLUA=0). There is no split token,' -ForegroundColor Yellow
                 Write-Host '  so RunLevel Limited cannot filter anything and this gate can never pass' -ForegroundColor Yellow
-                Write-Host '  here. Measure it on a box with UAC on, or use a non-administrator account' -ForegroundColor Yellow
-                Write-Host '  for the probe - a plain user has no elevated half to drop in the first place.' -ForegroundColor Yellow
-                $results['GateC_Verdict'] = 'NOT-MEASURED: UAC disabled, RunLevel Limited is a no-op here'
+                Write-Host ('  here as {0}.' -f $probeCred.UserName) -ForegroundColor Yellow
+                if ($ProbeCredential) {
+                    # -ProbeCredential WAS supplied and the token still came back
+                    # elevated, which means the account is an administrator. That is
+                    # the one thing the parameter cannot fix, and saying "UAC is off"
+                    # alone would send the operator to the wrong knob.
+                    Write-Host ''
+                    Write-Host ('  AND {0} IS AN ADMINISTRATOR on this box - that is why it is still' -f $probeCred.UserName) -ForegroundColor Yellow
+                    Write-Host '  elevated. -ProbeCredential only helps with an account that has no' -ForegroundColor Yellow
+                    Write-Host '  elevated half at all. Use an ordinary domain user.' -ForegroundColor Yellow
+                    $results['GateC_Verdict'] = 'NOT-MEASURED: -ProbeCredential account is itself an administrator'
+                }
+                else {
+                    Write-Host '  Pass -ProbeCredential with an ordinary (non-administrator) account: it has' -ForegroundColor Yellow
+                    Write-Host '  no elevated half to drop, so RunLevel stops mattering and this measures.' -ForegroundColor Yellow
+                    $results['GateC_Verdict'] = 'NOT-MEASURED: UAC disabled, RunLevel Limited is a no-op here'
+                }
+            }
+            elseif ($ProbeCredential) {
+                Write-Host ''
+                Write-Host ('  CAUSE: {0} came back elevated with UAC on, so it is an administrator and' -f $probeCred.UserName) -ForegroundColor Yellow
+                Write-Host '  RunLevel Limited should have filtered it. Check FilterAdministratorToken' -ForegroundColor Yellow
+                Write-Host '  above, or use an ordinary domain user, which needs no filtering.' -ForegroundColor Yellow
+                $results['GateC_Verdict'] = 'NOT-MEASURED: -ProbeCredential account elevated despite UAC being on'
             }
             else {
                 $results['GateC_Verdict'] = 'NOT-MEASURED: token was elevated, cause not established'
@@ -653,8 +727,16 @@ exit $code
         }
     }
     catch {
-        Write-Check 'Gate C ran to completion' $false $_.Exception.Message
-        $results['GateC_Exception'] = $_.Exception.Message
+        # A registration the estate refuses is a harness limitation, not a product
+        # failure. It is raised with this prefix so the two can be told apart here;
+        # the diagnosis was already printed where it was detected.
+        if ($_.Exception.Message -like 'NOT-MEASURED:*') {
+            $results['GateC_Verdict'] = $_.Exception.Message
+        }
+        else {
+            Write-Check 'Gate C ran to completion' $false $_.Exception.Message
+            $results['GateC_Exception'] = $_.Exception.Message
+        }
     }
     finally {
         # Ask the scheduler, never a flag - see Gate B.
