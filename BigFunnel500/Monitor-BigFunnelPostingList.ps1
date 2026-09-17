@@ -745,7 +745,7 @@ foreach ($e in $EmitTo) {
     }
 }
 
-$script:ScriptVersion   = '1.11.0'
+$script:ScriptVersion   = '1.12.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false

@@ -249,7 +249,7 @@ Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchan
 A run started by hand looks like this. Nothing was passed but `-Scope Local`:
 
 ```text
-BigFunnel PostingListTable monitor v1.11.0
+BigFunnel PostingListTable monitor v1.12.0
 run 20260915-121458-317452 on EXCH-01
 
 Scope Local - 3 database(s) in scope
@@ -429,7 +429,7 @@ The payload is `key=value`, one field per line - Splunk extracts it with no conf
 
 ```text
 RunId=20260916-120000-4242
-ScriptVersion=1.11.0
+ScriptVersion=1.12.0
 Timestamp=2026-09-16T12:00:00.0000000+02:00
 Server=EXCH-01
 Scope=Local
