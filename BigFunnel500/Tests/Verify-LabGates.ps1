@@ -814,12 +814,26 @@ else {
         $results['GateD_MaxGB']        = $maxGB
         Write-Measured 'rows / with a size / largest GB' ('{0} / {1} / {2}' -f $rows.Count, $sizes.Count, $maxGB)
 
-        # -WarningGB and -CriticalGB are ValidateRange(0.001, 1024), so a mailbox under
-        # 1 MB cannot be reached by any legal threshold. Say that plainly instead of
-        # running twice and reporting two empty passes.
-        if ($maxGB -lt 0.001) {
+        # THE CRITICAL RUN CANNOT USE Warn = Crit, AND THIS GATE LEARNED THAT THE
+        # EXPENSIVE WAY. Monitor:2066 refuses WarningGB -ge CriticalGB with exit 3,
+        # correctly - if they are equal the warning tier can never fire. On
+        # 2026-09-17 the Critical run asked for 0.001/0.001, exited 3 before printing
+        # its banner, and collected nothing, while the Warning run passed cleanly.
+        # THE PRODUCT WAS RIGHT AND THIS HARNESS WAS WRONG: it requested the exact
+        # configuration the monitor exists to refuse.
+        #
+        # So Warn must sit strictly below Crit, and Crit must sit at or below a real
+        # mailbox or nothing classifies Critical at all. Both are
+        # ValidateRange(0.001, 1024), so the smallest legal pair is 0.001 / 0.002 -
+        # and THAT is what the estate has to reach for this gate to mean anything,
+        # not 0.001. The old guard let an estate through that could satisfy the
+        # Warning run and never the Critical one, which would have read as a product
+        # failure.
+        $critFloor = 0.002
+
+        if ($maxGB -lt $critFloor) {
             Write-NotMeasured 'the estate can support this test' `
-                'no mailbox reaches 0.001 GB, the floor of -CriticalGB. Unreachable by any legal threshold.'
+                ('no mailbox reaches {0} GB - the smallest -CriticalGB that still leaves room for a lower -WarningGB. Unreachable by any legal pair.' -f $critFloor)
             $results['GateD_Verdict'] = 'NOT-MEASURED: estate below the threshold floor'
         }
         else {
@@ -847,8 +861,12 @@ else {
             }
             if (-not $TaskCredential) { throw 'Gate D needs -TaskCredential to reach a collection. Nothing was run.' }
 
+            # Crit strictly above Warn in BOTH rows - see $critFloor above. The
+            # Critical run may also emit 1011s for anything landing between the two
+            # thresholds; that is correct behaviour and the assertion below counts
+            # 1010 specifically rather than assuming the run produced nothing else.
             $runs = @(
-                @{ Label = 'Critical'; Id = 1010; Warn = 0.001; Crit = 0.001 }
+                @{ Label = 'Critical'; Id = 1010; Warn = 0.001; Crit = $critFloor }
                 @{ Label = 'Warning';  Id = 1011; Warn = 0.001; Crit = 1024  }
             )
 
