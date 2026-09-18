@@ -1,11 +1,11 @@
 0:00:00  Introduction
-0:00:52  1. Verify the copy
-0:02:00  2. Starting it
-0:03:29  3. The first run
-0:04:59  4. What a run leaves
-0:06:11  5. When it finds something
-0:07:46  6. On another DAG member
-0:09:05  7. Scheduling it
-0:10:19  8. The correct registration
-0:11:26  9. A first fortnight
-0:12:22  Close
+0:00:42  1. Verify the copy
+0:01:50  2. Starting it
+0:03:19  3. The first run
+0:04:57  4. What a run leaves
+0:06:09  5. When it finds something
+0:07:52  6. On another DAG member
+0:09:12  7. Scheduling it
+0:10:26  8. The correct registration
+0:11:33  9. A first fortnight
+0:12:29  Close
