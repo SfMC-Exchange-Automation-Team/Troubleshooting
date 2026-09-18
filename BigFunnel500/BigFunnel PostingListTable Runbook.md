@@ -242,14 +242,14 @@ Run it from any Windows PowerShell 5.1 session. It does not need to be an Exchan
 > Run the file, not a copy assembled out of this article. Earlier revisions of this runbook carried the whole script inline, and a copy taken from one of those has no `-Scope`, `-ThresholdMode`, `-MaxRunMinutes` or `-ExitNonZeroOnAlert`, writes neither `latest.csv` nor `latest-summary.json`, and has neither the `MetricUnavailable` status nor exit code `5`. Every exit code, contract and lab result described in this article refers to the file in this folder. The excerpts below are quoted from it for reading, and are not a substitute for it.
 
 > [!NOTE]
-> The script exports to CSV rather than sending mail. The `Send-MailMessage` cmdlet is obsolete and Microsoft recommends against using it because it does not guarantee a secure connection to the SMTP server. Where a log aggregator is the consumer rather than a person, `-EmitTo` writes the run to the Windows event log, to a per-run JSON file, or to both, in a shape a forwarder reads with no configuration. See [Feeding a log aggregator](#feeding-a-log-aggregator).
+> The script exports to CSV rather than sending mail. The `Send-MailMessage` cmdlet is obsolete and Microsoft recommends against using it because it does not guarantee a secure connection to the SMTP server. Where a log aggregator is the consumer rather than a person, `-EmitTo` writes the run to the Windows event log, to a per-run JSON file, or to both. The per-run JSON needs no configuration at all; the event log channel needs a `props.conf`, and that is measured rather than assumed. See [Feeding a log aggregator](#feeding-a-log-aggregator).
 
 ### Reading a run on screen
 
 A run started by hand looks like this. Nothing was passed but `-Scope Local`:
 
 ```text
-BigFunnel PostingListTable monitor v1.13.0
+BigFunnel PostingListTable monitor v1.14.0
 run 20260915-121458-317452 on EXCH-01
 
 Scope Local - 3 database(s) in scope
@@ -425,11 +425,12 @@ Three of those need explaining before you build a search on them.
 
 **`1006` can only be raised here.** `latest-summary.json` is built before it is written, so it can never report its own failure to be written - the file cannot describe its own absence. The emit runs after that attempt and after the exit code is final, so a run whose summary could not be published still emits `PublishFailed` with the reason in `PublishErrors`. For an estate collecting by forwarder that is not a detail; it is the reason to run this channel at all, because it is the only one that stays up when the file a poller reads goes stale.
 
-The payload is `key=value`, one field per line. Event Viewer renders it with no parser, which matters because the person triaging at 3am is reading the event, not the index:
+The payload is `key=value`, one field per line, opening with a blank one. Event Viewer renders it with no parser, which matters because the person triaging at 3am is reading the event, not the index:
 
 ```text
+
 RunId=20260916-120000-4242
-ScriptVersion=1.13.0
+ScriptVersion=1.14.0
 Timestamp=2026-09-16T12:00:00.0000000+02:00
 Server=EXCH-01
 Scope=Local
@@ -443,6 +444,10 @@ Emerging=0
 FailedDatabases=""
 PublishErrors=""
 ```
+
+**That first blank line is load-bearing, and it is not for Event Viewer.** Splunk renders a Windows event body as `Message=<body>`. Without the blank line the payload's first field arrives as `Message=RunId=…`, and anything splitting that line on its first `=` resolves it to `Message` → `"RunId=…"`. `RunId` is consumed by the `Message` key and never becomes a field at all. It is always `RunId` this happens to, because `RunId` is always emitted first - and it is the field that joins a run event to its own per-mailbox events and to its per-run JSON file on the other channel. Nothing about that looks like a fault: the events arrive, the searches run, and the correlation silently returns nothing. The blank line costs one character and makes it structurally impossible.
+
+Versions up to and including **1.13.0** do not emit it, so an estate collecting from those needs a second transform to recover `RunId` by name. Both forms are given [below](#a-worked-splunk-configuration).
 
 > [!WARNING]
 > **Splunk does not parse this payload without configuration, and an earlier revision of this article said it did.** Measured on Splunk Enterprise 10.4.3 against this monitor's own events: the Windows event *header* is extracted as usual - `EventCode`, `SourceName`, `ComputerName`, `Type` and six more - and the entire `key=value` body arrives intact inside the `Message` field and is **not** broken out. `Status`, `MailboxesEvaluated`, `BindSeconds` and the other 47 do not exist as fields, so every search in this section returns nothing until a `props.conf` is in place. Setting `KV_MODE = auto` on the sourcetype does **not** fix it; the stanzas that do are in [A worked Splunk configuration](#a-worked-splunk-configuration) below, and they were applied to a live indexer and re-measured rather than proposed. The `RunJson` channel needs none of this - Splunk parses JSON at index time on its own.
@@ -514,27 +519,51 @@ The event log channel needs one more file, and this is the part that is easy to 
 # extracts the Windows event header and leaves the whole payload sitting
 # inside the Message field. KV_MODE = auto does NOT do it; measured.
 [WinEventLog:Application]
-REPORT-bigfunnel_kv    = bigfunnel_kv
-REPORT-bigfunnel_runid = bigfunnel_runid
+REPORT-bigfunnel_kv = bigfunnel_kv
 
 # transforms.conf
 [bigfunnel_kv]
 # The config-file equivalent of: | extract pairdelim="\r\n" kvdelim="="
 DELIMS = "\r\n", "="
+```
 
+That is the whole configuration for **v1.14.0 and later**, and the payload's leading blank line is why one transform is enough.
+
+> [!IMPORTANT]
+> **Those two files do not go where `inputs.conf` goes.** `REPORT-` is a *search-time* extraction, so `props.conf` and `transforms.conf` belong on the tier that runs the searches - the search head, or the indexer where it is also the search head. `inputs.conf` is the one that belongs on the machine holding the event log. In the common estate shape, a universal forwarder on each Exchange server sending to a separate indexing tier, that means the two halves of this configuration are deployed to two different places, and a universal forwarder **does no parsing at all**: the same `props.conf` copied onto the forwarder alongside `inputs.conf` does nothing whatsoever. The symptom is the one this entire section exists to describe - the events arrive, the searches run, and every field is missing - so it is worth confirming with whoever owns the Splunk tier rather than discovering.
+>
+> That placement is reasoned from how search-time extraction works, not measured: the validation described here ran `inputs.conf` directly on the indexer, with no forwarder in the path. The extraction behaves the same either way, which is exactly why *where the file sits* is the part that can still go wrong.
+
+**Collecting from v1.13.0 or earlier as well?** Add a second transform. Those versions emit `RunId` as the first line of the body, so Splunk's `Message=<body>` rendering puts it where the pair split above consumes it, and it is the one field that does not survive:
+
+```ini
+# props.conf - only needed for payloads emitted by v1.13.0 and earlier.
+[WinEventLog:Application]
+REPORT-bigfunnel_kv    = bigfunnel_kv
+REPORT-bigfunnel_runid = bigfunnel_runid
+
+# transforms.conf
 [bigfunnel_runid]
-# Splunk renders the event body as Message=<body>, so the payload's first line
-# arrives as Message=RunId=... and the pair split above consumes RunId into
-# Message. RunId is the only field this happens to, because it is always
-# emitted first - and it is the one that joins a run event to its per-mailbox
-# events and to its per-run JSON file, so it is worth recovering by name.
+# Recovers RunId from the Message key that swallowed it. Safe to leave in place
+# against a v1.14.0 payload: measured with both transforms live, it re-extracts
+# the identical value and RunId stays single-valued, so a mixed estate can carry
+# both and retire this one when the last old host is upgraded.
 SOURCE_KEY = Message
 REGEX = ^RunId=([^\r\n]+)
 FORMAT = RunId::$1
 ```
 
+Measured on a live indexer holding both payload shapes, with `bigfunnel_runid` deliberately removed and grouped by version so the result carries its own control:
+
+| Payload from | `RunId` extracted |
+|---|---|
+| v1.11.0, v1.12.0, v1.13.0 | **no** - one transform is not enough for these |
+| v1.14.0 | **yes** |
+
+Then the same index with `bigfunnel_runid` added back, which is what a phased upgrade actually runs: every version returns `RunId`. The rescue still fires on a v1.14.0 event - Splunk's `Message` field arrives with the leading blank line trimmed, so `^RunId=` matches there too - but it yields the identical value, `mvcount(RunId)` stays `1`, and `stats … by RunId` goes on grouping a run event with its per-mailbox events on one row. Leaving it in place during a rollout costs nothing.
+
 > [!NOTE]
-> **What that was measured on, and what it cost.** Splunk Enterprise 10.4.3 on Windows Server 2025, both channels fed by a real scheduled-task run of this script against a 50-mailbox lab. Before the `props.conf`, the payload contributed **nothing**: the ten fields Splunk names from the Windows event header - `LogName`, `EventCode`, `ComputerName`, `SourceName`, `Type`, `RecordNumber`, `Keywords`, `TaskCategory`, `OpCode` and `Message` - and not one field of the script's own. After it, **47 of the summary's 50 published fields** extract, with `Status`, `MailboxesEvaluated`, `BindSeconds`, `ExchangeVersion` and the rest correct, and `stats avg(BindSeconds) by ...` working as you would expect. 46 of those come from the `DELIMS` transform and `RunId` is the 47th, from the second one. A per-mailbox event carries 17 payload fields the same way.
+> **What that was measured on, and what it cost.** Splunk Enterprise 10.4.3 on Windows Server 2025, both channels fed by real scheduled-task runs of this script against a 50-mailbox lab. Before the `props.conf`, the payload contributed **nothing**: the ten fields Splunk names from the Windows event header - `LogName`, `EventCode`, `ComputerName`, `SourceName`, `Type`, `RecordNumber`, `Keywords`, `TaskCategory`, `OpCode` and `Message` - and not one field of the script's own. After it, with the single transform above, **47 of the summary's 50 published fields** extract, with `Status`, `MailboxesEvaluated`, `BindSeconds`, `ExchangeVersion` and the rest correct, and `stats avg(BindSeconds) by ...` working as you would expect. A per-mailbox event carries 17 payload fields the same way, `RunId` among them, which is what makes the correlation search below return anything.
 >
 > The remaining three - `EmitErrors`, `FailedDatabases`, `PublishErrors` - are empty on a clean run, and Splunk creates no field for an empty value. That is the correct behaviour rather than a gap: it is exactly what makes `EmitErrors!=""` below a search that stays silent until something is wrong.
 >
@@ -552,7 +581,7 @@ Searches worth having on day one, in that order:
 | No `EventCode=10*` from a server in 3× the task interval | The task stopped running altogether - the failure no event can report |
 | `EventCode=1002` grouped by `Database` | Where the estate is actually getting worse |
 | `EmitErrors!=""` | The feed you are reading this with is itself broken |
-| `stats values(EventCode) by RunId` | The run event and its per-mailbox events, as one run. This is what the second transform above exists for |
+| `stats values(EventCode) by RunId` | The run event and its per-mailbox events, as one run. This is the search the payload's leading blank line exists for |
 
 That second one is the reason to alert on absence as well as on content: every other row here depends on an event arriving.
 
