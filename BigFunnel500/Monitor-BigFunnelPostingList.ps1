@@ -745,7 +745,7 @@ foreach ($e in $EmitTo) {
     }
 }
 
-$script:ScriptVersion   = '1.12.0'
+$script:ScriptVersion   = '1.13.0'
 $script:OutputPath      = $OutputPath
 $script:LogFile         = $null
 $script:LogFailed       = $false
@@ -789,6 +789,22 @@ $script:DeadlineHit     = $false
 
 # Run-level, unlike $script:DeadlineHit, which is reset per database.
 $script:BudgetExceeded  = $false
+
+# Phase boundaries, so the run can say WHERE its time went rather than only how
+# much of it there was. The three phases scale differently and that is the whole
+# point of separating them: opening the Exchange runspace is very nearly a fixed
+# cost, discovery scales with the number of databases, and the per-mailbox
+# statistics loop scales with the population and dominates everything else on any
+# estate large enough to ask the question. A single total cannot be extrapolated
+# from a lab to a production estate; these three can.
+#
+# Left $null rather than 0 so an unreached phase is distinguishable from one that
+# took no measurable time - a run that died opening the runspace and a run that
+# never got that far must not both report BindSeconds 0.
+$script:PhaseBindStart     = $null
+$script:PhaseDiscoverStart = $null
+$script:PhaseCollectStart  = $null
+$script:PhaseCollectEnd    = $null
 
 $script:ThisServer = $env:COMPUTERNAME
 if ([string]::IsNullOrWhiteSpace($script:ThisServer)) { $script:ThisServer = [System.Net.Dns]::GetHostName() }
@@ -1475,6 +1491,28 @@ function Remove-ExpiredOutput {
     catch { Write-RunLog ('Retention sweep skipped: {0}' -f $_.Exception.Message) 'WARN' }
 }
 
+function Get-PhaseSeconds {
+    # One elapsed-time rule for the three phase fields, used by both the completed
+    # and the aborted summary paths so the two cannot drift apart.
+    #
+    # The open-ended case is the reason this is a function rather than three
+    # subtractions. A run that dies inside a phase has a start marker and no end
+    # marker, and the useful number there is how long that phase had been running
+    # when it failed - a bind that hung for 120 seconds before giving up is the
+    # single most informative thing such a run can report. Measuring to "now"
+    # gives that; treating a missing end as zero would erase it.
+    #
+    # A phase that was never reached returns 0, which is the honest answer: it did
+    # not happen. The distinction between that and "happened, took no measurable
+    # time" is carried by the phase before it being non-zero, not by this field.
+    [CmdletBinding()]
+    param($From, $To)
+
+    if ($null -eq $From) { return 0 }
+    $end = if ($null -ne $To) { $To } else { (Get-Date) }
+    return [math]::Round(($end - $From).TotalSeconds, 1)
+}
+
 function Write-RunSummary {
     # One writer for both the completed and the aborted paths.
     #
@@ -1495,6 +1533,21 @@ function Write-RunSummary {
         ScriptVersion        = $script:ScriptVersion
         Timestamp            = (Get-Date).ToString('o')
         DurationSeconds      = 0
+        # Where the time went. DurationSeconds alone describes a run; these three
+        # let one run predict another, because they scale on different things -
+        # BindSeconds is very nearly a fixed cost whatever the estate,
+        # DiscoverSeconds tracks the database count, and CollectSeconds tracks the
+        # mailbox population and is the term that dominates at any real size.
+        # Their sum is less than DurationSeconds by the setup and reporting either
+        # side, which is deliberately not broken out: it is small and it does not
+        # scale with anything a customer is asking about.
+        #
+        # A phase the run never reached reports 0. A phase it died inside reports
+        # how long it had been in it, which on an aborted run is usually the only
+        # number worth having.
+        BindSeconds          = 0
+        DiscoverSeconds      = 0
+        CollectSeconds       = 0
         Server               = $script:ThisServer
         Scope                = ''
         ExchangeVersion      = ''
@@ -2744,6 +2797,8 @@ try {
         $Scope, $ThresholdMode, $WarningGB, $CriticalGB, $TrendBaselineHours,
         $MaxRunMinutes, $ThrottleDelaySeconds, $RetentionDays, $MaxAlertDetail, [bool]$ExitNonZeroOnAlert)
 
+    $script:PhaseBindStart = Get-Date
+
     # The Exchange snap-in is deliberately never loaded. It binds the store
     # in-process and reaches only databases mounted on this node, so a -Scope
     # All run under it drops every remote database and still writes a
@@ -2844,6 +2899,13 @@ try {
         $exitCode = 3
         exit $exitCode
     }
+
+    # Binding is done and discovery starts here. The Get-Command check above is
+    # counted in the bind phase because it is part of establishing that the
+    # binding worked, and it costs nothing measurable either way.
+    $script:PhaseDiscoverStart = Get-Date
+    Write-RunLog ('Exchange binding took {0}s.' -f
+        (Get-PhaseSeconds -From $script:PhaseBindStart -To $script:PhaseDiscoverStart))
 
     # Confirm RBAC before collecting, so a permissions problem reports as a
     # fatal pre-flight rather than as every database failing individually.
@@ -2949,6 +3011,10 @@ try {
     #endregion
 
     #region collection --------------------------------------------------------
+
+    $script:PhaseCollectStart = Get-Date
+    Write-RunLog ('Database discovery took {0}s.' -f
+        (Get-PhaseSeconds -From $script:PhaseDiscoverStart -To $script:PhaseCollectStart))
 
     $results = New-Object System.Collections.Generic.List[object]
     $first   = $true
@@ -3158,6 +3224,13 @@ try {
             continue
         }
     }
+
+    # The per-database loop is done. Everything below this point is analysis of
+    # rows already in hand, so this is where the term that scales with the
+    # mailbox population stops.
+    $script:PhaseCollectEnd = Get-Date
+    Write-RunLog ('Collection took {0}s across {1} database(s).' -f
+        (Get-PhaseSeconds -From $script:PhaseCollectStart -To $script:PhaseCollectEnd), $targets.Count)
 
     if ($script:PropertyMissing -gt 0) {
         Write-RunLog ('{0} mailbox(es) did not expose BigFunnelPostingListTableTotalSize. Expected on Exchange 2019 and Exchange Server SE; absence across the whole population indicates an unsupported build.' -f $script:PropertyMissing) 'WARN'
@@ -3801,6 +3874,9 @@ try {
     Write-RunSummary -Path $latestJson -Values @{
         RunId                = $runId
         DurationSeconds      = [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)
+        BindSeconds          = Get-PhaseSeconds -From $script:PhaseBindStart     -To $script:PhaseDiscoverStart
+        DiscoverSeconds      = Get-PhaseSeconds -From $script:PhaseDiscoverStart -To $script:PhaseCollectStart
+        CollectSeconds       = Get-PhaseSeconds -From $script:PhaseCollectStart  -To $script:PhaseCollectEnd
         Scope                = $Scope
         ExchangeVersion      = $(if ($build.Known) { [string]$build.Version } else { '' })
         Binding              = $script:BindingUsed
@@ -3925,8 +4001,15 @@ try {
 
     Write-Report ''
     Write-Report ('  RESULT  {0}' -f $runStatus) $verdictStyle
-    Write-Report ('  {0} mailbox(es) evaluated in {1}s' -f
-        $sorted.Count, [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)) 'Dim'
+    # The breakdown rides on the line that was already here rather than taking one
+    # of its own. "How long did that take" is asked on screen, but "which part of
+    # it" is the question a second run makes you ask, and putting the answer
+    # anywhere other than beside the total means nobody reads the two together.
+    Write-Report ('  {0} mailbox(es) evaluated in {1}s  (bind {2}s, discover {3}s, collect {4}s)' -f
+        $sorted.Count, [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1),
+        (Get-PhaseSeconds -From $script:PhaseBindStart     -To $script:PhaseDiscoverStart),
+        (Get-PhaseSeconds -From $script:PhaseDiscoverStart -To $script:PhaseCollectStart),
+        (Get-PhaseSeconds -From $script:PhaseCollectStart  -To $script:PhaseCollectEnd)) 'Dim'
     Write-Report ''
 
     # Counts that are zero are still printed. A row missing because it was zero
@@ -4212,6 +4295,14 @@ finally {
         Write-RunSummary -Path $latestJson -Values @{
             RunId                = $runId
             DurationSeconds      = [math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)
+            # Carried onto the abort path for the same reason ExchangeVersion is,
+            # and with more force: on a run that died these are often the only
+            # numbers that say anything. An abort with BindSeconds 180 and
+            # DiscoverSeconds 0 names the runspace as the thing that hung, which
+            # is otherwise a log-reading exercise.
+            BindSeconds          = Get-PhaseSeconds -From $script:PhaseBindStart     -To $script:PhaseDiscoverStart
+            DiscoverSeconds      = Get-PhaseSeconds -From $script:PhaseDiscoverStart -To $script:PhaseCollectStart
+            CollectSeconds       = Get-PhaseSeconds -From $script:PhaseCollectStart  -To $script:PhaseCollectEnd
             Scope                = $Scope
             Completed            = $false
             Status               = $abortStatus
