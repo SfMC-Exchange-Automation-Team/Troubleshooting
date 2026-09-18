@@ -529,6 +529,11 @@ DELIMS = "\r\n", "="
 
 That is the whole configuration for **v1.14.0 and later**, and the payload's leading blank line is why one transform is enough.
 
+> [!IMPORTANT]
+> **Those two files do not go where `inputs.conf` goes.** `REPORT-` is a *search-time* extraction, so `props.conf` and `transforms.conf` belong on the tier that runs the searches - the search head, or the indexer where it is also the search head. `inputs.conf` is the one that belongs on the machine holding the event log. In the common estate shape, a universal forwarder on each Exchange server sending to a separate indexing tier, that means the two halves of this configuration are deployed to two different places, and a universal forwarder **does no parsing at all**: the same `props.conf` copied onto the forwarder alongside `inputs.conf` does nothing whatsoever. The symptom is the one this entire section exists to describe - the events arrive, the searches run, and every field is missing - so it is worth confirming with whoever owns the Splunk tier rather than discovering.
+>
+> That placement is reasoned from how search-time extraction works, not measured: the validation described here ran `inputs.conf` directly on the indexer, with no forwarder in the path. The extraction behaves the same either way, which is exactly why *where the file sits* is the part that can still go wrong.
+
 **Collecting from v1.13.0 or earlier as well?** Add a second transform. Those versions emit `RunId` as the first line of the body, so Splunk's `Message=<body>` rendering puts it where the pair split above consumes it, and it is the one field that does not survive:
 
 ```ini
