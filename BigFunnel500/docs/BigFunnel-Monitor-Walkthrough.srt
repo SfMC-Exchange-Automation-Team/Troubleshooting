@@ -1,0 +1,938 @@
+1
+00:00:00,000 --> 00:00:03,485
+This is a walkthrough of the BigFunnel
+posting list table monitor
+
+2
+00:00:03,485 --> 00:00:05,959
+version one point fourteen point zero
+
+3
+00:00:05,959 --> 00:00:10,922
+on a live Exchange Server Subscription
+Edition database availability group.
+
+4
+00:00:10,922 --> 00:00:14,985
+Subscription Edition and Exchange 2019 are
+code equivalent here
+
+5
+00:00:14,985 --> 00:00:18,292
+so everything in this walkthrough applies to
+both.
+
+6
+00:00:18,292 --> 00:00:21,873
+What you are about to see is real output
+from two lab servers
+
+7
+00:00:21,873 --> 00:00:25,323
+captured against the same version you will
+download.
+
+8
+00:00:25,323 --> 00:00:28,917
+We will start it from an ordinary shell and
+watch it elevate itself
+
+9
+00:00:28,917 --> 00:00:30,428
+read the report it prints
+
+10
+00:00:30,428 --> 00:00:31,951
+watch it find something
+
+11
+00:00:31,951 --> 00:00:36,521
+see why it stays quiet on an estate too
+small to judge, and then schedule it
+
+12
+00:00:36,521 --> 00:00:38,722
+including the one mistake that makes a
+scheduled
+
+13
+00:00:38,722 --> 00:00:42,288
+monitor look healthy while it has never run
+at all.
+
+14
+00:00:44,638 --> 00:00:47,420
+This is the BigFunnel posting list table
+monitor
+
+15
+00:00:47,420 --> 00:00:50,665
+version one point fourteen point zero.
+
+16
+00:00:50,665 --> 00:00:53,959
+It is a single read-only PowerShell script.
+
+17
+00:00:53,959 --> 00:00:57,958
+Before you run it anywhere, verify the copy
+you were given.
+
+18
+00:00:58,308 --> 00:00:59,894
+Hash it.
+
+19
+00:00:59,894 --> 00:01:01,782
+The script is not code-signed
+
+20
+00:01:01,782 --> 00:01:03,736
+so the hash is the only thing that tells you
+
+21
+00:01:03,736 --> 00:01:06,835
+the file you have is the file that was
+tested.
+
+22
+00:01:06,835 --> 00:01:08,879
+Check the line and byte counts too
+
+23
+00:01:08,879 --> 00:01:11,483
+they catch a copy that was truncated in
+transit
+
+24
+00:01:11,483 --> 00:01:13,514
+which a hash tells you about only after you
+
+25
+00:01:13,514 --> 00:01:16,908
+already have the right one to compare
+against.
+
+26
+00:01:17,258 --> 00:01:22,189
+It calls three Exchange cmdlets, all of them
+read-only: Get-Exchange-Server
+
+27
+00:01:22,189 --> 00:01:26,318
+Get-Mailbox-Database, and
+Get-Mailbox-Statistics.
+
+28
+00:01:26,318 --> 00:01:29,821
+It does not move a mailbox, fail over a
+database
+
+29
+00:01:29,821 --> 00:01:32,673
+or change a single Exchange setting.
+
+30
+00:01:32,673 --> 00:01:37,660
+By default the only thing it writes is files
+under the output path you give it.
+
+31
+00:01:37,660 --> 00:01:40,602
+Two switches add a destination outside that
+path
+
+32
+00:01:40,602 --> 00:01:43,415
+dash Emit To writes to the Application event
+log
+
+33
+00:01:43,415 --> 00:01:46,475
+and dash Register Scheduled Task creates a
+task
+
+34
+00:01:46,475 --> 00:01:49,634
+and neither happens unless you ask for it.
+
+35
+00:01:52,584 --> 00:01:56,108
+Start it from an ordinary shell - not an
+elevated one
+
+36
+00:01:56,108 --> 00:01:58,650
+and it deals with that itself.
+
+37
+00:01:58,650 --> 00:02:02,048
+It rebuilds its own command line from the
+parameters you passed
+
+38
+00:02:02,048 --> 00:02:06,408
+relaunches under Run As, and asks you to
+approve the prompt.
+
+39
+00:02:06,758 --> 00:02:09,568
+Here is the detail that matters.
+
+40
+00:02:09,568 --> 00:02:13,553
+An elevated process cannot attach to the
+console of the one that launched it
+
+41
+00:02:13,553 --> 00:02:15,766
+so the relaunch gets a window of its own and
+
+42
+00:02:15,766 --> 00:02:19,087
+Windows closes it the instant the run ends.
+
+43
+00:02:19,087 --> 00:02:22,706
+Without help you would approve a prompt,
+watch a console flash past
+
+44
+00:02:22,706 --> 00:02:25,936
+and be left with a pointer to a log file.
+
+45
+00:02:25,936 --> 00:02:29,647
+Instead the child writes each line to a
+relay file as it prints it
+
+46
+00:02:29,647 --> 00:02:32,222
+and the parent replays it here.
+
+47
+00:02:32,572 --> 00:02:35,289
+The whole report arrives, colours and all
+
+48
+00:02:35,289 --> 00:02:38,195
+in the window you were already looking at.
+
+49
+00:02:38,195 --> 00:02:44,054
+One critical and one warning, each named, on
+its database, with its size.
+
+50
+00:02:44,054 --> 00:02:46,671
+It is written line by line rather than
+buffered
+
+51
+00:02:46,671 --> 00:02:51,172
+so a child that dies halfway still relays
+what it managed to say.
+
+52
+00:02:51,522 --> 00:02:57,874
+And then it exits with the child's code, not
+its own. Note what that code is.
+
+53
+00:02:57,874 --> 00:03:02,106
+Zero - on a run that just found a critical
+mailbox.
+
+54
+00:03:02,106 --> 00:03:07,002
+Codes one, five and six are gated behind
+dash Exit Non Zero On Alert
+
+55
+00:03:07,002 --> 00:03:08,916
+so that adding this monitor to an existing
+
+56
+00:03:08,916 --> 00:03:12,575
+scheduler cannot start failing tasks on day
+one.
+
+57
+00:03:12,575 --> 00:03:15,075
+Rather than leave that contradiction on
+screen
+
+58
+00:03:15,075 --> 00:03:18,234
+the report says so on the line underneath.
+
+59
+00:03:21,184 --> 00:03:23,732
+Now a first run on a DAG member
+
+60
+00:03:23,732 --> 00:03:27,901
+from a shell that is already elevated, so
+there is no prompt.
+
+61
+00:03:27,901 --> 00:03:33,161
+Scope Local discovers the databases whose
+active copy is mounted on this node.
+
+62
+00:03:33,161 --> 00:03:35,817
+You do not need dash Verbose: since version
+
+63
+00:03:35,817 --> 00:03:38,474
+one point eight the report is printed every
+run
+
+64
+00:03:38,474 --> 00:03:43,288
+and Verbose only adds the individual rows
+the terse report leaves out.
+
+65
+00:03:43,638 --> 00:03:46,956
+It opens its own Exchange runspace.
+
+66
+00:03:46,956 --> 00:03:48,909
+That is what makes it schedulable
+
+67
+00:03:48,909 --> 00:03:52,959
+it does not need to be launched from the
+Exchange Management Shell.
+
+68
+00:03:52,959 --> 00:03:56,657
+Three databases here, fifty-five mailboxes
+between them
+
+69
+00:03:56,657 --> 00:03:58,584
+and it names each one with its count rather
+
+70
+00:03:58,584 --> 00:04:01,662
+than making you read that back out of a log.
+
+71
+00:04:02,012 --> 00:04:05,211
+Result OK, in five and a half seconds
+
+72
+00:04:05,211 --> 00:04:08,779
+and the run breaks that time down for you:
+binding to Exchange
+
+73
+00:04:08,779 --> 00:04:12,830
+discovering the databases, collecting the
+mailboxes.
+
+74
+00:04:12,830 --> 00:04:18,703
+Nothing critical, nothing warning, nothing
+emerging, no database failed.
+
+75
+00:04:18,703 --> 00:04:23,963
+And the line under the counts is the one to
+read first: Counter, Confirmed.
+
+76
+00:04:23,963 --> 00:04:26,554
+That says the script proved to itself that
+the metric it
+
+77
+00:04:26,554 --> 00:04:30,308
+depends on is actually being populated on
+this estate.
+
+78
+00:04:30,658 --> 00:04:33,494
+Then the honest first-run message.
+
+79
+00:04:33,494 --> 00:04:36,216
+There is no previous run to compare against
+
+80
+00:04:36,216 --> 00:04:39,575
+so there are no rates and no projected
+dates.
+
+81
+00:04:39,575 --> 00:04:45,656
+That is not an error. And notice the last
+line: two counters are in use.
+
+82
+00:04:45,656 --> 00:04:49,106
+Three mailboxes are dated on the posting
+list table itself
+
+83
+00:04:49,106 --> 00:04:52,935
+the other twenty-two are ranked only, on
+index payload bytes
+
+84
+00:04:52,935 --> 00:04:56,362
+because the thresholds do not apply to that
+counter.
+
+85
+00:04:59,312 --> 00:05:02,044
+A run leaves four files.
+
+86
+00:05:02,044 --> 00:05:04,961
+A timestamped C S V and log for history
+
+87
+00:05:04,961 --> 00:05:08,294
+latest dot C S V for whatever you point a
+report at
+
+88
+00:05:08,294 --> 00:05:13,472
+and latest dash summary dot JSON, which is
+the one you wire into monitoring.
+
+89
+00:05:13,822 --> 00:05:17,856
+The C S V is where the per-mailbox detail
+lives.
+
+90
+00:05:17,856 --> 00:05:21,802
+Filter it to the rows that carry a projected
+date, sort by that date
+
+91
+00:05:21,802 --> 00:05:25,382
+and you have your work queue in the order it
+needs doing.
+
+92
+00:05:25,382 --> 00:05:30,526
+Note the trend metric column - it tells you
+which counter each row was ranked on.
+
+93
+00:05:30,876 --> 00:05:35,679
+Here is the summary file, trimmed to the
+fields a consumer branches on.
+
+94
+00:05:35,679 --> 00:05:38,869
+Status, the counter validation, the counts
+
+95
+00:05:38,869 --> 00:05:42,632
+whether the run was elevated, and the exit
+code.
+
+96
+00:05:42,632 --> 00:05:46,082
+Alert on Status not in OK or Metric
+Inconclusive
+
+97
+00:05:46,082 --> 00:05:49,476
+and read the counts beside it for what was
+found.
+
+98
+00:05:49,826 --> 00:05:55,709
+And when the monitor names a mailbox, this
+is where you end up: the mailbox itself.
+
+99
+00:05:55,709 --> 00:05:58,014
+Two point seven gigabytes of content
+
+100
+00:05:58,014 --> 00:06:02,363
+and a posting list table of seven hundred
+and twenty-one megabytes.
+
+101
+00:06:02,363 --> 00:06:04,967
+That is the figure the whole script is built
+around
+
+102
+00:06:04,967 --> 00:06:08,186
+read straight from Get-Mailbox-Statistics.
+
+103
+00:06:11,136 --> 00:06:15,728
+The defaults of one point seven and two
+gigabytes are a recommended starting point
+
+104
+00:06:15,728 --> 00:06:17,358
+not a law.
+
+105
+00:06:17,358 --> 00:06:21,850
+After a fortnight you tune them to what your
+estate actually looks like.
+
+106
+00:06:21,850 --> 00:06:25,821
+On this lab the largest mailboxes sit around
+seven hundred megabytes
+
+107
+00:06:25,821 --> 00:06:27,996
+so here the thresholds are set to match
+
+108
+00:06:27,996 --> 00:06:31,728
+and this time with dash Exit Non Zero On
+Alert.
+
+109
+00:06:32,078 --> 00:06:34,107
+Result Alert.
+
+110
+00:06:34,107 --> 00:06:37,284
+One critical, one warning, ranked worst
+first
+
+111
+00:06:37,284 --> 00:06:42,050
+and each one carrying its own growth rate on
+the same line as the finding.
+
+112
+00:06:42,050 --> 00:06:47,297
+Bfseed03 is over the line and gaining a
+sixth of a gigabyte a day.
+
+113
+00:06:47,297 --> 00:06:52,128
+Bfseed01 is over the warning line and not
+growing at all.
+
+114
+00:06:52,128 --> 00:06:54,250
+Those are two different pieces of work
+
+115
+00:06:54,250 --> 00:06:57,614
+and you can tell them apart without opening
+anything.
+
+116
+00:06:57,964 --> 00:07:02,884
+Now raise the thresholds slightly, so
+nothing is over the line today.
+
+117
+00:07:02,884 --> 00:07:06,230
+The same mailbox comes back as Emerging:
+still normal
+
+118
+00:07:06,230 --> 00:07:10,840
+still under warning, but projected to cross
+critical in two days.
+
+119
+00:07:10,840 --> 00:07:13,366
+The exit code is six.
+
+120
+00:07:13,366 --> 00:07:14,967
+One means work today
+
+121
+00:07:14,967 --> 00:07:19,852
+six means work before the weekend, and a run
+cannot return both.
+
+122
+00:07:20,202 --> 00:07:22,778
+Route the codes by meaning.
+
+123
+00:07:22,778 --> 00:07:28,533
+One and six are findings about mailboxes -
+send those to whoever owns the estate.
+
+124
+00:07:28,533 --> 00:07:34,380
+Two, three, four, five and seven are
+operational: the monitor itself had a problem
+
+125
+00:07:34,380 --> 00:07:36,710
+and that is a different queue.
+
+126
+00:07:36,710 --> 00:07:38,781
+Seven is the newest and the narrowest
+
+127
+00:07:38,781 --> 00:07:40,968
+it can only ever come back from a run that
+asked
+
+128
+00:07:40,968 --> 00:07:44,510
+the script to register or remove a scheduled
+task.
+
+129
+00:07:44,510 --> 00:07:47,648
+Status is ordered the same way as the exit
+codes
+
+130
+00:07:47,648 --> 00:07:51,978
+so the two never disagree about which
+condition a run is reporting.
+
+131
+00:07:54,928 --> 00:07:59,509
+The same command, unchanged, on a different
+DAG member.
+
+132
+00:07:59,509 --> 00:08:03,403
+This one has a single mounted database and
+forty-two mailboxes
+
+133
+00:08:03,403 --> 00:08:05,632
+and none of them is large.
+
+134
+00:08:05,982 --> 00:08:09,493
+Nothing in scope has ever allocated a
+posting list table
+
+135
+00:08:09,493 --> 00:08:13,246
+so there is no posting list data to rank on
+at all.
+
+136
+00:08:13,246 --> 00:08:15,733
+It falls back to index payload bytes and
+says
+
+137
+00:08:15,733 --> 00:08:18,714
+exactly what that costs you: the ranking is
+real
+
+138
+00:08:18,714 --> 00:08:20,537
+but no projected dates are given
+
+139
+00:08:20,537 --> 00:08:23,982
+because the thresholds do not apply to that
+counter.
+
+140
+00:08:24,332 --> 00:08:29,200
+And here is the reasoning in full, printed
+rather than buried in a log.
+
+141
+00:08:29,200 --> 00:08:31,765
+Fifteen mailboxes read zero bytes
+
+142
+00:08:31,765 --> 00:08:35,801
+and all of them are below the bar at which
+this build would allocate a table at all
+
+143
+00:08:35,801 --> 00:08:39,447
+so zero is the correct reading, not a fault.
+
+144
+00:08:39,447 --> 00:08:41,804
+But read the second half.
+
+145
+00:08:41,804 --> 00:08:44,004
+No threshold in this run was tested
+
+146
+00:08:44,004 --> 00:08:48,572
+because nothing in scope is large enough to
+show whether the counter works.
+
+147
+00:08:48,922 --> 00:08:51,262
+So it reports Metric Inconclusive
+
+148
+00:08:51,262 --> 00:08:55,183
+the counter reads Inconclusive, and it exits
+zero.
+
+149
+00:08:55,183 --> 00:08:58,438
+A small estate does not get a false alarm.
+
+150
+00:08:58,438 --> 00:09:02,084
+Inconclusive means it could not prove the
+counter works either way
+
+151
+00:09:02,084 --> 00:09:05,495
+which is a different thing from proving it
+is broken.
+
+152
+00:09:05,495 --> 00:09:11,506
+That second case is Metric Unavailable, exit
+five, and that one you do alert on.
+
+153
+00:09:14,456 --> 00:09:19,311
+Now the part that catches people out.
+Scheduling it.
+
+154
+00:09:19,311 --> 00:09:23,504
+Here is the registration, and it looks
+completely ordinary.
+
+155
+00:09:23,854 --> 00:09:32,614
+It registers. No error. No warning. Nothing
+at all tells you anything is wrong.
+
+156
+00:09:32,964 --> 00:09:39,850
+Start it, wait, and look at what the
+scheduler reports. Logon type Interactive.
+
+157
+00:09:39,850 --> 00:09:43,717
+A last run time of November the thirtieth,
+nineteen ninety-nine
+
+158
+00:09:43,717 --> 00:09:46,087
+which is the never-ran sentinel.
+
+159
+00:09:46,087 --> 00:09:49,043
+And task result two six seven zero one one
+
+160
+00:09:49,043 --> 00:09:51,996
+which is scheduler-speak for has not run.
+
+161
+00:09:52,346 --> 00:09:54,375
+It never ran.
+
+162
+00:09:54,375 --> 00:10:01,081
+And the output directory proves it - no log,
+no C S V, no summary file.
+
+163
+00:10:01,081 --> 00:10:05,443
+Every single place you would normally look
+for a fault is simply empty.
+
+164
+00:10:05,443 --> 00:10:09,011
+This is the worst kind of failure: a monitor
+you believe is running
+
+165
+00:10:09,011 --> 00:10:11,276
+that has never run once.
+
+166
+00:10:11,276 --> 00:10:14,141
+The cause is one missing parameter.
+
+167
+00:10:14,141 --> 00:10:19,076
+With dash User and no dash Password, the
+task gets logon type Interactive
+
+168
+00:10:19,076 --> 00:10:22,643
+which means run only when this user is
+logged on.
+
+169
+00:10:22,643 --> 00:10:25,226
+A service account never is.
+
+170
+00:10:28,176 --> 00:10:31,156
+The fix is to supply the password.
+
+171
+00:10:31,156 --> 00:10:33,812
+Prompt for it rather than writing it into
+the script
+
+172
+00:10:33,812 --> 00:10:37,783
+so it reaches neither source control nor
+your shell history.
+
+173
+00:10:37,783 --> 00:10:40,856
+A group managed service account will not
+work here either
+
+174
+00:10:40,856 --> 00:10:44,736
+it has no outbound network credential to
+give the task.
+
+175
+00:10:45,086 --> 00:10:49,641
+Never trust the registration. Verify it.
+
+176
+00:10:49,641 --> 00:10:53,834
+Logon type now reads Password, there is a
+real last run time
+
+177
+00:10:53,834 --> 00:10:56,390
+and the task result is zero.
+
+178
+00:10:56,740 --> 00:11:00,488
+And this time the output directory has
+something in it.
+
+179
+00:11:00,488 --> 00:11:06,244
+Four files, the same four a run by hand
+produces, with a real timestamp on them.
+
+180
+00:11:06,594 --> 00:11:11,319
+Three commands prove it took, and they are
+worth keeping as a checklist.
+
+181
+00:11:11,319 --> 00:11:16,996
+Logon type reads Password. The scheduler's
+last result is zero.
+
+182
+00:11:16,996 --> 00:11:19,457
+And the summary file agrees with the
+scheduler
+
+183
+00:11:19,457 --> 00:11:24,990
+same version, completed true, status OK,
+exit code zero.
+
+184
+00:11:24,990 --> 00:11:28,076
+If the file says one thing and the scheduler
+says another
+
+185
+00:11:28,076 --> 00:11:32,514
+something in your chain is using dash
+Command instead of dash File.
+
+186
+00:11:35,464 --> 00:11:38,027
+To put this into production.
+
+187
+00:11:38,027 --> 00:11:44,407
+Day zero: verify the hash, copy it to one
+DAG member, run it by hand.
+
+188
+00:11:44,407 --> 00:11:49,837
+Day one: run it again twenty-four hours
+later, and you have your first rates.
+
+189
+00:11:49,837 --> 00:11:53,886
+Day two: register the task on every member,
+with dash File
+
+190
+00:11:53,886 --> 00:11:58,168
+dash Password, and dash Exit Non Zero On
+Alert.
+
+191
+00:11:58,518 --> 00:12:03,815
+Day three: wire latest dash summary dot JSON
+into your monitoring.
+
+192
+00:12:03,815 --> 00:12:06,823
+Alert on Status, and route the two findings
+
+193
+00:12:06,823 --> 00:12:10,756
+one and six - apart from the operational
+codes.
+
+194
+00:12:10,756 --> 00:12:11,901
+And at week two
+
+195
+00:12:11,901 --> 00:12:16,638
+review the rates and tune the warning and
+critical thresholds to your own data.
+
+196
+00:12:16,988 --> 00:12:21,515
+And the one thing to take away from all of
+this: dash Password is not optional
+
+197
+00:12:21,515 --> 00:12:25,384
+and a task that says Ready is not a task
+that runs.
+
+198
+00:12:25,384 --> 00:12:29,036
+Verify the logon type on every member you
+register.
+
+199
+00:12:29,986 --> 00:12:32,224
+That is the walkthrough.
+
+200
+00:12:32,224 --> 00:12:37,211
+Verify the hash, run it by hand twice,
+schedule it with a password on every member
+
+201
+00:12:37,211 --> 00:12:40,618
+and alert on Status and the exit code
+together.
+

@@ -25,7 +25,7 @@ import re, sys, pathlib
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = (BASE / 'Monitor-BigFunnelPostingList.ps1').read_text(encoding='utf-8-sig')
-DOC = (BASE / 'BigFunnel PostingListTable Runbook.md').read_text(encoding='utf-8-sig')
+DOC = (BASE / 'BigFunnel-PostingListTable-Runbook.md').read_text(encoding='utf-8-sig')
 
 FENCED = re.compile(r'^```.*?^```', re.MULTILINE | re.DOTALL)
 DOC_PROSE = FENCED.sub('', DOC)

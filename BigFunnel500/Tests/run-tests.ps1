@@ -1407,7 +1407,7 @@ Write-Host 'T39  every scheduled-task example registers a task that can actually
 #   -User with -Password -> LogonType Password. Runspace opens, exit 0.
 # Only the third is a monitor. Nothing warns you about the other two, which is
 # what makes a copied-and-pasted example worth guarding.
-$docs = @($monitor, (Join-Path $root 'BigFunnel PostingListTable Runbook.md'))
+$docs = @($monitor, (Join-Path $root 'BigFunnel-PostingListTable-Runbook.md'))
 
 function Get-CommandBlocks {
     # A window rather than a parser: these are continued commands in markdown and
@@ -1451,7 +1451,7 @@ Assert 'every task action launches the script with -File, never -Command' ($viaC
 # The guard above keeps the command right. This one keeps the explanation of why
 # it has to be, so a future edit cannot quietly drop the reasoning and leave the
 # next reader to rediscover it on a live estate.
-$runbook = Get-Content -LiteralPath (Join-Path $root 'BigFunnel PostingListTable Runbook.md') -Raw
+$runbook = Get-Content -LiteralPath (Join-Path $root 'BigFunnel-PostingListTable-Runbook.md') -Raw
 Assert 'and the runbook still explains why the logon type decides it' `
     ($runbook -match 'The logon type is load-bearing' -and $runbook -match '0x41303') ''
 

@@ -30,7 +30,7 @@ import re, shutil, subprocess, sys, tempfile, pathlib
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
 MON = 'Monitor-BigFunnelPostingList.ps1'
-RB = 'BigFunnel PostingListTable Runbook.md'
+RB = 'BigFunnel-PostingListTable-Runbook.md'
 CHK = 'runbook-checks.py'
 
 results = []
