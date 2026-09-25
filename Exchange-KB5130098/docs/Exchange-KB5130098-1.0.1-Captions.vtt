@@ -1,0 +1,215 @@
+WEBVTT
+
+00:00:00.480 --> 00:00:06.313
+Let's walk through a controlled deployment of the Korean WordBreaker workaround for
+Exchange Server.
+
+00:00:06.533 --> 00:00:10.808
+We're using version one point zero point one of the guarded package.
+
+00:00:11.028 --> 00:00:16.731
+This is custom automation, not a Microsoft-signed hotfix or a permanent product fix.
+
+00:00:16.951 --> 00:00:23.611
+The sequence is simple: verify, detect, preview, pilot, and then validate the actual
+workload.
+
+00:00:23.831 --> 00:00:26.624
+Only expand after that evidence passes.
+
+00:00:27.813 --> 00:00:33.623
+Start with the deployment zip. It already contains the scripts and the two verified
+rule files.
+
+00:00:33.843 --> 00:00:41.435
+Use an elevated, sixty-four-bit Windows PowerShell five point one session and an
+approved local staging folder.
+
+00:00:41.655 --> 00:00:45.846
+If you need to rebuild, use the source kit on a management workstation.
+
+00:00:46.066 --> 00:00:52.527
+The existing-rules option avoids another large download when you already have the
+verified files.
+
+00:00:52.747 --> 00:00:58.973
+Do not extract SQL media on Exchange, and don't bypass the package's build or file
+checks.
+
+00:01:00.188 --> 00:01:06.618
+Before executing anything, calculate the archive's checksum and compare it with the
+trusted release value.
+
+00:01:06.838 --> 00:01:11.656
+The article includes the exact hash and a command that throws on a mismatch.
+
+00:01:11.876 --> 00:01:17.517
+A checksum detects changed bytes; it doesn't replace your code review or signing
+policy.
+
+00:01:17.737 --> 00:01:21.736
+Extract into a new directory, then change to the package folder.
+
+00:01:21.956 --> 00:01:27.916
+If you've rebuilt or signed the release, use its new checksum rather than the one
+shown in the article.
+
+00:01:29.105 --> 00:01:31.889
+Now run Detect on the intended server.
+
+00:01:32.109 --> 00:01:34.894
+Read the status as well as the exit code.
+
+00:01:35.114 --> 00:01:42.259
+Eligible means the pinned file criteria match and both rule files are missing. It
+does not prove a deadlock.
+
+00:01:42.479 --> 00:01:47.159
+If the build differs, or either rule already exists, stop and reassess.
+
+00:01:47.379 --> 00:01:54.300
+Don't loosen the manifest or treat a zero exit code as proof that the workaround is
+already installed.
+
+00:01:55.522 --> 00:01:58.644
+On an eligible server, run Apply with What If.
+
+00:01:58.864 --> 00:02:05.251
+That performs the local applicability and payload checks without copying files or
+restarting Search.
+
+00:02:05.471 --> 00:02:08.444
+A successful preview returns No Changes.
+
+00:02:08.664 --> 00:02:13.750
+There is an important difference with the fleet tool: fleet What If makes no remote
+connection.
+
+00:02:13.970 --> 00:02:17.330
+Use fleet Detect when you need an actual inventory.
+
+00:02:18.522 --> 00:02:22.873
+Complete your normal maintenance and health checks before approving the pilot.
+
+00:02:23.093 --> 00:02:27.996
+Then request Apply and the Search restart, and review the confirmation prompt.
+
+00:02:28.216 --> 00:02:36.415
+The package rechecks eligibility, creates the files without overwriting, and
+verifies their identities and inherited permissions.
+
+00:02:36.635 --> 00:02:42.402
+It restarts only the Host Controller service and watches the selected ContentEngine
+process.
+
+00:02:42.622 --> 00:02:49.262
+If a stop, start, or stability check fails, preserve the evidence. Do not force the
+operation through.
+
+00:02:50.480 --> 00:02:55.481
+The expected restart result says that workload validation is still required.
+
+00:02:55.701 --> 00:03:01.821
+Take that literally. A stable process is a startup observation, not a recovery sign-
+off.
+
+00:03:02.041 --> 00:03:05.859
+Keep the returned receipt and event log with your change record.
+
+00:03:06.079 --> 00:03:10.248
+Use the actual path from the output, not the placeholder shown here.
+
+00:03:10.468 --> 00:03:16.525
+A partial failure is not silently rolled back, so don't delete the evidence or
+blindly retry.
+
+00:03:17.730 --> 00:03:22.464
+Use a test mailbox whose active database is on the server you changed.
+
+00:03:22.684 --> 00:03:29.773
+Verify that new ordinary and Korean-language messages arrive and can be found
+through server-side search.
+
+00:03:29.993 --> 00:03:36.219
+Use distinctive body text, and try a term you deliberately did not include as a
+negative control.
+
+00:03:36.439 --> 00:03:42.987
+Also verify the original affected workload, including Outlook or delivery symptoms
+where relevant.
+
+00:03:43.207 --> 00:03:49.966
+Track older backlog separately. New-message success does not mean every older item
+has been indexed.
+
+00:03:51.147 --> 00:03:56.883
+If the files are correct but the workload still fails, stop rollout and investigate
+the caller.
+
+00:03:57.103 --> 00:04:02.283
+An existing feeder connection can remain failed after ContentEngine restarts.
+
+00:04:02.503 --> 00:04:09.091
+Use the event's originating process identifier and the matching logs, not just the
+provider's name.
+
+00:04:09.311 --> 00:04:16.989
+In the lab, several callers reconnected naturally, while one remaining Transport
+caller needed separately scoped recovery.
+
+00:04:17.209 --> 00:04:21.899
+That is a diagnostic lesson, not permission to restart every service.
+
+00:04:23.105 --> 00:04:29.130
+Once the pilot's workload checks pass, the fleet tool can process the next approved
+servers serially.
+
+00:04:29.350 --> 00:04:35.876
+After each server, it stops for an explicit recovery acknowledgement using that
+target's exact name.
+
+00:04:36.096 --> 00:04:39.188
+Only enter it after the checks genuinely pass.
+
+00:04:39.408 --> 00:04:43.992
+Suppressing a confirmation prompt does not disable this recovery gate.
+
+00:04:44.212 --> 00:04:48.083
+Do not send machines with already-staged rules back through Apply.
+
+00:04:49.272 --> 00:04:54.677
+For an approved deployment agent, use the file-only staging command from the
+article.
+
+00:04:54.897 --> 00:04:56.700
+It does not restart Search.
+
+00:04:56.920 --> 00:05:03.520
+The final exit statement preserves the script's custom exit code through the child
+PowerShell process.
+
+00:05:03.740 --> 00:05:08.889
+Code ten means a Search restart is still required, not that Windows should reboot.
+
+00:05:09.109 --> 00:05:17.672
+Keep the receipt and follow the approved restart procedure. Rollback is not routine
+cleanup; it requires actual Support approval.
+
+00:05:18.855 --> 00:05:26.958
+Version one point zero point one passed all fifty-five automated tests, including
+sixteen new native-process checks.
+
+00:05:27.178 --> 00:05:36.478
+The final lab run also passed ordinary and Korean delivery and search, with negative
+controls and a clean observed diagnostic window.
+
+00:05:36.698 --> 00:05:45.848
+Those were E W S checks, not an Outlook or O W A user-interface sign-off, and not
+proof that all historical backlog cleared.
+
+00:05:46.068 --> 00:05:51.836
+Use the accompanying guide, keep the one-server gate, and validate your own affected
+workload.
+
+00:05:52.056 --> 00:05:55.274
+Deploy carefully, and expand only on evidence.
