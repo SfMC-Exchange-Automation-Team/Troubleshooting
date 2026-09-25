@@ -1,6 +1,6 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.0.1
+- **Package:** Exchange-KB5130098 1.0.2
 - **Audience:** Exchange Server administrators and change owners
 - **Validated:** September 25, 2026
 - **Reading time:** About 12 minutes
@@ -8,16 +8,20 @@
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.0.1-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.0.2-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
+
+> **New in 1.0.2:** The local script now explains **BEFORE / CURRENT**, **ACTION TAKEN**, and **NEXT STEP** by default. Local interactive runs can request normal Windows UAC elevation. Use `-AsJson` explicitly from an already-elevated session for the previous machine-output interface. A no-argument run is still **Detect only**, not Apply.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
 ## Video walkthrough
 
 **5 minutes 56 seconds · 1080p · natural-sounding synthetic narration · on-screen captions · 12 embedded chapters**
+
+The recording demonstrates **1.0.1** and its 55-test baseline. Its elevated-shell setup and JSON screenshots predate the 1.0.2 console improvements; use the updated commands and output explanation below. The workload safety gates remain unchanged.
 
 Narration was generated locally; no narration text, private lab material, or audio was sent to an online speech service.
 
@@ -75,7 +79,12 @@ The actual Exchange install path is discovered from the registry. The destinatio
 <ExchangeInstallPath>\Bin\Search\Ceres\Native
 ```
 
-Use elevated, **64-bit Windows PowerShell 5.1**. Do not assume PowerShell 7 is an equivalent validated host.
+Use **64-bit Windows PowerShell 5.1**. For a local interactive human run, the CLI can display the normal Windows UAC prompt and reopen itself in the correct elevated host. The new window shows the result and waits for Enter before closing; the original process then receives its exit code. Declining UAC produces an explicit error, not a successful no-op.
+
+`-AsJson`, pipelines, remoting and unattended runs must already be elevated. `-NoAutoElevate` disables the relaunch, not the privilege checks. The builder and direct module/fleet workflows keep their existing privilege requirements. No execution-policy bypass or automatic maintenance approval is added.
+Explicit switches and inherited WhatIf/confirmation preferences are both preserved across the relaunch; a session-level preview must remain a preview.
+
+The staged script must be readable by the initial account before it can request UAC. Keep the package writable only by administrators; do not solve a launch problem by making administrative code world-writable.
 
 Additional prerequisites:
 
@@ -91,13 +100,9 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.0.1 source ZIP](downloads/Exchange-KB5130098-1.0.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.0.1-source.zip.sha256). The archive contains the builder and the 55-test suite, but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.0.2 source ZIP](downloads/Exchange-KB5130098-1.0.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.0.2-source.zip.sha256). The archive contains the builder and the regression suite, but no Microsoft binaries.
 
-The source archive's SHA256 is:
-
-```text
-C4B7F36C4DAFDB02874F58E2C93C44B8C8FDCC79272384D8B0CD3E9280963466
-```
+Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
 The locally generated deployment ZIP includes the runtime scripts and both verified BIN files. It does not include SQL media or a replacement DLL. **That deployment ZIP is not hosted in this public repository.**
 
@@ -148,7 +153,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.0.1-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.0.2-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -163,7 +168,7 @@ if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $expected) {
     throw 'Package checksum mismatch. Stop; do not execute the package.'
 }
 
-$destination = 'C:\Temp\KB5130098-1.0.1'
+$destination = 'C:\Temp\KB5130098-1.0.2'
 if (Test-Path -LiteralPath $destination) {
     throw 'Use a new extraction directory.'
 }
@@ -192,7 +197,37 @@ powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
 $LASTEXITCODE
 ```
 
-Read **both the JSON status and the exit code**.
+Read the **human state comparison, action, next step, and exit code**. For example, a default Detect run on an eligible, unchanged server is explicit:
+
+```text
+KB5130098 | DETECT | EX01
+Before and current state refer to this invocation, not earlier history.
+
+CHECK                      BEFORE                   CURRENT
+Exchange build             15.2.2562.49             15.2.2562.49
+Korean DLL version         16.0.5194.1000            16.0.5194.1000
+Pinned build/DLL match      Yes                      Yes
+ko.token.rule.bin          Missing                  Missing
+ko.complex.rule.bin        Missing                  Missing
+
+ACTION TAKEN
+  Checked eligibility only. No files copied or removed. No services restarted.
+
+NEXT STEP
+  Eligible for staging, but NOT applied. Start with:
+  .\Invoke-KB5130098.ps1 -Mode Apply -WhatIf
+```
+
+`Before` and `Current` are observations from this invocation, not reconstructed historical state. A successful Apply instead shows the rules changing from missing to present, whether Search was restarted, and the actual receipt path. A failure reports what could be observed and does not pretend that partial files were rolled back.
+
+For automation or JSON capture, use an **already elevated** shell and opt in explicitly:
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -File .\Invoke-KB5130098.ps1 -Mode Detect -AsJson
+$LASTEXITCODE
+```
+
+The JSON status names and exit codes remain:
 
 | Status | Meaning | Action |
 |---|---|---|
@@ -227,7 +262,7 @@ On an eligible server, with the verified payload beside the scripts:
 .\Invoke-KB5130098.ps1 -Mode Apply -WhatIf
 ```
 
-This performs the local applicability and payload preflight, but does not copy files or restart Search. A successful dry run returns `NoChanges`.
+This performs the local applicability and payload preflight, but does not copy files or restart Search. The human summary says **Preview only**; the equivalent `-AsJson` status is `NoChanges`. UAC may still be needed for the read-only checks; the child receives the original `-WhatIf` value.
 
 To preview the intended restart path as well, after the window is genuinely approved:
 
@@ -265,7 +300,7 @@ The kit:
 
 Timeouts, running dependent services, permission failures, or process instability stop the operation. Do not force-kill Exchange processes to push past a failure.
 
-The expected successful restart status is:
+The human result explains that both files were added and verified, that `HostControllerService` was restarted, and that workload recovery is still unproven. With `-AsJson`, the corresponding result is:
 
 ```json
 {
@@ -274,7 +309,7 @@ The expected successful restart status is:
 }
 ```
 
-This is an abbreviated example, not the complete output. The actual result also includes the server, receipt path, and log directory.
+This is an abbreviated JSON example, not the complete output. The actual result also includes the server, receipt path, and log directory. Human output prints the receipt path directly.
 
 **The words `WorkloadValidationRequired` are deliberate. The deployment is not a recovery sign-off.**
 
@@ -287,10 +322,10 @@ Each modifying operation stores:
 %ProgramData%\Exchange-KB5130098\<operation-id>\events.jsonl
 ```
 
-Use the **actual returned path**, not an invented operation ID:
+Use the **actual receipt path in the human summary or JSON result**, not an invented operation ID:
 
 ```powershell
-# Replace this example with ReceiptPath from the operation's JSON output.
+# Replace this example with the receipt path printed by your operation.
 $receiptPath = 'C:\ProgramData\Exchange-KB5130098\<operation-id>\receipt.json'
 
 Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
@@ -375,13 +410,13 @@ Never attest from a green service status alone, and do not send already-staged m
 An approved deployment agent can stage the files without restarting Search. This is a **literal deployment-agent/cmd.exe command line**:
 
 ```cmd
-powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false; exit $LASTEXITCODE"
+powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
 ```
 
 From an existing PowerShell session, invoke the script directly instead:
 
 ```powershell
-.\Invoke-KB5130098.ps1 -Mode Apply -Confirm:$false
+.\Invoke-KB5130098.ps1 -Mode Apply -Confirm:$false -AsJson
 $LASTEXITCODE
 ```
 
@@ -389,7 +424,7 @@ Do not paste the first example into an outer PowerShell double-quoted string wit
 
 | Exit | Meaning |
 |---:|---|
-| `0` | Eligible detection, no-change preview, or the requested operation completed. Read the JSON status; this is not proof of recovery. |
+| `0` | Eligible detection, no-change preview, or the requested operation completed. Read the human summary or `-AsJson` status; this is not proof of recovery. |
 | `1` | Error or verification failure. Stop and keep diagnostics. |
 | `10` | Rules were staged/removed; Search restart is still required. **Not a Windows reboot request.** |
 | `20` | Not applicable or rules already present; review before any further action. |
@@ -434,21 +469,31 @@ $configuration.Run.Path = Join-Path $PWD 'tests'
 $configuration.Run.PassThru = $true
 $result = Invoke-Pester -Configuration $configuration
 
-if ($result.FailedCount -ne 0 -or $result.TotalCount -ne 55) {
-    throw 'The expected 55-test validation did not pass.'
+if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
+    throw 'The regression suite did not pass, or no tests ran.'
 }
 ```
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
 
-## What changed in 1.0.1
+## What changed in 1.0.2
+
+- Default local CLI output now compares observed before/current state and names the action taken and next step.
+- `-AsJson` explicitly selects the earlier machine interface. Update automation rather than parsing human text.
+- Standard Windows UAC can relaunch a local interactive human run in 64-bit Windows PowerShell 5.1; the child remains visible for review and the parent returns its exit code.
+- Parameter forwarding preserves `-WhatIf`, explicit false switches, quoted paths and the working directory. The child cannot recursively elevate.
+- JSON capture, redirected/pipeline use, remoting, unattended execution and `-NoAutoElevate` do not trigger consent prompts.
+- Partial failures retain their existing evidence and expose the receipt path when available; no overwrite, retry, service-scope expansion or automatic rollback is introduced.
+- Automated elevation tests mock the consent-launch boundary and execute a real native child fixture. They do not approve UAC or run Exchange Apply.
+
+### Previous 1.0.1 corrections
 
 - Native Windows PowerShell `-File` now resolves omitted payload/package paths correctly.
 - The documented deployment-agent command forwards custom exit codes explicitly.
 - Sixteen new process-level tests were added; the full **55-test suite passed**.
 - Native Detect and nonconnecting fleet WhatIf were tested on eligible, already-staged, and older-build lab servers.
 - Caller recovery and process attribution are documented without broadening automatic service changes.
-- The guarded deployment engine and builder remain unchanged.
+- The original 1.0.1 corrections did not broaden the guarded deployment engine or builder.
 
 ## References and final checklist
 

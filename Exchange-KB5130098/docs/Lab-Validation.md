@@ -1,7 +1,7 @@
-# KB5130098 1.0.1: validation and operational lessons
+# KB5130098: validation and operational lessons
 
 - **Observed:** September 25, 2026
-- **Scope:** An isolated on-premises Exchange lab, not a customer rollout
+- **Scope:** Original 1.0.1 lab pilot and 1.0.2 console/elevation regression coverage; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -12,7 +12,7 @@ published. The [usage guide](../README.md) describes the supported operator flow
 | Area | Observation |
 |---|---|
 | Source and payload identities | Source checksums matched. Both rule files matched the pinned sizes and SHA256 values. |
-| Offline regression suite | 55 passed, zero failed or skipped; includes 16 native Windows PowerShell 5.1 entry-point tests. |
+| Original 1.0.1 regression suite | 55 passed, zero failed or skipped; includes 16 native Windows PowerShell 5.1 entry-point tests. |
 | Native Detect | Verified eligible/missing rules with exit 0, existing rules with exit 20, and an older ineligible build with exit 20. |
 | Native fleet WhatIf | Exit 0 on all three lab targets, no remote connections or report creation. |
 | Actual fleet inventory | The original serial Kerberos inventory reported the expected three server states without applying the rules. |
@@ -25,7 +25,28 @@ published. The [usage guide](../README.md) describes the supported operator flow
 | Final health | Transport queues empty; database copies Mounted/Healthy with zero copy/replay queues; monitored services running. |
 
 The recorded video's visual commands are illustrative. Its final test results
-summarize these observations; it does not show a new live deployment.
+summarize the original 1.0.1 observations; it does not show a new live deployment.
+
+## 1.0.2 console and elevation coverage
+
+The suite now has 87 tests. New coverage includes standard RunAs launch selection,
+32-bit-to-64-bit host selection, cancellation, unknown child exits, no-loop and
+unattended/remoting/JSON/pipeline guards, and preserved arguments with spaces,
+apostrophes, literal PowerShell syntax, trailing separators and false switches.
+Inherited WhatIf and confirmation preferences also cross the boundary, so a
+session-level preview cannot become a modifying run merely because it elevated.
+
+The launch/consent boundary is mocked. A real native Windows PowerShell child
+executes the generated bootstrap against a harmless fixture to verify values,
+working directory, loop prevention and exact exit codes 0, 1, 10 and 20. These
+tests do not approve a real UAC prompt or execute Exchange Apply.
+
+Native human-output tests use the actual console formatter with a fixture backend.
+They cover default Detect, WhatIf, staging, completed startup observation, rollback,
+wrong-build/existing-file stops, and a partial failure with current file state and
+its receipt. `-AsJson` separately retains the original machine result/exit behavior.
+Before/current refer to observations from the current invocation, not invented
+historical state.
 
 ## Why the first workload observation was not enough
 

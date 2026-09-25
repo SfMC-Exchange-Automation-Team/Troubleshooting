@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.0.1
+Exchange KB5130098 workaround automation | 1.0.2
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -10,6 +10,8 @@ process and pilot on one affected server before wider use. Version 1.0.0 was
 piloted on one lab server; that initial run did not prove workload recovery.
 Version 1.0.1 corrects native invocation paths and deployment-agent exit handling;
 it does not change applicability, payload, or the automated restart scope.
+Version 1.0.2 adds interactive UAC relaunch and human-readable before/action/current
+summaries. Machine callers must now specify -AsJson explicitly.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -72,8 +74,23 @@ outside your organization. Checksums detect changes; they are not code signing.
 
 PREREQUISITES
 
-64-bit Windows PowerShell 5.1, elevated as local administrator (SYSTEM is
-supported for local staging through an approved deployment agent). Use C: for
+64-bit Windows PowerShell 5.1. The local CLI can request normal Windows UAC
+elevation for an interactive human run and reopen itself in the correct host.
+The elevated window displays the results and waits for Enter before closing;
+the original process then receives its exit code. It never changes execution
+policy or supplies approval for an Exchange operation. Parameters, including
+explicit false switches and WhatIf, are preserved. Declined elevation is an error,
+not a successful no-op.
+Inherited WhatIf and confirmation preferences are preserved too; elevation must
+not turn a session-level preview into a modifying operation.
+
+JSON capture (-AsJson), pipelines, remoting and unattended runs must already be
+elevated. -NoAutoElevate suppresses relaunch explicitly; it does not bypass the
+administrator requirement. The builder and direct module/fleet operations also
+retain their existing privilege requirements. SYSTEM remains supported for local
+staging through an approved deployment agent. A package intended for interactive
+UAC launch must be readable from the initial unelevated account; keep write access
+restricted to administrators and follow your code-signing policy. Use C: for
 build/staging/reports. The script discovers the actual Exchange install path
 from the local registry; it does not assume the default path. Write paths
 through junctions/reparse points or F: are intentionally refused. Detection
@@ -112,7 +129,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.0.1-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.0.2-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -120,9 +137,18 @@ files. Protect the package as administrative code.
 2. INVENTORY BEFORE CHANGES
 
 Copy/extract the deployment ZIP to an affected server's staging location.
-In elevated Windows PowerShell, in the extracted package:
+In Windows PowerShell, in the extracted package (approve UAC if prompted):
 
   powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
+
+Human output is now the default: BEFORE / CURRENT, ACTION TAKEN, and NEXT STEP.
+A no-argument run is still Detect only: it never copies rules or restarts services.
+Before/current are observations from this invocation, not a claim about earlier
+history. Errors show any available current state and partial-operation receipt.
+
+For the original JSON interface, start in an elevated shell and opt in explicitly:
+
+  powershell.exe -NoProfile -NonInteractive -File .\Invoke-KB5130098.ps1 -Mode Detect -AsJson
 
 Or from the management workstation, inventory an explicit list:
 
@@ -212,11 +238,11 @@ Distribute the generated deployment ZIP, not the SQL package. Run elevated
 64-bit Windows PowerShell on individually approved, inventoried targets.
 The unattended staging command below ADDS FILES but NEVER restarts services:
 
-  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false; exit $LASTEXITCODE"
+  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
 
 Use that command line in your deployment-agent configuration. When invoking
 from an existing PowerShell session, call the script directly with
--Mode Apply -Confirm:$false instead. Windows PowerShell 5.1 -File cannot pass
+-Mode Apply -Confirm:$false -AsJson instead. Windows PowerShell 5.1 -File cannot pass
 an explicit false value to a switch, which is why the agent example uses -Command.
 The final exit forwards the script's custom code to the deployment agent; without
 it, Windows PowerShell can turn codes 10 and 20 into process exit 1. This example
@@ -226,7 +252,8 @@ does not expand it before the child runs.
 
 Custom exit codes for the LOCAL entry point:
   0  Detection eligible, WhatIf/no change, or requested operation completed.
-     Read JSON Status: 0 does NOT mean workload recovery is proven.
+     Read the human action/current-state summary or -AsJson Status:
+     0 does NOT mean workload recovery is proven.
   1  Error/verification failure. Stop and retain logs; do not blindly retry.
   10 Two files staged/removed; Search restart is still required.
      This is NOT a request to reboot Windows. Map to a custom non-reboot status.
@@ -249,8 +276,8 @@ LOGS AND FAILURE HANDLING
 
 Each modifying operation creates a protected, unique receipt.json and
 events.jsonl under %ProgramData%\Exchange-KB5130098. Only Administrators and
-SYSTEM receive access to that operation directory. The returned JSON identifies
-the exact receipt path. It records original absence, successfully copied/removed
+SYSTEM receive access to that operation directory. The human summary or -AsJson
+result identifies the exact receipt path. It records original absence, successfully copied/removed
 files and lifecycle state. Code-only fleet staging is retained under
 C:\ProgramData\Exchange-KB5130098-Staging\<unique ID>; the report records it.
 Keep remote receipts and local rollout.json as your change evidence.
@@ -290,7 +317,25 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.0.1 CHANGES
+1.0.2 CHANGES
+
+- Human BEFORE/CURRENT, ACTION TAKEN and NEXT STEP output is now the local CLI
+  default. No-argument execution remains Detect only, never an implicit Apply.
+- -AsJson preserves the machine result shape and exit codes. Update automation
+  explicitly; start it already elevated so it never depends on a UAC prompt.
+- Local interactive human runs can relaunch through standard Windows UAC into
+  64-bit Windows PowerShell 5.1. The child shows the result and waits for Enter;
+  the parent waits and returns the child's exact exit code. JSON/pipeline,
+  remoting, noninteractive and -NoAutoElevate invocations never prompt for UAC.
+- Arguments are serialized as data, including explicit false switches, quotes,
+  trailing separators and the working directory. No execution-policy changes,
+  credential files, extra Exchange approvals or recursive elevation are added.
+- Failure summaries show observed partial file state and the operation receipt
+  when available. No automatic rollback, overwrite or retry is introduced.
+- UAC protocol tests use mocked launch/context boundaries and a real native
+  child fixture; they do not click a consent prompt or execute Exchange Apply.
+
+1.0.1 CHANGES (PREVIOUS RELEASE)
 
 - Resolve omitted payload/package defaults inside the script body so native
   powershell.exe -File works; explicitly supplied paths remain unchanged.

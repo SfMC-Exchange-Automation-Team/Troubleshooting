@@ -142,6 +142,16 @@ Describe 'Local deployment with isolated filesystem fixtures' {
             Should -Invoke Restart-KBHostController -Times 0 -Exactly
         }
 
+        It 'honors inherited WhatIf without creating files, state, or restarting' {
+            $WhatIfPreference = $true
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state `
+                -RestartSearch -MaintenanceWindowApproved -Confirm:$false
+            $result.Status | Should -Be 'NoChanges'
+            @(Get-ChildItem -LiteralPath $script:native -File).Count | Should -Be 0
+            (Test-Path -LiteralPath $script:state) | Should -BeFalse
+            Should -Invoke Restart-KBHostController -Times 0 -Exactly
+        }
+
         It 'repeated Apply stops instead of overwriting or restarting' {
             $null = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false
             { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*RuleFilesPresentStop*'
@@ -157,9 +167,16 @@ Describe 'Local deployment with isolated filesystem fixtures' {
 
         It 'records partial copy failure and does not restart or silently undo it' {
             Mock Copy-KBRuleNew { throw 'injected copy failure' } -ParameterFilter { $Destination -like '*ko.complex.rule.bin' }
-            { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*injected copy failure*'
+            $failure = $null
+            try {
+                $null = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved -Confirm:$false
+            } catch { $failure = $_ }
+            $failure | Should -Not -BeNullOrEmpty
+            $failure.Exception.Message | Should -Match 'injected copy failure'
             (Test-Path -LiteralPath (Join-Path $script:native 'ko.token.rule.bin')) | Should -BeTrue
             $receiptPath = (Get-ChildItem -LiteralPath $script:state -Filter receipt.json -Recurse).FullName
+            $failure.Exception.Data['KB5130098ReceiptPath'] | Should -Be $receiptPath
+            @($failure.Exception.Data['KB5130098CreatedFiles']) | Should -Be @('ko.token.rule.bin')
             $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
             $receipt.Status | Should -Be 'FailedStopAndContactSupport'
             $receipt.CreatedFiles.Count | Should -Be 1
