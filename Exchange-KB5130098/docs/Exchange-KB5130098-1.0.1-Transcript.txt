@@ -1,0 +1,97 @@
+Exchange KB5130098 1.0.1 - narrated walkthrough
+
+A controlled deployment, not a blind copy
+
+Let's walk through a controlled deployment of the Korean WordBreaker workaround for Exchange Server.
+We're using version one point zero point one of the guarded package.
+This is custom automation, not a Microsoft-signed hotfix or a permanent product fix.
+The sequence is simple: verify, detect, preview, pilot, and then validate the actual workload.
+Only expand after that evidence passes.
+
+Choose the package and the right host
+
+Start with the deployment zip. It already contains the scripts and the two verified rule files.
+Use an elevated, sixty-four-bit Windows PowerShell five point one session and an approved local staging folder.
+If you need to rebuild, use the source kit on a management workstation.
+The existing-rules option avoids another large download when you already have the verified files.
+Do not extract SQL media on Exchange, and don't bypass the package's build or file checks.
+
+Verify integrity before execution
+
+Before executing anything, calculate the archive's checksum and compare it with the trusted release value.
+The article includes the exact hash and a command that throws on a mismatch.
+A checksum detects changed bytes; it doesn't replace your code review or signing policy.
+Extract into a new directory, then change to the package folder.
+If you've rebuilt or signed the release, use its new checksum rather than the one shown in the article.
+
+Detect means eligible, not recovered
+
+Now run Detect on the intended server.
+Read the status as well as the exit code.
+Eligible means the pinned file criteria match and both rule files are missing. It does not prove a deadlock.
+If the build differs, or either rule already exists, stop and reassess.
+Don't loosen the manifest or treat a zero exit code as proof that the workaround is already installed.
+
+Preview the real local preflight
+
+On an eligible server, run Apply with What If.
+That performs the local applicability and payload checks without copying files or restarting Search.
+A successful preview returns No Changes.
+There is an important difference with the fleet tool: fleet What If makes no remote connection.
+Use fleet Detect when you need an actual inventory.
+
+Apply to one approved pilot
+
+Complete your normal maintenance and health checks before approving the pilot.
+Then request Apply and the Search restart, and review the confirmation prompt.
+The package rechecks eligibility, creates the files without overwriting, and verifies their identities and inherited permissions.
+It restarts only the Host Controller service and watches the selected ContentEngine process.
+If a stop, start, or stability check fails, preserve the evidence. Do not force the operation through.
+
+Keep the receipt. Read the status literally.
+
+The expected restart result says that workload validation is still required.
+Take that literally. A stable process is a startup observation, not a recovery sign-off.
+Keep the returned receipt and event log with your change record.
+Use the actual path from the output, not the placeholder shown here.
+A partial failure is not silently rolled back, so don't delete the evidence or blindly retry.
+
+Test what users actually depend on
+
+Use a test mailbox whose active database is on the server you changed.
+Verify that new ordinary and Korean-language messages arrive and can be found through server-side search.
+Use distinctive body text, and try a term you deliberately did not include as a negative control.
+Also verify the original affected workload, including Outlook or delivery symptoms where relevant.
+Track older backlog separately. New-message success does not mean every older item has been indexed.
+
+Follow the caller, not just the event name
+
+If the files are correct but the workload still fails, stop rollout and investigate the caller.
+An existing feeder connection can remain failed after ContentEngine restarts.
+Use the event's originating process identifier and the matching logs, not just the provider's name.
+In the lab, several callers reconnected naturally, while one remaining Transport caller needed separately scoped recovery.
+That is a diagnostic lesson, not permission to restart every service.
+
+One server, one recovery decision
+
+Once the pilot's workload checks pass, the fleet tool can process the next approved servers serially.
+After each server, it stops for an explicit recovery acknowledgement using that target's exact name.
+Only enter it after the checks genuinely pass.
+Suppressing a confirmation prompt does not disable this recovery gate.
+Do not send machines with already-staged rules back through Apply.
+
+Preserve exit codes in automation
+
+For an approved deployment agent, use the file-only staging command from the article.
+It does not restart Search.
+The final exit statement preserves the script's custom exit code through the child PowerShell process.
+Code ten means a Search restart is still required, not that Windows should reboot.
+Keep the receipt and follow the approved restart procedure. Rollback is not routine cleanup; it requires actual Support approval.
+
+What was verified - and what was not
+
+Version one point zero point one passed all fifty-five automated tests, including sixteen new native-process checks.
+The final lab run also passed ordinary and Korean delivery and search, with negative controls and a clean observed diagnostic window.
+Those were E W S checks, not an Outlook or O W A user-interface sign-off, and not proof that all historical backlog cleared.
+Use the accompanying guide, keep the one-server gate, and validate your own affected workload.
+Deploy carefully, and expand only on evidence.
