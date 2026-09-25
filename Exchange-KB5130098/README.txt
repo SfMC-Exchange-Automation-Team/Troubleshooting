@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.0.2
+Exchange KB5130098 workaround automation | 1.1.0
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -12,6 +12,9 @@ Version 1.0.1 corrects native invocation paths and deployment-agent exit handlin
 it does not change applicability, payload, or the automated restart scope.
 Version 1.0.2 adds interactive UAC relaunch and human-readable before/action/current
 summaries. Machine callers must now specify -AsJson explicitly.
+Version 1.1.0 integrates serial remote orchestration and strict CSV targeting into
+the primary entry point. RestartSearch is explicit for both local and remote
+primary Apply; the old fleet wrapper retains its historical Apply/restart behavior.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -60,10 +63,11 @@ CONTENTS
 
 KB5130098.psd1                Exact build/file identities from the KB
 KB5130098.psm1                Local implementation and guarded service restart
-Invoke-KB5130098.ps1          Detect / Apply / support-approved Rollback CLI
-Invoke-KB5130098Fleet.ps1     Explicit-target, serial WinRM inventory/rollout
+Invoke-KB5130098.ps1          Local / explicit-target / CSV inventory and rollout
+Invoke-KB5130098Fleet.ps1     Compatibility wrapper (legacy Apply includes restart)
 Build-KB5130098Package.ps1    Workstation-only media extraction and ZIP builder
 tests\                       Isolated development tests (source kit only)
+examples\servers.csv          Fictional target-list template; edit before use
 
 The source kit contains NO Microsoft binaries. The builder produces a small
 deployment ZIP containing only the automation and two verified BIN files, not
@@ -84,10 +88,12 @@ not a successful no-op.
 Inherited WhatIf and confirmation preferences are preserved too; elevation must
 not turn a session-level preview into a modifying operation.
 
-JSON capture (-AsJson), pipelines, remoting and unattended runs must already be
-elevated. -NoAutoElevate suppresses relaunch explicitly; it does not bypass the
-administrator requirement. The builder and direct module/fleet operations also
-retain their existing privilege requirements. SYSTEM remains supported for local
+For local operations, JSON capture (-AsJson), pipelines, remoting and unattended
+runs must already be elevated. -NoAutoElevate suppresses local relaunch explicitly;
+it does not bypass the administrator requirement. Remote orchestration instead
+uses existing Kerberos rights and administrative 64-bit sessions on each target,
+without local UAC or changed credentials. The builder retains its elevation
+requirement. SYSTEM remains supported for local
 staging through an approved deployment agent. A package intended for interactive
 UAC launch must be readable from the initial unelevated account; keep write access
 restricted to administrators and follow your code-signing policy. Use C: for
@@ -129,10 +135,14 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.0.2-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.1.0-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
+For repeated manual use, keep a stable working folder such as
+C:\Scripts\Exchange-KB5130098. Update verified contents in place while no run is
+active, preserving user edits and reports. Versions belong in metadata/archive
+names, not a new working directory for every release.
 
 2. INVENTORY BEFORE CHANGES
 
@@ -152,11 +162,35 @@ For the original JSON interface, start in an elevated shell and opt in explicitl
 
 Or from the management workstation, inventory an explicit list:
 
-  .\Invoke-KB5130098Fleet.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
+  .\Invoke-KB5130098.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
 
-Fleet Detect writes only staged automation and reports, not the Exchange
+Remote Detect writes only staged automation and reports, not the Exchange
 installation, rule files or service state. Errors stop the run. Nonapplicable
 builds/existing rules are reported and never silently treated as remediated.
+
+CSV TARGETS FOR LARGER ENVIRONMENTS
+
+Use a reviewed comma-separated file with a ComputerName header, for example:
+
+  ComputerName,Site
+  EX01.contoso.com,SiteA
+  EX02.contoso.com,SiteB
+
+  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -Confirm:$false
+
+ComputerName and CsvPath are mutually exclusive. ReportDirectory is required for
+remote operation. All records are validated before any connection or report:
+blank target cells, duplicate names (ignoring case), invalid DNS/NetBIOS names,
+IPs/wildcards/URLs, duplicate/empty headers, malformed quotes and inconsistent
+field counts stop the run. Input order is preserved; whitespace around names is
+trimmed. Blank physical lines are ignored. UTF-8 CSV, standard quoting and
+multiline metadata are supported. Only ComputerName selects a target: extra
+columns, including Enabled, do not filter servers or grant approval.
+
+The bundled examples\servers.csv uses fictional names and must be edited.
+Parsing is tested with 2,500 targets; this is not a live fleet-scale claim.
+Use -AsJson for machine-readable inventory or file-only staging, with the usual
+-Confirm:$false and native exit-code forwarding where appropriate.
 
 EligibleMissingBothRules means exactly:
   ExSetup.exe numeric file version: 15.2.2562.49 (15.02.2562.049 in the KB)
@@ -212,7 +246,11 @@ workload under its own maintenance/runbook gates, then repeat the postchecks.
 
 After the first server is confirmed recovered, an interactive serial fleet run:
 
-  .\Invoke-KB5130098Fleet.ps1 -Mode Apply -ComputerName EX02.contoso.com,EX03.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports' -MaintenanceWindowApproved
+  .\Invoke-KB5130098.ps1 -Mode Apply -ComputerName EX02.contoso.com,EX03.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
+
+Or use the approved CSV roster:
+
+  .\Invoke-KB5130098.ps1 -Mode Apply -CsvPath 'C:\Temp\approved-servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
 
 The fleet runner processes exactly one server at a time, including its restart.
 It stops for a manual workload-recovery attestation after EVERY server. It
@@ -221,6 +259,17 @@ exact name. A failed or unavailable check means stop, not attestation.
 There is no unattended/parallel restart switch, even with -Confirm:$false.
 Fleet -WhatIf lists intent only and makes no remote connection; use Detect for
 actual eligibility checks.
+
+Without -RestartSearch, primary remote Apply stages files only and returns 10.
+It does not request recovery attestation or imply recovery. Restarted remote
+Apply requires a local interactive console and refuses -AsJson or unattended
+operation before the first connection; read rollout.json for structured results.
+A JSON WhatIf plan is allowed because it does not connect or restart anything.
+Any failure stops subsequent targets; unvisited roster entries remain NotRun.
+
+Invoke-KB5130098Fleet.ps1 is now only a compatibility wrapper. Its Apply still
+includes a restart, preserving the legacy maintenance/recovery gates. New callers
+should use the primary entry point. Rollback remains local and receipt-bound.
 
 Required recovery evidence:
   - In OWA, use a mailbox whose ACTIVE database is on the changed server.
@@ -258,6 +307,7 @@ Custom exit codes for the LOCAL entry point:
   10 Two files staged/removed; Search restart is still required.
      This is NOT a request to reboot Windows. Map to a custom non-reboot status.
   20 NotApplicableStop or RuleFilesPresentStop; review before further action.
+     For remote Detect, at least one target has a stopped eligibility result.
 
 Detection exit 0 means ELIGIBLE/MISSING, not compliance/remediated. Do not use
 the Detect command as a ConfigMgr "installed" detection rule. Author deployment
@@ -317,7 +367,19 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.0.2 CHANGES
+1.1.0 CHANGES
+
+- Primary CLI accepts either -ComputerName or -CsvPath with -ReportDirectory.
+- The full input roster is validated before connections; ordering is preserved.
+- Remote execution shares one module orchestrator and the same local engine.
+- Remote Apply does not restart unless -RestartSearch is explicit; restarted
+  rollout remains serial and requires interactive workload attestation.
+- Existing fleet entry point is a thin wrapper preserving legacy Apply/restart.
+- Reports include original/current state and NotRun records after an early stop.
+- The deployment ZIP includes examples\servers.csv; no credentials or target
+  discovery are implied by importing a file.
+
+1.0.2 CHANGES (PREVIOUS RELEASE)
 
 - Human BEFORE/CURRENT, ACTION TAKEN and NEXT STEP output is now the local CLI
   default. No-argument execution remains Detect only, never an implicit Apply.

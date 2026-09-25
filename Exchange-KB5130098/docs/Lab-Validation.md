@@ -1,7 +1,7 @@
 # KB5130098: validation and operational lessons
 
 - **Observed:** September 25, 2026
-- **Scope:** Original 1.0.1 lab pilot and 1.0.2 console/elevation regression coverage; not a customer rollout
+- **Scope:** Original 1.0.1 lab pilot, console/elevation coverage, and 1.1.0 unified CSV inventory; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -29,7 +29,7 @@ summarize the original 1.0.1 observations; it does not show a new live deploymen
 
 ## 1.0.2 console and elevation coverage
 
-The suite now has 87 tests. New coverage includes standard RunAs launch selection,
+The 1.0.2 suite had 87 tests. Its added coverage includes standard RunAs launch selection,
 32-bit-to-64-bit host selection, cancellation, unknown child exits, no-loop and
 unattended/remoting/JSON/pipeline guards, and preserved arguments with spaces,
 apostrophes, literal PowerShell syntax, trailing separators and false switches.
@@ -47,6 +47,35 @@ wrong-build/existing-file stops, and a partial failure with current file state a
 its receipt. `-AsJson` separately retains the original machine result/exit behavior.
 Before/current refer to observations from the current invocation, not invented
 historical state.
+
+## 1.1.0 unified targeting and CSV coverage
+
+The full suite passes **130 tests**. It covers strict CSV headers, quoted commas
+and multiline metadata, blank/malformed rows, exact field counts, DNS/NetBIOS
+validation, case-insensitive duplicates, deterministic ordering and a 2,500-name
+roster without truncation. Extra metadata, including an `Enabled` column, is not
+interpreted as a hidden filter or permission to change a server.
+
+Native tests verify that the primary script dispatches `-ComputerName` or
+`-CsvPath` without running the local engine or local UAC path; ambiguous targeting
+and remote rollback are refused. Real no-connection CSV WhatIf produces valid
+machine JSON. Module tests verify file-only Apply, explicit restarted rollout,
+mandatory recovery attestation, duplicate-machine aliases, fail-stop behavior,
+`NotRun` report entries, and pre-connection rejection of unattended restarts.
+The legacy fleet wrapper preserves its earlier Apply/restart contract.
+
+Actual CSV Detect ran against three explicit lab targets in both human and JSON
+modes over Kerberos/WinRM. Two targets already had rule files; the third had an
+older ineligible build. The primary returned exit 20 with all three observed
+records, in CSV order. Human output used the requested server name in each
+before/current/action summary rather than the management computer's name.
+
+Independent before/after fingerprints confirmed unchanged Exchange file
+identities, directory ACLs, service states/PIDs and NodeRunner identities across
+all three servers. No live Apply, rollback, service restart, parallel deployment,
+credential setting or trust-policy change was performed for this feature test.
+This validates three-target inventory, not a claim that a large modifying rollout
+has been exercised.
 
 ## Why the first workload observation was not enough
 

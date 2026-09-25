@@ -161,7 +161,8 @@ function Write-KBConsoleResult {
         [switch]$Preview,
         [string]$ErrorMessage,
         [string]$ObservationError,
-        [int]$StabilitySeconds = 30
+        [int]$StabilitySeconds = 30,
+        [string]$ComputerName = $env:COMPUTERNAME
     )
     $readState = {
         param($State, [string]$Property, [string]$Rule)
@@ -177,7 +178,7 @@ function Write-KBConsoleResult {
         [string]$State.$Property
     }
     Write-Host ''
-    Write-Host ("KB5130098 | {0} | {1}" -f $Mode.ToUpperInvariant(), $env:COMPUTERNAME) -ForegroundColor Cyan
+    Write-Host ("KB5130098 | {0} | {1}" -f $Mode.ToUpperInvariant(), $ComputerName) -ForegroundColor Cyan
     Write-Host 'Before and current state refer to this invocation, not earlier history.'
     Write-Host ''
     Write-Host ('{0,-26} {1,-24} {2}' -f 'CHECK', 'BEFORE', 'CURRENT') -ForegroundColor Cyan
@@ -609,4 +610,268 @@ function Invoke-KBLocal {
     }
 }
 
-Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult
+function Resolve-KBTargets {
+    [CmdletBinding(DefaultParameterSetName = 'Names')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Names')][AllowEmptyCollection()][string[]]$ComputerName,
+        [Parameter(Mandatory, ParameterSetName = 'Csv')][string]$CsvPath
+    )
+    $rows = New-Object Collections.Generic.List[object]
+    if ($PSCmdlet.ParameterSetName -eq 'Csv') {
+        if ([IO.Path]::GetExtension($CsvPath) -ine '.csv') { throw 'Use a .csv file with a ComputerName header.' }
+        $file = Get-Item -LiteralPath $CsvPath -ErrorAction Stop
+        if ($file.PSIsContainer) { throw 'CsvPath must identify a CSV file, not a directory.' }
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $reader = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser (
+            $file.FullName, (New-Object Text.UTF8Encoding($false, $true)), $true)
+        try {
+            $reader.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
+            $reader.SetDelimiters(',')
+            $reader.HasFieldsEnclosedInQuotes = $true
+            $reader.TrimWhiteSpace = $true
+            if ($reader.EndOfData) { throw 'The CSV is empty. Supply a ComputerName header and at least one server.' }
+            $header = $reader.ReadFields()
+            $headers = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            $column = -1
+            for ($index = 0; $index -lt $header.Count; $index++) {
+                $name = $header[$index].Trim()
+                if ([string]::IsNullOrWhiteSpace($name) -or -not $headers.Add($name)) {
+                    throw 'CSV headers must be nonempty and unique, ignoring case.'
+                }
+                if ($name -ieq 'ComputerName') { $column = $index }
+            }
+            if ($column -lt 0) { throw 'The CSV must contain a ComputerName column. Other columns are metadata only.' }
+            $rowNumber = 1
+            while (-not $reader.EndOfData) {
+                $rowNumber++
+                $fields = $reader.ReadFields()
+                if ($fields.Count -ne $header.Count) {
+                    throw "CSV record $rowNumber has $($fields.Count) fields; expected $($header.Count)."
+                }
+                $rows.Add([pscustomobject]@{ Value = $fields[$column]; Location = "CSV record $rowNumber" })
+            }
+        } catch [Microsoft.VisualBasic.FileIO.MalformedLineException] {
+            throw "Malformed CSV near line $($reader.ErrorLineNumber): $($_.Exception.Message)"
+        } finally { $reader.Dispose() }
+    } else {
+        for ($index = 0; $index -lt $ComputerName.Count; $index++) {
+            $rows.Add([pscustomobject]@{ Value = $ComputerName[$index]; Location = "ComputerName entry $($index + 1)" })
+        }
+    }
+    if ($rows.Count -eq 0) { throw 'The target list contains no servers.' }
+    $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $targets = New-Object Collections.Generic.List[string]
+    foreach ($row in $rows) {
+        $name = ([string]$row.Value).Trim()
+        if ([string]::IsNullOrWhiteSpace($name)) { throw "$($row.Location) has a blank ComputerName." }
+        $address = $null
+        if ($name.Length -gt 253 -or [Net.IPAddress]::TryParse($name, [ref]$address) -or
+            @($name.Split('.') | Where-Object { $_ -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$' }).Count -gt 0) {
+            throw "$($row.Location): use explicit DNS/NetBIOS names, not IP addresses, wildcards or URLs: $name"
+        }
+        if (-not $seen.Add($name)) { throw "Duplicate target '$name' at $($row.Location). Target names are case-insensitive." }
+        $targets.Add($name)
+    }
+    $targets.ToArray()
+}
+
+function Write-KBFleetReport {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object[]]$Records)
+    $temporary = "$Path.new"
+    ConvertTo-Json -InputObject $Records -Depth 12 | Set-Content -LiteralPath $temporary -Encoding UTF8
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Invoke-KBFleet {
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Names')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Names')][AllowEmptyCollection()][string[]]$ComputerName,
+        [Parameter(Mandatory, ParameterSetName = 'Csv')][string]$CsvPath,
+        [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',
+        [Parameter(Mandatory)][string]$PackageDirectory,
+        [string]$PayloadDirectory,
+        [Parameter(Mandatory)][string]$ReportDirectory,
+        [switch]$RestartSearch,
+        [switch]$MaintenanceWindowApproved,
+        [switch]$Quiet,
+        [ValidateRange(30, 600)][int]$TimeoutSeconds = 120,
+        [ValidateRange(15, 300)][int]$StabilitySeconds = 30
+    )
+    if ($PSCmdlet.ParameterSetName -eq 'Csv') { $targets = @(Resolve-KBTargets -CsvPath $CsvPath) }
+    else { $targets = @(Resolve-KBTargets -ComputerName $ComputerName) }
+    $reportRoot = Assert-KBLocalWritePath $ReportDirectory
+    if ($RestartSearch -and $Mode -ne 'Apply') { throw 'RestartSearch is valid only with remote Apply.' }
+    if ($RestartSearch -and -not $MaintenanceWindowApproved) { throw 'Restart requires an agreed window and -MaintenanceWindowApproved.' }
+    if ($RestartSearch -and $Quiet -and -not $WhatIfPreference) {
+        throw 'Remote restart requires interactive human recovery attestation. Omit -AsJson and read rollout.json for structured results.'
+    }
+    if ($RestartSearch -and -not $WhatIfPreference) {
+        $context = Get-KBElevationContext
+        if ($context.Remote -or -not $context.Interactive) {
+            throw 'Remote restart rollout requires a local interactive console for recovery attestation. No target has been contacted.'
+        }
+    }
+    if (-not $PSBoundParameters.ContainsKey('PayloadDirectory')) { $PayloadDirectory = Join-Path $PackageDirectory 'payload' }
+    if ($Mode -eq 'Apply') { Assert-KBPayload -Directory $PayloadDirectory }
+    $codeFiles = @('KB5130098.psd1', 'KB5130098.psm1')
+    foreach ($name in $codeFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $PackageDirectory $name) -PathType Leaf)) { throw "Missing package file: $name" }
+    }
+    $intent = "$Mode KB5130098 serially on $($targets.Count) server(s)"
+    if ($RestartSearch) { $intent += '; restart Search and attest recovery after EACH server' }
+    if ($WhatIfPreference) {
+        if (-not $Quiet) {
+            Write-Host "What if: $intent. No remote connections, staged files or reports."
+            foreach ($server in $targets) { Write-Host "  $server" }
+        }
+        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@() }
+    }
+    if (-not $PSCmdlet.ShouldProcess(($targets -join ', '), $intent)) {
+        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@() }
+    }
+    $null = New-Item -Path $reportRoot -ItemType Directory -Force
+    $reportRun = Join-Path $reportRoot ([guid]::NewGuid().ToString('N'))
+    $null = New-Item -Path $reportRun -ItemType Directory
+    $summaryFile = Join-Path $reportRun 'rollout.json'
+    $results = New-Object Collections.Generic.List[object]
+    foreach ($server in $targets) {
+        $results.Add([ordered]@{
+            Target=$server; Mode=$Mode; UTC=$null; Status='NotRun'; RemoteStage=$null
+            Detection=$null; Current=$null; Result=$null; RecoveryAttestation=$null
+            Error=$null; ObservationError=$null
+        })
+    }
+    Write-KBFleetReport -Path $summaryFile -Records @($results.ToArray())
+    $seenMachines = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in $results) {
+        $server = $record.Target
+        $session = $null
+        $record.UTC = [DateTime]::UtcNow.ToString('o')
+        $record.Status = 'Started'
+        try {
+            if (-not $Quiet) { Write-Host ("[{0}/{1}] {2}" -f ($seenMachines.Count + 1), $targets.Count, $server) -ForegroundColor Cyan }
+            $options = New-PSSessionOption -OpenTimeout 60000 -OperationTimeout 900000
+            $session = New-PSSession -ComputerName $server -Authentication Kerberos -ConfigurationName Microsoft.PowerShell -SessionOption $options
+            $stage = Invoke-Command -Session $session -ScriptBlock {
+                $ErrorActionPreference = 'Stop'
+                $principal = New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())
+                if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or -not [Environment]::Is64BitProcess) {
+                    throw 'Remote session must be elevated and 64-bit.'
+                }
+                $root = 'C:\ProgramData\Exchange-KB5130098-Staging'
+                $current = $root
+                while ($current) {
+                    if ((Test-Path -LiteralPath $current) -and
+                        ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                        throw "Staging path cannot use reparse points: $current"
+                    }
+                    $current = [IO.Path]::GetDirectoryName($current)
+                }
+                $path = Join-Path $root ([guid]::NewGuid().ToString('N'))
+                $null = New-Item -Path $path -ItemType Directory -Force
+                $acl = New-Object Security.AccessControl.DirectorySecurity
+                $acl.SetAccessRuleProtection($true, $false)
+                foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+                    $identity = New-Object Security.Principal.SecurityIdentifier $sid
+                    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+                        $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+                }
+                Set-Acl -LiteralPath $path -AclObject $acl
+                [pscustomobject]@{ Path=$path; ComputerName=$env:COMPUTERNAME }
+            }
+            $record.RemoteStage = $stage.Path
+            if (-not $seenMachines.Add($stage.ComputerName)) { throw 'Two targets resolved to the same machine. Stop; do not apply twice using aliases.' }
+            foreach ($name in $codeFiles) {
+                $source = Join-Path $PackageDirectory $name
+                $destination = Join-Path $stage.Path $name
+                Copy-Item -LiteralPath $source -Destination $destination -ToSession $session
+                $expected = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+                Invoke-Command -Session $session -ArgumentList $destination, $expected -ScriptBlock {
+                    param($Path, $Expected)
+                    $ErrorActionPreference = 'Stop'
+                    if ((Get-FileHash -LiteralPath $Path).Hash -ne $Expected) { throw "Code transfer hash mismatch: $Path" }
+                }
+            }
+            $record.Detection = Invoke-Command -Session $session -ArgumentList $stage.Path -ScriptBlock {
+                param($Stage)
+                $ErrorActionPreference = 'Stop'
+                Import-Module (Join-Path $Stage 'KB5130098.psm1') -Force
+                Invoke-KBLocal -Mode Detect
+            }
+            $record.Status = $record.Detection.Status
+            if ($Mode -eq 'Apply') {
+                if (-not $record.Detection.Eligible) { throw "Server $server is not eligible: $($record.Detection.Status). Stop and contact Microsoft Support." }
+                $remotePayload = Invoke-Command -Session $session -ArgumentList $stage.Path -ScriptBlock {
+                    param($Stage)
+                    (New-Item -Path (Join-Path $Stage 'payload') -ItemType Directory -ErrorAction Stop).FullName
+                }
+                foreach ($rule in $script:Spec.Rules) {
+                    Copy-Item -LiteralPath (Join-Path $PayloadDirectory $rule.Name) -Destination (Join-Path $remotePayload $rule.Name) -ToSession $session
+                }
+                $record.Result = Invoke-Command -Session $session `
+                    -ArgumentList $stage.Path, $TimeoutSeconds, $StabilitySeconds, $RestartSearch.IsPresent, $MaintenanceWindowApproved.IsPresent `
+                    -ScriptBlock {
+                    param($Stage, $Timeout, $Stability, $Restart, $Approved)
+                    $ErrorActionPreference = 'Stop'
+                    Invoke-KBLocal -Mode Apply -PayloadDirectory (Join-Path $Stage 'payload') `
+                        -RestartSearch:$Restart -MaintenanceWindowApproved:$Approved -TimeoutSeconds $Timeout -StabilitySeconds $Stability -Confirm:$false
+                }
+                $expectedStatus = if ($RestartSearch) { 'RestartedWorkloadValidationRequired' } else { 'FilesStagedRestartRequired' }
+                if ($record.Result.Status -ne $expectedStatus) { throw 'Unexpected deployment result. Do not proceed to another server.' }
+                $record.Status = $record.Result.Status
+            }
+            $record.Current = Invoke-Command -Session $session -ScriptBlock { Invoke-KBLocal -Mode Detect }
+            if ($Mode -eq 'Detect') { $record.Status = $record.Current.Status }
+            if (-not $Quiet) {
+                $display = if ($Mode -eq 'Detect') { $record.Current } else { $record.Result }
+                Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $display `
+                    -Before $record.Detection -After $record.Current -StabilitySeconds $StabilitySeconds
+            }
+            if ($RestartSearch) {
+                $record.Status = 'AwaitingWorkloadValidation'
+                Write-KBFleetReport -Path $summaryFile -Records @($results.ToArray())
+                Write-Host "STOP: Validate $server before proceeding." -ForegroundColor Yellow
+                Write-Host 'Use a mailbox whose ACTIVE database is on this server: new ordinary AND Korean messages must deliver and be searchable.'
+                Write-Host 'Verify the original affected workload and check the existing indexing backlog separately. A running process alone is insufficient.'
+                $required = "RECOVERED $server"
+                if ((Read-Host "Type exactly '$required' after all workload checks pass; anything else stops rollout") -cne $required) {
+                    throw 'Recovery was not confirmed. No subsequent server will be changed.'
+                }
+                $record.RecoveryAttestation = [ordered]@{
+                    Operator=[Security.Principal.WindowsIdentity]::GetCurrent().Name
+                    UTC=[DateTime]::UtcNow.ToString('o'); Statement=$required
+                }
+                $record.Status = 'OperatorConfirmedRecovery'
+            }
+        } catch {
+            $failure = $_
+            $record.Status = 'FailedStop'
+            $record.Error = $failure.Exception.Message
+            if ($null -ne $record.Detection -and $null -ne $session -and $null -eq $record.Current) {
+                try { $record.Current = Invoke-Command -Session $session -ScriptBlock { Invoke-KBLocal -Mode Detect } }
+                catch { $record.ObservationError = $_.Exception.Message }
+            }
+            if (-not $Quiet) {
+                Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $record.Result `
+                    -Before $record.Detection -After $record.Current -ErrorMessage $record.Error -ObservationError $record.ObservationError
+            }
+            $failure.Exception.Data['KB5130098FleetReport'] = $summaryFile
+            throw $failure
+        } finally {
+            try { Write-KBFleetReport -Path $summaryFile -Records @($results.ToArray()) }
+            finally { if ($null -ne $session) { Remove-PSSession -Session $session } }
+        }
+    }
+    $exitCode = 0
+    $status = 'Completed'
+    if ($Mode -eq 'Apply' -and -not $RestartSearch) { $exitCode=10; $status='FilesStagedRestartRequired' }
+    elseif (@($results | Where-Object { $_.Current.Status -in 'NotApplicableStop', 'RuleFilesPresentStop' }).Count -gt 0 -and $Mode -eq 'Detect') {
+        $exitCode=20; $status='ReviewRequired'
+    }
+    [pscustomobject]@{
+        Mode=$Mode; Status=$status; ExitCode=$exitCode; Report=$summaryFile
+        Servers=$results.Count; TargetCount=$targets.Count; Targets=$targets; Results=@($results.ToArray())
+    }
+}
+
+Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet

@@ -1,6 +1,9 @@
+BeforeDiscovery {
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KB5130098.psm1') -Force
+}
+
 BeforeAll {
     $script:packageRoot = Split-Path $PSScriptRoot -Parent
-    Import-Module (Join-Path $script:packageRoot 'KB5130098.psm1') -Force
 }
 
 Describe 'Management workstation builder' {
@@ -28,7 +31,8 @@ Describe 'Management workstation builder' {
         $expanded = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         Expand-Archive -LiteralPath $result.Package -DestinationPath $expanded
         $files = @(Get-ChildItem -LiteralPath $expanded -File -Recurse)
-        $files.Count | Should -Be 8
+        $files.Count | Should -Be 9
+        @($files | Where-Object Name -eq 'servers.csv').Count | Should -Be 1
         @($files | Where-Object Extension -in '.exe', '.msi', '.dll').Count | Should -Be 0
         @($files | Where-Object Name -like '*.bin').Count | Should -Be 2
         Should -Invoke Assert-KBPayload -Times 2 -Exactly
@@ -92,22 +96,25 @@ Describe 'Management workstation builder' {
 }
 
 Describe 'Serial fleet rollout with mocked remoting' {
+    InModuleScope KB5130098 {
     BeforeEach {
+        $script:packageRoot = (Get-Module KB5130098).ModuleBase
         $script:reports = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $global:KB5130098TestContext = @{
             Events = (New-Object Collections.Generic.List[string])
             Target = ''
             Eligible = $true
         }
-        Mock Import-Module {}
-        Mock Assert-KBPayload {}
+        Mock Assert-KBPayload {} -ModuleName KB5130098
+        Mock Write-KBConsoleResult {} -ModuleName KB5130098
+        Mock Get-KBElevationContext { [pscustomobject]@{ Remote=$false; Interactive=$true } } -ModuleName KB5130098
         Mock New-PSSession {
             $global:KB5130098TestContext.Target = $ComputerName
             $global:KB5130098TestContext.Events.Add("Connect $ComputerName")
             New-MockObject -Type System.Management.Automation.Runspaces.PSSession
         }
-        Mock Remove-PSSession {}
-        Mock Copy-Item {}
+        Mock Remove-PSSession {} -ModuleName KB5130098
+        Mock Copy-Item {} -ModuleName KB5130098
         Mock Invoke-Command {
             $text = $ScriptBlock.ToString()
             $context = $global:KB5130098TestContext
@@ -120,62 +127,158 @@ Describe 'Serial fleet rollout with mocked remoting' {
             }
             if ($text.Contains('Invoke-KBLocal -Mode Apply')) {
                 $context.Events.Add("Apply $($context.Target)")
-                return [pscustomobject]@{ Status = 'RestartedWorkloadValidationRequired'; ReceiptPath = 'C:\ProgramData\Fixture\receipt.json' }
+                $context.LastRestart = [bool]$ArgumentList[3]
+                $status = if ($context.LastRestart) { 'RestartedWorkloadValidationRequired' } else { 'FilesStagedRestartRequired' }
+                return [pscustomobject]@{ Status = $status; ReceiptPath = 'C:\ProgramData\Fixture\receipt.json' }
             }
             if ($text.Contains('New-Item -Path (Join-Path')) {
                 return "C:\ProgramData\Fixture\$($context.Target)\payload"
             }
             throw "Unexpected remoting request in test: $text"
-        }
+        } -ModuleName KB5130098
         Mock Read-Host {
             $global:KB5130098TestContext.Events.Add("Attest $($global:KB5130098TestContext.Target)")
             "RECOVERED $($global:KB5130098TestContext.Target)"
-        }
+        } -ModuleName KB5130098
     }
     AfterEach {
         Remove-Variable -Name KB5130098TestContext -Scope Global
     }
 
     It 'never connects to the second server before recovery attestation on the first' {
-        $result = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -MaintenanceWindowApproved -Confirm:$false
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Apply EX01.example.com|Attest EX01.example.com|Connect EX02.example.com|Apply EX02.example.com|Attest EX02.example.com'
         $report = Get-Content -LiteralPath $result.Report -Raw | ConvertFrom-Json
         $report.Count | Should -Be 2
         $report[1].Status | Should -Be 'OperatorConfirmedRecovery'
-        Should -Invoke Remove-PSSession -Times 2 -Exactly
+        Should -Invoke Remove-PSSession -ModuleName KB5130098 -Times 2 -Exactly
     }
 
     It 'stops rollout immediately if recovery is not confirmed' {
-        Mock Read-Host { 'STOP' }
-        { & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*Recovery was not confirmed*'
+        Mock Read-Host { 'STOP' } -ModuleName KB5130098
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*Recovery was not confirmed*'
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Apply EX01.example.com'
-        Should -Invoke Remove-PSSession -Times 1 -Exactly
+        Should -Invoke Remove-PSSession -ModuleName KB5130098 -Times 1 -Exactly
+        $reportFile = (Get-ChildItem -LiteralPath $script:reports -Filter rollout.json -Recurse).FullName
+        $records = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json
+        $records[1].Status | Should -Be 'NotRun'
     }
 
     It 'stops rollout immediately on a nonapplicable installation' {
         $global:KB5130098TestContext.Eligible = $false
-        { & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*not eligible*'
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*not eligible*'
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com'
-        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
     }
 
     It 'Detect never applies or requests a recovery attestation' {
-        $result = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Detect -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false
+        $result = Invoke-KBFleet -Mode Detect -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Connect EX02.example.com'
         $result.Servers | Should -Be 2
-        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
     }
 
     It 'WhatIf makes no connections and writes no report' {
-        & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -MaintenanceWindowApproved -WhatIf
-        Should -Invoke New-PSSession -Times 0 -Exactly
+        Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -WhatIf
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
         (Test-Path -LiteralPath $script:reports) | Should -BeFalse
     }
 
     It 'requires maintenance approval and explicit unique host names' {
-        { & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply -ComputerName EX01.example.com -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*MaintenanceWindowApproved*'
-        { & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -ComputerName 'EX*' -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*explicit DNS*'
-        { & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -ComputerName EX01,EX01 -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*Duplicate*'
-        Should -Invoke New-PSSession -Times 0 -Exactly
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -Confirm:$false } | Should -Throw '*MaintenanceWindowApproved*'
+        { Invoke-KBFleet -ComputerName 'EX*' -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*explicit DNS*'
+        { Invoke-KBFleet -ComputerName EX01,EX01 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*Duplicate*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+    }
+
+    It 'shared remote Apply stages files without an implicit restart or recovery prompt' {
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com `
+            -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false
+        $result.ExitCode | Should -Be 10
+        $result.Status | Should -Be 'FilesStagedRestartRequired'
+        $global:KB5130098TestContext.LastRestart | Should -BeFalse
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Apply EX01.example.com|Connect EX02.example.com|Apply EX02.example.com'
+        Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
+    }
+
+    It 'uses the entire validated CSV roster in order without calling local-only elevation' {
+        $csv = Join-Path $TestDrive 'targets.csv'
+        "ComputerName,Site`r`nEX02.example.com,A`r`nEX01.example.com,B" | Set-Content -LiteralPath $csv -Encoding UTF8
+        $result = Invoke-KBFleet -Mode Detect -CsvPath $csv -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -Confirm:$false
+        $result.TargetCount | Should -Be 2
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX02.example.com|Connect EX01.example.com'
+    }
+
+    It 'rejects an invalid late CSV row before any connection or report creation' {
+        $csv = Join-Path $TestDrive 'bad-targets.csv'
+        "ComputerName`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
+        { Invoke-KBFleet -CsvPath $csv -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*CSV record 3*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+        Test-Path -LiteralPath $script:reports | Should -BeFalse
+    }
+
+    It 'returns exit 20 for a detection report containing a stopped eligibility result' {
+        $global:KB5130098TestContext.Eligible = $false
+        $result = Invoke-KBFleet -ComputerName EX01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -Quiet -Confirm:$false
+        $result.ExitCode | Should -Be 20
+        $result.Status | Should -Be 'ReviewRequired'
+        $result.Results[0].Current.Status | Should -Be 'NotApplicableStop'
+    }
+
+    It 'refuses restarted remote Apply in quiet machine-output mode before connecting' {
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Quiet -Confirm:$false } |
+            Should -Throw '*interactive human recovery*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+    }
+
+    It 'allows a quiet restart preview without connections or pretending recovery was attested' {
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Quiet -WhatIf
+        $result.Status | Should -Be 'NoChanges'
+        $result.Servers | Should -Be 0
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+        Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
+    }
+
+    It 'refuses unattended restart rollout before changing the first server' {
+        Mock Get-KBElevationContext { [pscustomobject]@{ Remote=$false; Interactive=$false } } -ModuleName KB5130098
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false } |
+            Should -Throw '*local interactive console*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+        Test-Path -LiteralPath $script:reports | Should -BeFalse
+    }
+
+    It 'rejects duplicate physical machines reached through different aliases' {
+        Mock Invoke-Command {
+            [pscustomobject]@{ Path = 'C:\ProgramData\Fixture\shared'; ComputerName = 'ONE-MACHINE' }
+        } -ModuleName KB5130098 -ParameterFilter { $ScriptBlock.ToString().Contains('WindowsPrincipal') }
+        { Invoke-KBFleet -ComputerName EX01.example.com,Alias01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*same machine*'
+        Should -Invoke Remove-PSSession -ModuleName KB5130098 -Times 2 -Exactly
+    }
+    }
+}
+
+Describe 'Legacy fleet entry-point compatibility' {
+    BeforeEach {
+        Mock Import-Module {}
+        Mock Invoke-KBFleet { [pscustomobject]@{ Status='Completed'; Report='C:\Fixture\rollout.json'; Servers=1; Mode=$Mode } }
+    }
+
+    It 'retains the legacy explicit maintenance and implicit restart contract for Apply' {
+        $result = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply `
+            -ComputerName EX01.example.com -ReportDirectory 'C:\Fixture' -MaintenanceWindowApproved -Confirm:$false
+        $result.Servers | Should -Be 1
+        Should -Invoke Invoke-KBFleet -Times 1 -Exactly -ParameterFilter { $RestartSearch -and $MaintenanceWindowApproved -and $Mode -eq 'Apply' }
+    }
+
+    It 'does not request a restart for legacy Detect' {
+        $null = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') `
+            -ComputerName EX01.example.com -ReportDirectory 'C:\Fixture' -Confirm:$false
+        Should -Invoke Invoke-KBFleet -Times 1 -Exactly -ParameterFilter { -not $RestartSearch -and $Mode -eq 'Detect' }
     }
 }

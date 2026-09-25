@@ -6,6 +6,8 @@ BeforeAll {
     Copy-Item -LiteralPath (Join-Path $script:packageRoot 'Invoke-KB5130098.ps1') -Destination $script:fixtureRoot
     $fixtureModule = @'
 $script:fixtureRules = @()
+$script:elevationCalls = 0
+$script:localCalls = 0
 if ($env:KB5130098_TEST_STATUS -eq 'RuleFilesPresentStop' -or $env:KB5130098_TEST_STATUS -like 'RolledBack*') {
     $script:fixtureRules = @('ko.token.rule.bin', 'ko.complex.rule.bin')
 }
@@ -14,6 +16,27 @@ function Invoke-KBAutoElevation {
         [bool]$PreviewPreference, [string]$ConfirmationPreference)
     $script:elevationPreview = $PreviewPreference
     $script:elevationConfirm = $ConfirmationPreference
+    $script:elevationCalls++
+}
+function Invoke-KBFleet {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string[]]$ComputerName, [string]$CsvPath, [string]$Mode,
+        [string]$PackageDirectory, [string]$PayloadDirectory, [string]$ReportDirectory,
+        [switch]$RestartSearch, [switch]$MaintenanceWindowApproved, [switch]$Quiet,
+        [int]$TimeoutSeconds, [int]$StabilitySeconds
+    )
+    $code = 0
+    $status = 'Completed'
+    if ($Mode -eq 'Apply' -and -not $RestartSearch) { $code=10; $status='FilesStagedRestartRequired' }
+    [pscustomobject]@{
+        Status=$status; ExitCode=$code; Mode=$Mode; Report='C:\Fixture\rollout.json'
+        Servers=0; TargetCount=@($ComputerName).Count; ComputerName=$ComputerName; CsvPath=$CsvPath
+        PackageDirectory=$PackageDirectory; PayloadDirectory=$PayloadDirectory
+        RestartSearch=$RestartSearch.IsPresent; MaintenanceWindowApproved=$MaintenanceWindowApproved.IsPresent
+        Quiet=$Quiet.IsPresent; WhatIf=[bool]$WhatIfPreference
+        ElevationCalls=$script:elevationCalls; LocalCalls=$script:localCalls
+    }
 }
 function Invoke-KBLocal {
     [CmdletBinding(SupportsShouldProcess)]
@@ -23,6 +46,7 @@ function Invoke-KBLocal {
         [switch]$MaintenanceWindowApproved, [switch]$MicrosoftSupportApprovedRollback,
         [int]$TimeoutSeconds, [int]$StabilitySeconds
     )
+    $script:localCalls++
     $status = $env:KB5130098_TEST_STATUS
     if ($status -eq 'Throw') { throw 'Native fixture failure.' }
     if ($env:KB5130098_TEST_HUMAN -eq '1') {
@@ -75,7 +99,7 @@ function Invoke-KBLocal {
     }, $false)
     if ($null -eq $formatter) { throw 'Production console formatter was not found.' }
     ($fixtureModule + "`r`n" + $formatter.Extent.Text +
-        "`r`nExport-ModuleMember -Function Invoke-KBLocal,Invoke-KBAutoElevation,Write-KBConsoleResult") |
+        "`r`nExport-ModuleMember -Function Invoke-KBLocal,Invoke-KBAutoElevation,Write-KBConsoleResult,Invoke-KBFleet") |
         Set-Content -LiteralPath (Join-Path $script:fixtureRoot 'KB5130098.psm1') -Encoding ASCII
 
     function Invoke-NativeFixture {
@@ -299,5 +323,73 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'Missing package file'
         Test-Path -LiteralPath $report | Should -BeFalse
+    }
+}
+
+Describe 'Unified native local/remote/CSV dispatch' {
+    It 'routes explicit names to remote file-only Apply without local elevation or local execution' {
+        $path = Join-Path $script:fixtureRoot 'Invoke-KB5130098.ps1'
+        $command = '& ''{0}'' -ComputerName EX01,EX02 -Mode Apply -ReportDirectory ''C:\Reports'' -AsJson -Confirm:$false; exit $LASTEXITCODE' -f $path
+        $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be 10
+        $json = $result.Output | ConvertFrom-Json
+        $json.ComputerName | Should -Be @('EX01','EX02')
+        $json.RestartSearch | Should -BeFalse
+        $json.ElevationCalls | Should -Be 0
+        $json.LocalCalls | Should -Be 0
+        $json.PayloadDirectory | Should -Be (Join-Path $script:fixtureRoot 'payload')
+    }
+
+    It 'forwards a CSV path containing spaces to remote dispatch' {
+        $path = Join-Path $script:fixtureRoot 'Invoke-KB5130098.ps1'
+        $csv = Join-Path $TestDrive 'Approved server list.csv'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "C:\Reports" -AsJson' -f $path,$csv)
+        $result.ExitCode | Should -Be 0
+        $json = $result.Output | ConvertFrom-Json
+        $json.CsvPath | Should -Be $csv
+        $json.ElevationCalls | Should -Be 0
+        $json.LocalCalls | Should -Be 0
+    }
+
+    It 'rejects ambiguous direct and CSV targeting before dispatch' {
+        $path = Join-Path $script:fixtureRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName EX01 -CsvPath servers.csv -ReportDirectory C:\Reports -AsJson' -f $path)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'parameter set'
+    }
+
+    It 'refuses remote rollback explicitly without local rollback execution' {
+        $path = Join-Path $script:fixtureRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName EX01 -Mode Rollback -ReportDirectory C:\Reports -AsJson' -f $path)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'Remote Rollback is not supported'
+        $result.Output | Should -BeNullOrEmpty
+    }
+
+    It 'validates a real CSV and returns pure JSON WhatIf without admin, connections or reports' {
+        $csv = Join-Path $TestDrive 'real targets.csv'
+        "ComputerName,Site`r`nEX02.example.com,B`r`nEX01.example.com,A" | Set-Content -LiteralPath $csv -Encoding UTF8
+        $report = Join-Path $TestDrive 'No remote report'
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "{2}" -Mode Detect -WhatIf -AsJson' -f $path,$csv,$report)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $json = $result.Output | ConvertFrom-Json
+        $json.Status | Should -Be 'NoChanges'
+        $json.TargetCount | Should -Be 2
+        $json.Targets | Should -Be @('EX02.example.com','EX01.example.com')
+        $json.Servers | Should -Be 0
+        $json.Report | Should -BeNullOrEmpty
+        Test-Path -LiteralPath $report | Should -BeFalse
+    }
+
+    It 'validates all real CSV records before reporting a preview plan' {
+        $csv = Join-Path $TestDrive 'invalid targets.csv'
+        "ComputerName`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory C:\Reports -WhatIf -AsJson' -f $path,$csv)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'CSV record 3'
+        $result.Output | Should -BeNullOrEmpty
     }
 }

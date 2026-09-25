@@ -1,6 +1,6 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.0.2
+- **Package:** Exchange-KB5130098 1.1.0
 - **Audience:** Exchange Server administrators and change owners
 - **Validated:** September 25, 2026
 - **Reading time:** About 12 minutes
@@ -8,12 +8,12 @@
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.0.2-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.1.0-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
 
-> **New in 1.0.2:** The local script now explains **BEFORE / CURRENT**, **ACTION TAKEN**, and **NEXT STEP** by default. Local interactive runs can request normal Windows UAC elevation. Use `-AsJson` explicitly from an already-elevated session for the previous machine-output interface. A no-argument run is still **Detect only**, not Apply.
+> **New in 1.1.0:** Use one entry point for local work, `-ComputerName` targets, or a `-CsvPath` roster. The primary script never implies a restart: add `-RestartSearch` explicitly. The **BEFORE / CURRENT / ACTION TAKEN / NEXT STEP** output and safe no-argument Detect default remain.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
@@ -21,7 +21,7 @@ The video uses illustrative commands and clearly labelled recorded lab results. 
 
 **5 minutes 56 seconds · 1080p · natural-sounding synthetic narration · on-screen captions · 12 embedded chapters**
 
-The recording demonstrates **1.0.1** and its 55-test baseline. Its elevated-shell setup and JSON screenshots predate the 1.0.2 console improvements; use the updated commands and output explanation below. The workload safety gates remain unchanged.
+The recording demonstrates **1.0.1** and its 55-test baseline. Its elevated-shell setup, JSON screenshots and separate fleet entry point predate the later console and CSV changes; use the commands below. The workload safety gates remain unchanged.
 
 Narration was generated locally; no narration text, private lab material, or audio was sent to an online speech service.
 
@@ -81,7 +81,7 @@ The actual Exchange install path is discovered from the registry. The destinatio
 
 Use **64-bit Windows PowerShell 5.1**. For a local interactive human run, the CLI can display the normal Windows UAC prompt and reopen itself in the correct elevated host. The new window shows the result and waits for Enter before closing; the original process then receives its exit code. Declining UAC produces an explicit error, not a successful no-op.
 
-`-AsJson`, pipelines, remoting and unattended runs must already be elevated. `-NoAutoElevate` disables the relaunch, not the privilege checks. The builder and direct module/fleet workflows keep their existing privilege requirements. No execution-policy bypass or automatic maintenance approval is added.
+For **local operations**, `-AsJson`, pipelines, remoting and unattended runs must already be elevated. `-NoAutoElevate` disables the local relaunch, not the privilege checks. The builder retains its existing elevation requirement. Remote orchestration uses your existing Kerberos identity and requires an administrative 64-bit session on each target; it does not invoke local UAC to change that identity or enable remoting. No execution-policy bypass or automatic maintenance approval is added.
 Explicit switches and inherited WhatIf/confirmation preferences are both preserved across the relaunch; a session-level preview must remain a preview.
 
 The staged script must be readable by the initial account before it can request UAC. Keep the package writable only by administrators; do not solve a launch problem by making administrative code world-writable.
@@ -100,7 +100,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.0.2 source ZIP](downloads/Exchange-KB5130098-1.0.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.0.2-source.zip.sha256). The archive contains the builder and the regression suite, but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.1.0 source ZIP](downloads/Exchange-KB5130098-1.1.0-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.0-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
@@ -153,7 +153,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.0.2-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.1.0-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -168,7 +168,7 @@ if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $expected) {
     throw 'Package checksum mismatch. Stop; do not execute the package.'
 }
 
-$destination = 'C:\Temp\KB5130098-1.0.2'
+$destination = 'C:\Temp\KB5130098-Extract'
 if (Test-Path -LiteralPath $destination) {
     throw 'Use a new extraction directory.'
 }
@@ -180,6 +180,8 @@ Set-Location (Join-Path $destination 'Exchange-KB5130098')
 Verify hashes from a trusted source. A sidecar from the same untrusted download is not authentication or code signing.
 
 If you rebuild or sign the code, the archive hash changes. Use your reviewed release's newly generated manifest and sidecar, not the recorded-video reference hash.
+
+For regular manual use, keep the verified runtime in a **stable folder**, such as `C:\Scripts\Exchange-KB5130098`, and update its managed contents in place. Keep versions in archive names and metadata, not the working directory name. Preserve user-edited files and reports, and do not replace code while a run is active. The fresh extraction directory above is a temporary integrity-check workspace, not a reason to move the operator's working directory each release.
 
 The two payload identities are:
 
@@ -238,21 +240,69 @@ The JSON status names and exit codes remain:
 
 Detection exit `0` means **eligible and missing**, not "installed" or "compliant." Do not use it as an installed-state detection rule in a deployment system.
 
-### Optional fleet inventory
+### Remote inventory from the same script
 
 From the domain management workstation:
 
 ```powershell
-.\Invoke-KB5130098Fleet.ps1 `
+.\Invoke-KB5130098.ps1 `
     -Mode Detect `
     -ComputerName EX01.contoso.com,EX02.contoso.com `
     -ReportDirectory 'C:\Temp\KB5130098-Inventory' `
     -Confirm:$false
 ```
 
-Use an explicit target list. Fleet Detect stages code and writes reports, but does not add Exchange rule files or restart services. It stops on errors.
+Use an explicit target list. Remote Detect stages code and writes reports, but does not add Exchange rule files or restart services. It stops on errors. `ReportDirectory` is required for remote runs.
 
-**Fleet `-WhatIf` is not inventory:** it makes no remote connections. Use fleet Detect for actual eligibility.
+**Remote `-WhatIf` is not inventory:** it validates the entire input list and shows the plan but makes no remote connections or reports. Use Detect without WhatIf for actual eligibility.
+
+### Large environments: import a CSV roster
+
+Start with [examples/servers.csv](examples/servers.csv), copy it to your own list, and replace the fictional targets:
+
+```csv
+ComputerName,Site,Notes
+EX01.contoso.com,SiteA,Approved pilot
+EX02.contoso.com,SiteA,Next approved server
+EX03.contoso.com,SiteB,Inventory before selecting for Apply
+```
+
+Then inventory it:
+
+```powershell
+.\Invoke-KB5130098.ps1 `
+    -Mode Detect `
+    -CsvPath 'C:\Temp\servers.csv' `
+    -ReportDirectory 'C:\Temp\KB5130098-Reports' `
+    -Confirm:$false
+```
+
+For unattended inventory, use `-AsJson` and the same required remote-access rights:
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Detect -CsvPath 'C:\Temp\servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -AsJson -Confirm:$false; exit $LASTEXITCODE"
+```
+
+CSV rules:
+
+- A `ComputerName` header is required, ignoring case and surrounding whitespace. Other header names must also be nonempty and unique.
+- Use comma-separated CSV; UTF-8 is recommended. Standard quoted fields and quoted multiline metadata are supported.
+- Every data record is validated **before any connection or report creation**. Blank target cells, malformed rows, inconsistent field counts, duplicate targets (case-insensitive), wildcards, IP addresses, URLs, and invalid host labels stop the run.
+- Blank physical lines are ignored by the CSV reader; they are not server records.
+- Leading/trailing whitespace in target cells is trimmed. CSV order is preserved, including rollout order.
+- Additional columns such as `Site` or `Notes` are ignored. `Enabled`, approval or action columns do **not** select/skip targets or authorize changes; every valid `ComputerName` data row is included.
+- `-ComputerName` and `-CsvPath` are mutually exclusive. Use DNS/NetBIOS names appropriate for Kerberos.
+- Target parsing is tested with **2,500 ordered names** without truncation. This is parser coverage, not a claim of a 2,500-server live deployment.
+
+If exporting a list from Exchange Management Shell, review and narrow it to the intended scope before use:
+
+```powershell
+Get-ExchangeServer |
+    Select-Object @{Name='ComputerName'; Expression={$_.Fqdn}} |
+    Export-Csv -LiteralPath 'C:\Temp\servers.csv' -NoTypeInformation -Encoding UTF8
+```
+
+No new discovery, credentials, trust settings, parallel changes or retry loop are implied by importing a CSV.
 
 ## 5. Perform local WhatIf
 
@@ -385,17 +435,29 @@ A residual EdgeTransport caller was recovered with a separately scoped graceful 
 
 ## 9. Expand only after the pilot workload passes
 
-For subsequent, still-eligible servers:
+For subsequent, still-eligible servers, choose either an explicit list or a reviewed CSV. A restarted remote rollout must run in a **local interactive console**:
 
 ```powershell
-.\Invoke-KB5130098Fleet.ps1 `
+.\Invoke-KB5130098.ps1 `
     -Mode Apply `
     -ComputerName EX02.contoso.com,EX03.contoso.com `
     -ReportDirectory 'C:\Temp\KB5130098-Rollout' `
+    -RestartSearch `
     -MaintenanceWindowApproved
 ```
 
-The fleet runner processes one server at a time, including its restart. It then requires this exact acknowledgement, using that target's exact spelling:
+Equivalent CSV invocation:
+
+```powershell
+.\Invoke-KB5130098.ps1 `
+    -Mode Apply `
+    -CsvPath 'C:\Temp\approved-servers.csv' `
+    -ReportDirectory 'C:\Temp\KB5130098-Rollout' `
+    -RestartSearch `
+    -MaintenanceWindowApproved
+```
+
+The shared orchestrator processes one server at a time, including its restart. It then requires this exact acknowledgement, using that target's exact spelling:
 
 ```text
 RECOVERED EX02.contoso.com
@@ -404,6 +466,16 @@ RECOVERED EX02.contoso.com
 Enter it only after the workload checks actually pass. Any other response stops rollout. `-Confirm:$false` does **not** disable this recovery gate.
 
 Never attest from a green service status alone, and do not send already-staged machines back through fleet Apply.
+
+Without `-RestartSearch`, remote Apply only stages verified files and returns exit `10`; it does not ask for a recovery attestation or imply recovery. Follow the approved manual restart procedure afterward. Adding `-MaintenanceWindowApproved` alone does not request a restart.
+
+Restarted remote Apply refuses `-AsJson`, remoting/noninteractive hosts and unavailable interactive input **before contacting a target**. Use the human workflow and its `rollout.json` for structured results. A JSON `-WhatIf` plan is allowed because it performs no restart or attestation.
+
+Reports include the validated roster, per-target original/current detection, operation result and recovery attestation where applicable. An error stops the run; unvisited targets remain `NotRun` in `rollout.json`. Different aliases resolving to the same machine are refused before another Apply.
+
+### Existing fleet entry point
+
+`Invoke-KB5130098Fleet.ps1` remains a thin compatibility wrapper around the shared module function. Its historical **Apply includes a restart** and therefore still requires maintenance approval and interactive recovery attestation. New usage should use the primary script with explicit `-RestartSearch`. Remote rollback is not supported; use the original owned receipt locally.
 
 ## 10. Unattended file staging and exit codes
 
@@ -428,6 +500,8 @@ Do not paste the first example into an outer PowerShell double-quoted string wit
 | `1` | Error or verification failure. Stop and keep diagnostics. |
 | `10` | Rules were staged/removed; Search restart is still required. **Not a Windows reboot request.** |
 | `20` | Not applicable or rules already present; review before any further action. |
+
+For remote Detect, `20` means at least one target needs eligibility review; all observed records are in the report. Remote file-only Apply returns `10`. Connection/validation/operation errors return `1` and stop before subsequent targets. Human output and `-AsJson` share these exit meanings.
 
 The explicit `exit $LASTEXITCODE` preserves the script's custom code through the child `-Command` process. Without it, Windows PowerShell can collapse nonzero codes to `1`.
 
@@ -476,7 +550,16 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
 
-## What changed in 1.0.2
+## What changed in 1.1.0
+
+- One primary entry point for local operations, direct remote names and strict CSV target lists.
+- Whole-input validation before connections, case-insensitive duplicate checks and deterministic input ordering.
+- Shared serial orchestration and per-server human state/action output; complete roster in the report, including unvisited targets.
+- Explicit remote restart selection: file-only Apply remains possible, while restarts require local interactive recovery attestation.
+- The former fleet script delegates to the module and preserves its historical Apply/restart behavior.
+- Stable operator working directories, a bundled example CSV, and no automatic remote UAC or authentication changes.
+
+### Previous 1.0.2 changes
 
 - Default local CLI output now compares observed before/current state and names the action taken and next step.
 - `-AsJson` explicitly selects the earlier machine interface. Update automation rather than parsing human text.
