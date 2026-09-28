@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.1.2
+Exchange KB5130098 workaround automation | 1.2.0
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -19,6 +19,9 @@ Version 1.1.1 shows a single STATUS column unless Mode is Apply, and colors
 Present file-state values green without changing eligibility or recovery gates.
 Version 1.1.2 makes ReportDirectory optional everywhere. Omitted remote report
 paths use C:\Temp\KB5130098-Reports on the calling computer.
+Version 1.2.0 retains structured session-level $report objects and $reportFiles,
+prints their summary, and exports CSV, detailed JSON and final JSON Lines by
+default for local and remote runs. Previews produce no persistent report exports.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -72,6 +75,7 @@ Invoke-KB5130098Fleet.ps1     Compatibility wrapper (legacy Apply includes resta
 Build-KB5130098Package.ps1    Workstation-only media extraction and ZIP builder
 tests\                       Isolated development tests (source kit only)
 examples\servers.csv          Fictional target-list template; edit before use
+docs\Reporting-and-Splunk.md   Report variables, CSV/JSON formats and Splunk examples
 
 The source kit contains NO Microsoft binaries. The builder produces a small
 deployment ZIP containing only the automation and two verified BIN files, not
@@ -85,7 +89,9 @@ PREREQUISITES
 64-bit Windows PowerShell 5.1. The local CLI can request normal Windows UAC
 elevation for an interactive human run and reopen itself in the correct host.
 The elevated window displays the results and waits for Enter before closing;
-the original process then receives its exit code. It never changes execution
+the original process then receives its exit code and report data. A private,
+locked, data-only handoff is removed after the parent receives it. No credential
+or executable content is written to that result handoff. It never changes execution
 policy or supplies approval for an Exchange operation. Parameters, including
 explicit false switches and WhatIf, are preserved. Declined elevation is an error,
 not a successful no-op.
@@ -139,7 +145,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.1.2-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.2.0-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -163,7 +169,47 @@ invocation, not earlier history. Rollback shows resulting STATUS and describes
 removals in ACTION TAKEN. Errors retain observed state and partial-operation receipts.
 Present values are green in human output. Green means a file exists, not that
 its contents are verified or the workload has recovered; stop warnings remain.
--AsJson, report structures, exit codes and operational checks are unchanged.
+Existing -AsJson status/exit meanings and operational checks remain; the remote
+JSON envelope additionally includes ReportData rows and ExportFiles paths.
+
+RESULT OBJECTS AND DEFAULT EXPORTS
+
+After a normal script call in the same PowerShell session:
+
+  $report
+  $report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule
+  $report | Where-Object Status -eq 'FailedStop'
+  $reportFiles
+
+$report contains one flat, typed object per target, not a JSON string or formatted
+screen output. It is refreshed at session scope for each invocation. For explicit
+assignment or use inside a function, use:
+
+  $report = .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com -PassThru
+
+-AsJson and -PassThru are alternatives. An external powershell.exe process cannot
+set a variable in an unrelated parent shell; read the exports or capture its JSON.
+The script's own UAC relaunch returns the data to the original invoking session.
+
+Local and remote runs save these files in a unique caller-side report directory:
+  rollout.json    Full nested detail; rewritten checkpoints during remote rollout.
+  results.csv     Default one-row-per-target summary, suitable for spreadsheets.
+  results.jsonl   Final one-object-per-line JSON events with RunId/TimestampUtc.
+
+CSV is convenient for Excel. JSON preserves structure and types for automation.
+For Splunk monitoring use the finalized results.jsonl, not the rewritten checkpoint
+or both formats together. Review docs\Reporting-and-Splunk.md with the customer's
+Splunk administrator; the script does not send to or configure Splunk.
+
+-NoCsv omits CSV only. -ReportDirectory optionally overrides the shared
+C:\Temp\KB5130098-Reports default for local or remote runs. -WhatIf retains objects
+in memory but writes no persistent report exports. No report-directory prompt
+is required. Write failures are explicit errors, not silent fallbacks.
+
+Final JSONL is written once per run, not updated for every checkpoint. A gracefully
+stopped fleet retains FailedStop/NotRun rows; a hard termination may leave only
+the detailed checkpoint. CSV neutralizes formula-leading text, while JSON and
+objects retain the original values. Review hostnames/paths/errors before sharing.
 
 For the original JSON interface, start in an elevated shell and opt in explicitly:
 
@@ -174,8 +220,8 @@ Or from the management workstation, inventory an explicit list:
   .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
 
 ReportDirectory is optional. The shared default is C:\Temp\KB5130098-Reports on
-the calling computer, with a unique subfolder per run. The exact report path is
-printed in the result. Custom paths remain supported, for example:
+the calling computer, with a unique subfolder per run. JSON, CSV and JSON Lines
+paths are printed and retained in $reportFiles. Custom paths remain supported:
 
   .\Invoke-KB5130098.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
 
@@ -385,7 +431,19 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.1.2 CHANGES
+1.2.0 CHANGES
+
+- Keep actual typed per-target results in session-level $report, with paths in
+  $reportFiles, and print a terminal summary. -PassThru supports object pipelines.
+- Export CSV by default alongside detailed JSON and final JSON Lines. -NoCsv
+  disables only CSV; previews remain in-memory with no persistent output files.
+- Return local UAC report data through a private reserved result file, removed
+  after use, without executable content or credentials.
+- Preserve report state for failures/unvisited targets and expose export errors.
+- Include a Splunk ingestion guide; no live customer connection/configuration
+  is attempted and integration must be validated in the customer's environment.
+
+1.1.2 CHANGES (PREVIOUS RELEASE)
 
 - Default remote reports to C:\Temp\KB5130098-Reports on the calling computer.
 - Primary direct/CSV and legacy entry points no longer prompt for an omitted

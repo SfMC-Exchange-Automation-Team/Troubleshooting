@@ -43,6 +43,51 @@ function Get-KBElevationContext {
     }
 }
 
+function New-KBReportRelay {
+    $root = Assert-KBLocalWritePath ([IO.Path]::GetTempPath().TrimEnd('\'))
+    $directory = Join-Path $root ('KB5130098-report-' + [guid]::NewGuid().ToString('N'))
+    if (Test-Path -LiteralPath $directory) { throw 'The temporary report handoff directory already exists.' }
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')) {
+        $identity = New-Object Security.Principal.SecurityIdentifier $sid
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    }
+    $null = [IO.Directory]::CreateDirectory($directory, $acl)
+    $path = Join-Path $directory 'report.clixml'
+    try {
+        # Keep the file open without FileShare.Delete so the child writes the reserved file.
+        $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+        [pscustomobject]@{ Directory=$directory; Path=$path; Stream=$stream }
+    } catch {
+        [IO.Directory]::Delete($directory, $false)
+        throw
+    }
+}
+
+function Read-KBReportRelay {
+    param([Parameter(Mandatory)]$Relay, [int]$ExpectedExitCode)
+    if ($Relay.Stream.Length -eq 0 -or $Relay.Stream.Length -gt 1MB) {
+        throw 'The elevated result handoff is missing or invalid. Inspect the elevated window and saved reports; do not rerun a modifying command blindly.'
+    }
+    $Relay.Stream.Position = 0
+    $reader = New-Object IO.StreamReader($Relay.Stream, [Text.Encoding]::UTF8, $true, 4096, $true)
+    try { $packet = [System.Management.Automation.PSSerializer]::Deserialize($reader.ReadToEnd()) }
+    finally { $reader.Dispose() }
+    if ($packet.Schema -ne 1 -or $packet.ExitCode -ne $ExpectedExitCode) { throw 'The elevated result handoff does not match the completed process.' }
+    $packet.ReportData = @($packet.ReportData | Where-Object { $null -ne $_ })
+    if ($packet.ReportData.Count -eq 0 -and $ExpectedExitCode -ne 1) { throw 'The elevated operation returned no report data.' }
+    $packet
+}
+
+function Remove-KBReportRelay {
+    param([Parameter(Mandatory)]$Relay)
+    $Relay.Stream.Dispose()
+    [IO.File]::Delete($Relay.Path)
+    [IO.Directory]::Delete($Relay.Directory, $false)
+}
+
 function New-KBElevationCommand {
     param(
         [Parameter(Mandatory)][string]$ScriptPath,
@@ -50,7 +95,8 @@ function New-KBElevationCommand {
         [Parameter(Mandatory)][string]$WorkingDirectory,
         [bool]$WaitForUser = $true,
         [bool]$PreviewPreference = $false,
-        [ValidateSet('None', 'Low', 'Medium', 'High')][string]$ConfirmationPreference = 'High'
+        [ValidateSet('None', 'Low', 'Medium', 'High')][string]$ConfirmationPreference = 'High',
+        [string]$ReportRelayPath
     )
     $parameters = @{}
     foreach ($key in $BoundParameters.Keys) {
@@ -73,6 +119,7 @@ function New-KBElevationCommand {
         WaitForUser = $WaitForUser
         PreviewPreference = $PreviewPreference
         ConfirmationPreference = $ConfirmationPreference
+        ReportRelayPath = $ReportRelayPath
     }
     $serialized = [System.Management.Automation.PSSerializer]::Serialize($packet)
     $data = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($serialized))
@@ -94,6 +141,29 @@ try {
     $exitCode = $LASTEXITCODE
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
+}
+if ($null -ne $request -and $request.ReportRelayPath) {
+    try {
+        $reportVariable = $ExecutionContext.SessionState.PSVariable.Get('report')
+        $filesVariable = $ExecutionContext.SessionState.PSVariable.Get('reportFiles')
+        $handoff = @{
+            Schema = 1
+            ExitCode = $exitCode
+            ReportData = $(if ($null -ne $reportVariable) { @($reportVariable.Value) } else { @() })
+            ExportFiles = $(if ($null -ne $filesVariable) { $filesVariable.Value } else { $null })
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes([System.Management.Automation.PSSerializer]::Serialize($handoff, 8))
+        if ($bytes.Length -gt 1MB) { throw 'The report is too large for the temporary elevation handoff. Read the saved exports instead.' }
+        $stream = [IO.File]::Open($request.ReportRelayPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+        try {
+            if ($stream.Length -ne 0) { throw 'The reserved report handoff file is not empty.' }
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally { $stream.Dispose() }
+    } catch {
+        [Console]::Error.WriteLine('The elevated report could not be returned: ' + $_.Exception.Message)
+        $exitCode = 1
+    }
 }
 if ($null -ne $request -and $request.WaitForUser) {
     Write-Host ''
@@ -132,24 +202,28 @@ function Invoke-KBAutoElevation {
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw "64-bit Windows PowerShell was not found at $exe."
     }
-    $encoded = New-KBElevationCommand -ScriptPath $ScriptPath -BoundParameters $BoundParameters `
-        -WorkingDirectory $location.ProviderPath -PreviewPreference $PreviewPreference -ConfirmationPreference $ConfirmationPreference
-    Write-Host 'Administrator access is required. Approve the Windows UAC prompt to continue in an elevated window.' -ForegroundColor Yellow
-    Write-Host 'The elevated window will show the results and wait for Enter before closing.'
+    $relay = New-KBReportRelay
     try {
-        # Start-Process has no WhatIf/Confirm parameters in Windows PowerShell 5.1.
-        # Scope these preferences to the launcher; the original values are already serialized for the child.
-        $WhatIfPreference = $false
-        $ConfirmPreference = 'None'
-        $child = Start-Process -FilePath $exe -ArgumentList "-NoLogo -NoProfile -EncodedCommand $encoded" `
-            -WorkingDirectory $location.ProviderPath -Verb RunAs -Wait -PassThru -ErrorAction Stop
-    } catch {
-        throw "Administrator elevation was declined or could not be started: $($_.Exception.Message)"
-    }
-    if ($null -eq $child -or $null -eq $child.ExitCode) {
-        throw 'The elevated process did not return an exit code. Review its window and receipts; do not assume success or retry blindly.'
-    }
-    [pscustomobject]@{ ExitCode = [int]$child.ExitCode }
+        $encoded = New-KBElevationCommand -ScriptPath $ScriptPath -BoundParameters $BoundParameters `
+            -WorkingDirectory $location.ProviderPath -PreviewPreference $PreviewPreference `
+            -ConfirmationPreference $ConfirmationPreference -ReportRelayPath $relay.Path
+        Write-Host 'Administrator access is required. Approve the Windows UAC prompt to continue in an elevated window.' -ForegroundColor Yellow
+        Write-Host 'The elevated window will show the results and wait for Enter before closing; $report then returns to this session.'
+        try {
+            # Launcher-only preferences do not replace the operation preferences serialized above.
+            $WhatIfPreference = $false
+            $ConfirmPreference = 'None'
+            $child = Start-Process -FilePath $exe -ArgumentList "-NoLogo -NoProfile -EncodedCommand $encoded" `
+                -WorkingDirectory $location.ProviderPath -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        } catch {
+            throw "Administrator elevation was declined or could not be started: $($_.Exception.Message)"
+        }
+        if ($null -eq $child -or $null -eq $child.ExitCode) {
+            throw 'The elevated process did not return an exit code. Review its window and receipts; do not assume success or retry blindly.'
+        }
+        $packet = Read-KBReportRelay -Relay $relay -ExpectedExitCode $child.ExitCode
+        [pscustomobject]@{ ExitCode=[int]$child.ExitCode; ReportData=@($packet.ReportData); ExportFiles=$packet.ExportFiles }
+    } finally { Remove-KBReportRelay -Relay $relay }
 }
 
 function Write-KBConsoleResult {
@@ -694,6 +768,166 @@ function Resolve-KBTargets {
     $targets.ToArray()
 }
 
+function Get-KBReportValue {
+    param($InputObject, [string]$Name)
+    if ($null -eq $InputObject) { return $null }
+    if ($InputObject -is [Collections.IDictionary]) { return $InputObject[$Name] }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -ne $property) { $property.Value }
+}
+
+function New-KBReportContext {
+    param(
+        [ValidateNotNullOrEmpty()][string]$ReportDirectory = 'C:\Temp\KB5130098-Reports',
+        [switch]$NoWrite
+    )
+    $root = Assert-KBLocalWritePath $ReportDirectory
+    $runId = [guid]::NewGuid().ToString('N')
+    $directory = Join-Path $root $runId
+    if (-not $NoWrite) {
+        $null = New-Item -Path $root -ItemType Directory -Force
+        $null = New-Item -Path $directory -ItemType Directory
+    }
+    [pscustomobject]@{
+        Root=$root; RunId=$runId; Directory=$directory
+        JsonPath=Join-Path $directory 'rollout.json'
+        NoWrite=$NoWrite.IsPresent
+    }
+}
+
+function ConvertTo-KBReportRows {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][string]$RunId,
+        [string]$DetailReportPath,
+        [string]$TimestampUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture)
+    )
+    foreach ($record in $Records) {
+        $target = [string](Get-KBReportValue $record 'Target')
+        $mode = [string](Get-KBReportValue $record 'Mode')
+        $status = [string](Get-KBReportValue $record 'Status')
+        if (-not $target -or -not $mode -or -not $status) { throw 'A report record is missing Target, Mode or Status.' }
+        $before = Get-KBReportValue $record 'Detection'
+        $current = Get-KBReportValue $record 'Current'
+        $operation = Get-KBReportValue $record 'Result'
+        $operationStatus = [string](Get-KBReportValue $operation 'Status')
+        $ruleState = {
+            param($State, [string]$Name)
+            if ($null -eq $State) { return 'Not observed' }
+            if (@(Get-KBReportValue $State 'ExistingRules') -contains $Name) { return 'Present' }
+            'Missing'
+        }
+        $action = switch ($operationStatus) {
+            'FilesStagedRestartRequired' { 'Added verified rules; Search not restarted' }
+            'RestartedWorkloadValidationRequired' { 'Added verified rules; restarted HostControllerService' }
+            'RolledBackRestartRequired' { 'Backed up and removed owned rules; Search not restarted' }
+            'RolledBackWorkloadValidationRequired' { 'Backed up and removed owned rules; restarted HostControllerService' }
+            default {
+                if ($status -eq 'NotRun') { 'Not contacted' }
+                elseif ($status -eq 'NoChanges') { 'No changes; preview or declined operation' }
+                elseif ($status -eq 'FailedStop') { 'Stopped; inspect error and any receipt' }
+                elseif ($mode -eq 'Detect') { 'Detection only; no Exchange changes' }
+                else { 'No completed modifying operation recorded' }
+            }
+        }
+        if ($status -eq 'FailedStop' -and $operationStatus -in @(
+            'FilesStagedRestartRequired','RestartedWorkloadValidationRequired',
+            'RolledBackRestartRequired','RolledBackWorkloadValidationRequired')) {
+            $action += '; rollout stopped'
+        }
+        $validation = Get-KBReportValue $operation 'WorkloadValidationRequired'
+        [pscustomobject][ordered]@{
+            SchemaVersion = 1
+            RunId = $RunId
+            TimestampUtc = $TimestampUtc
+            PackageVersion = [string]$script:Spec.PackageVersion
+            ComputerName = $target
+            Mode = $mode
+            Status = $status
+            ActionTaken = $action
+            ExchangeVersion = Get-KBReportValue $current 'ExchangeVersion'
+            DllVersion = Get-KBReportValue $current 'DllVersion'
+            DllSHA256 = Get-KBReportValue $current 'DllSHA256'
+            BeforeTokenRule = & $ruleState $before 'ko.token.rule.bin'
+            BeforeComplexRule = & $ruleState $before 'ko.complex.rule.bin'
+            TokenRule = & $ruleState $current 'ko.token.rule.bin'
+            ComplexRule = & $ruleState $current 'ko.complex.rule.bin'
+            RestartRequested = [bool](Get-KBReportValue $record 'RestartSearch')
+            RestartCompleted = ($operationStatus -in 'RestartedWorkloadValidationRequired','RolledBackWorkloadValidationRequired')
+            WorkloadValidationRequired = $(if ($null -eq $validation) { $null } else { [bool]$validation })
+            RecoveryAttested = ($null -ne (Get-KBReportValue $record 'RecoveryAttestation'))
+            ReceiptPath = Get-KBReportValue $operation 'ReceiptPath'
+            Error = Get-KBReportValue $record 'Error'
+            ObservationError = Get-KBReportValue $record 'ObservationError'
+            DetailReportPath = $DetailReportPath
+        }
+    }
+}
+
+function Save-KBReportExports {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows,
+        [switch]$NoCsv
+    )
+    $paths = [pscustomobject]@{ Json=$null; Csv=$null; JsonLines=$null }
+    if ($Context.NoWrite) { return $paths }
+    $paths.Json = $Context.JsonPath
+    $paths.JsonLines = Join-Path $Context.Directory 'results.jsonl'
+    if (-not $NoCsv) { $paths.Csv = Join-Path $Context.Directory 'results.csv' }
+    try {
+        if ((Test-Path -LiteralPath $paths.JsonLines) -or
+            ($paths.Csv -and (Test-Path -LiteralPath $paths.Csv))) {
+            throw 'Final result exports already exist. Do not rewrite events that may have been ingested.'
+        }
+        Write-KBFleetReport -Path $paths.Json -Records $Records
+        if (-not $NoCsv) {
+            $csvRows = foreach ($row in $Rows) {
+                $values = [ordered]@{}
+                foreach ($property in $row.PSObject.Properties) {
+                    $value = $property.Value
+                    # Spreadsheet clients can evaluate formula-like strings even in quoted CSV fields.
+                    if ($value -is [string] -and $value -match '^[=+\-@\t\r]') { $value = "'" + $value }
+                    $values[$property.Name] = $value
+                }
+                [pscustomobject]$values
+            }
+            $csvRows | Export-Csv -LiteralPath "$($paths.Csv).new" -NoTypeInformation -Encoding UTF8
+            Move-Item -LiteralPath "$($paths.Csv).new" -Destination $paths.Csv
+        }
+        $lines = @($Rows | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 4 -Compress })
+        [IO.File]::WriteAllLines("$($paths.JsonLines).new", [string[]]$lines, (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath "$($paths.JsonLines).new" -Destination $paths.JsonLines
+        $paths
+    } catch {
+        foreach ($name in @('Json','Csv','JsonLines')) {
+            if ($paths.$name -and -not (Test-Path -LiteralPath $paths.$name -PathType Leaf)) { $paths.$name=$null }
+        }
+        $_.Exception.Data['KB5130098ReportRows'] = @($Rows)
+        $_.Exception.Data['KB5130098ReportFiles'] = $paths
+        $_.Exception.Data['KB5130098FleetReport'] = $paths.Json
+        throw
+    }
+}
+
+function Write-KBReportSummary {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows, $Files)
+    Write-Host ''
+    Write-Host ('$report contains {0} structured server result(s).' -f $Rows.Count) -ForegroundColor Cyan
+    if ($Rows.Count -gt 0) {
+        $Rows | Format-Table ComputerName,Mode,Status,ActionTaken -AutoSize -Wrap | Out-Host
+    }
+    if ($null -ne $Files -and $Files.Json) {
+        Write-Host "Detailed JSON: $($Files.Json)"
+        if ($Files.Csv) { Write-Host "CSV:           $($Files.Csv)" }
+        Write-Host "JSON Lines:    $($Files.JsonLines)"
+        Write-Host 'Use $report to filter/export the objects; $reportFiles contains the output paths.'
+    } else {
+        Write-Host 'No persistent report exports were written for this invocation.'
+    }
+}
+
 function Write-KBFleetReport {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object[]]$Records)
     $temporary = "$Path.new"
@@ -709,24 +943,28 @@ function Invoke-KBFleet {
         [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',
         [Parameter(Mandatory)][string]$PackageDirectory,
         [string]$PayloadDirectory,
-        [ValidateNotNullOrEmpty()][string]$ReportDirectory = 'C:\Temp\KB5130098-Reports',
+        [ValidateNotNullOrEmpty()][string]$ReportDirectory,
         [switch]$RestartSearch,
         [switch]$MaintenanceWindowApproved,
         [switch]$Quiet,
+        [switch]$NoCsv,
         [ValidateRange(30, 600)][int]$TimeoutSeconds = 120,
         [ValidateRange(15, 300)][int]$StabilitySeconds = 30
     )
     if ($PSCmdlet.ParameterSetName -eq 'Csv') { $targets = @(Resolve-KBTargets -CsvPath $CsvPath) }
     else { $targets = @(Resolve-KBTargets -ComputerName $ComputerName) }
-    $reportRoot = Assert-KBLocalWritePath $ReportDirectory
+    $contextParameters = @{ NoWrite=$true }
+    if ($PSBoundParameters.ContainsKey('ReportDirectory')) { $contextParameters.ReportDirectory=$ReportDirectory }
+    $context = New-KBReportContext @contextParameters
+    $reportRoot = $context.Root
     if ($RestartSearch -and $Mode -ne 'Apply') { throw 'RestartSearch is valid only with remote Apply.' }
     if ($RestartSearch -and -not $MaintenanceWindowApproved) { throw 'Restart requires an agreed window and -MaintenanceWindowApproved.' }
     if ($RestartSearch -and $Quiet -and -not $WhatIfPreference) {
         throw 'Remote restart requires interactive human recovery attestation. Omit -AsJson and read rollout.json for structured results.'
     }
     if ($RestartSearch -and -not $WhatIfPreference) {
-        $context = Get-KBElevationContext
-        if ($context.Remote -or -not $context.Interactive) {
+        $consoleContext = Get-KBElevationContext
+        if ($consoleContext.Remote -or -not $consoleContext.Interactive) {
             throw 'Remote restart rollout requires a local interactive console for recovery attestation. No target has been contacted.'
         }
     }
@@ -743,19 +981,24 @@ function Invoke-KBFleet {
             Write-Host "What if: $intent. No remote connections, staged files or reports."
             foreach ($server in $targets) { Write-Host "  $server" }
         }
-        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@() }
+        $plan = @($targets | ForEach-Object { [pscustomobject]@{Target=$_; Mode=$Mode; Status='NoChanges'; RestartSearch=$RestartSearch.IsPresent} })
+        $rows = @(ConvertTo-KBReportRows -Records $plan -RunId $context.RunId)
+        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@(); ReportData=$rows; ExportFiles=$null }
     }
     if (-not $PSCmdlet.ShouldProcess(($targets -join ', '), $intent)) {
-        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@() }
+        $plan = @($targets | ForEach-Object { [pscustomobject]@{Target=$_; Mode=$Mode; Status='NoChanges'; RestartSearch=$RestartSearch.IsPresent} })
+        $rows = @(ConvertTo-KBReportRows -Records $plan -RunId $context.RunId)
+        return [pscustomobject]@{ Mode=$Mode; Status='NoChanges'; ExitCode=0; Report=$null; Servers=0; TargetCount=$targets.Count; Targets=$targets; Results=@(); ReportData=$rows; ExportFiles=$null }
     }
     $null = New-Item -Path $reportRoot -ItemType Directory -Force
-    $reportRun = Join-Path $reportRoot ([guid]::NewGuid().ToString('N'))
+    $reportRun = $context.Directory
     $null = New-Item -Path $reportRun -ItemType Directory
-    $summaryFile = Join-Path $reportRun 'rollout.json'
+    $context.NoWrite = $false
+    $summaryFile = $context.JsonPath
     $results = New-Object Collections.Generic.List[object]
     foreach ($server in $targets) {
         $results.Add([ordered]@{
-            Target=$server; Mode=$Mode; UTC=$null; Status='NotRun'; RemoteStage=$null
+            Target=$server; Mode=$Mode; UTC=$null; Status='NotRun'; RemoteStage=$null; RestartSearch=$RestartSearch.IsPresent
             Detection=$null; Current=$null; Result=$null; RecoveryAttestation=$null
             Error=$null; ObservationError=$null
         })
@@ -875,6 +1118,10 @@ function Invoke-KBFleet {
                     -Before $record.Detection -After $record.Current -ErrorMessage $record.Error -ObservationError $record.ObservationError
             }
             $failure.Exception.Data['KB5130098FleetReport'] = $summaryFile
+            $rows = @(ConvertTo-KBReportRows -Records @($results.ToArray()) -RunId $context.RunId -DetailReportPath $summaryFile)
+            $failure.Exception.Data['KB5130098ReportRows'] = $rows
+            $files = Save-KBReportExports -Context $context -Records @($results.ToArray()) -Rows $rows -NoCsv:$NoCsv
+            $failure.Exception.Data['KB5130098ReportFiles'] = $files
             throw $failure
         } finally {
             try { Write-KBFleetReport -Path $summaryFile -Records @($results.ToArray()) }
@@ -887,10 +1134,13 @@ function Invoke-KBFleet {
     elseif (@($results | Where-Object { $_.Current.Status -in 'NotApplicableStop', 'RuleFilesPresentStop' }).Count -gt 0 -and $Mode -eq 'Detect') {
         $exitCode=20; $status='ReviewRequired'
     }
+    $rows = @(ConvertTo-KBReportRows -Records @($results.ToArray()) -RunId $context.RunId -DetailReportPath $summaryFile)
+    $files = Save-KBReportExports -Context $context -Records @($results.ToArray()) -Rows $rows -NoCsv:$NoCsv
     [pscustomobject]@{
         Mode=$Mode; Status=$status; ExitCode=$exitCode; Report=$summaryFile
         Servers=$results.Count; TargetCount=$targets.Count; Targets=$targets; Results=@($results.ToArray())
+        ReportData=$rows; ExportFiles=$files
     }
 }
 
-Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet
+Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet, New-KBReportContext, ConvertTo-KBReportRows, Save-KBReportExports, Write-KBReportSummary

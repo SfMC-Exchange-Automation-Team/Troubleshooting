@@ -31,8 +31,9 @@ Describe 'Management workstation builder' {
         $expanded = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         Expand-Archive -LiteralPath $result.Package -DestinationPath $expanded
         $files = @(Get-ChildItem -LiteralPath $expanded -File -Recurse)
-        $files.Count | Should -Be 9
+        $files.Count | Should -Be 10
         @($files | Where-Object Name -eq 'servers.csv').Count | Should -Be 1
+        @($files | Where-Object Name -eq 'Reporting-and-Splunk.md').Count | Should -Be 1
         @($files | Where-Object Extension -in '.exe', '.msi', '.dll').Count | Should -Be 0
         @($files | Where-Object Name -like '*.bin').Count | Should -Be 2
         Should -Invoke Assert-KBPayload -Times 2 -Exactly
@@ -162,6 +163,11 @@ Describe 'Serial fleet rollout with mocked remoting' {
         $reportFile = (Get-ChildItem -LiteralPath $script:reports -Filter rollout.json -Recurse).FullName
         $records = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json
         $records[1].Status | Should -Be 'NotRun'
+        $exportRoot = Split-Path $reportFile -Parent
+        $csv = @(Import-Csv -LiteralPath (Join-Path $exportRoot 'results.csv'))
+        $csv[0].Status | Should -Be 'FailedStop'
+        $csv[1].Status | Should -Be 'NotRun'
+        [IO.File]::ReadAllLines((Join-Path $exportRoot 'results.jsonl')).Count | Should -Be 2
     }
 
     It 'stops rollout immediately on a nonapplicable installation' {
@@ -269,6 +275,9 @@ Describe 'Serial fleet rollout with mocked remoting' {
         $result.ExitCode | Should -Be 20
         $result.Status | Should -Be 'ReviewRequired'
         $result.Results[0].Current.Status | Should -Be 'NotApplicableStop'
+        $result.ReportData[0].Status | Should -Be 'NotApplicableStop'
+        Test-Path -LiteralPath $result.ExportFiles.Csv | Should -BeTrue
+        Test-Path -LiteralPath $result.ExportFiles.JsonLines | Should -BeTrue
     }
 
     It 'refuses restarted remote Apply in quiet machine-output mode before connecting' {
@@ -310,7 +319,8 @@ Describe 'Serial fleet rollout with mocked remoting' {
 Describe 'Legacy fleet entry-point compatibility' {
     BeforeEach {
         Mock Import-Module {}
-        Mock Invoke-KBFleet { [pscustomobject]@{ Status='Completed'; Report='C:\Fixture\rollout.json'; Servers=1; Mode=$Mode } }
+        Mock Invoke-KBFleet { [pscustomobject]@{ Status='Completed'; Report='C:\Fixture\rollout.json'; Servers=1; Mode=$Mode; ReportData=@(); ExportFiles=$null } }
+        Mock Write-KBReportSummary {}
     }
 
     It 'retains the legacy explicit maintenance and implicit restart contract for Apply' {

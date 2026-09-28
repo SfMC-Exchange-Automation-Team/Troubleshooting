@@ -8,7 +8,9 @@ Restart is opt-in and requires an approved maintenance window. Workload validati
 is always manual. Local interactive runs can request UAC elevation. Human-readable
 status/action output is the default, with before/current comparisons for Apply.
 -AsJson preserves machine output.
-Remote reports default to C:\Temp\KB5130098-Reports on the calling computer.
+Results remain in caller $report, with paths in $reportFiles. CSV, detailed JSON
+and JSON Lines export by default, except previews. -NoCsv suppresses CSV only.
+Reports default to C:\Temp\KB5130098-Reports on the calling computer.
 See README.txt for rollout gates, exit codes and rollback limits.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Local')]
@@ -16,8 +18,7 @@ param(
     [ValidateSet('Detect', 'Apply', 'Rollback')][string]$Mode = 'Detect',
     [Parameter(Mandatory, ParameterSetName = 'RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName = 'RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
-    [Parameter(ParameterSetName = 'RemoteNames')]
-    [Parameter(ParameterSetName = 'RemoteCsv')][ValidateNotNullOrEmpty()][string]$ReportDirectory,
+    [ValidateNotNullOrEmpty()][string]$ReportDirectory,
     [string]$PayloadDirectory,
     [Parameter(ParameterSetName = 'Local')][string]$StateRoot = (Join-Path $env:ProgramData 'Exchange-KB5130098'),
     [Parameter(ParameterSetName = 'Local')][string]$ReceiptPath,
@@ -26,6 +27,8 @@ param(
     [Parameter(ParameterSetName = 'Local')][switch]$MicrosoftSupportApprovedRollback,
     [Parameter(ParameterSetName = 'Local')][switch]$NoAutoElevate,
     [switch]$AsJson,
+    [switch]$PassThru,
+    [switch]$NoCsv,
     [ValidateRange(30, 600)][int]$TimeoutSeconds = 120,
     [ValidateRange(15, 300)][int]$StabilitySeconds = 30
 )
@@ -34,8 +37,16 @@ $before = $null
 $after = $null
 $result = $null
 $moduleLoaded = $false
+$context = $null
+$rows = @()
+$files = $null
+$exportAttempted = $false
+$startedUtc = [DateTime]::UtcNow.ToString('o')
 $remote = $PSCmdlet.ParameterSetName -ne 'Local'
 try {
+    Set-Variable -Name report -Scope Global -Value @() -ErrorAction Stop -WhatIf:$false -Confirm:$false
+    Set-Variable -Name reportFiles -Scope Global -Value $null -ErrorAction Stop -WhatIf:$false -Confirm:$false
+    if ($AsJson -and $PassThru) { throw 'Choose either -AsJson text or -PassThru objects, not both.' }
     if (-not $PSBoundParameters.ContainsKey('PayloadDirectory')) {
         $PayloadDirectory = Join-Path $PSScriptRoot 'payload'
     }
@@ -47,6 +58,7 @@ try {
             Mode=$Mode; PackageDirectory=$PSScriptRoot; PayloadDirectory=$PayloadDirectory
             RestartSearch=$RestartSearch
             MaintenanceWindowApproved=$MaintenanceWindowApproved; Quiet=$AsJson
+            NoCsv=$NoCsv
             TimeoutSeconds=$TimeoutSeconds; StabilitySeconds=$StabilitySeconds
         }
         if ($PSCmdlet.ParameterSetName -eq 'RemoteCsv') { $fleetParameters.CsvPath=$CsvPath }
@@ -55,17 +67,34 @@ try {
         if ($PSBoundParameters.ContainsKey('WhatIf')) { $fleetParameters.WhatIf=$PSBoundParameters.WhatIf }
         if ($PSBoundParameters.ContainsKey('Confirm')) { $fleetParameters.Confirm=$PSBoundParameters.Confirm }
         $result = Invoke-KBFleet @fleetParameters
+        $rows = @($result.ReportData)
+        $files = $result.ExportFiles
+        Set-Variable -Name report -Scope Global -Value $rows -WhatIf:$false -Confirm:$false
+        Set-Variable -Name reportFiles -Scope Global -Value $files -WhatIf:$false -Confirm:$false
         if ($AsJson) { $result | ConvertTo-Json -Depth 12 }
         else {
             Write-Host ("Remote {0}: {1}. Processed {2} of {3} target(s)." -f $Mode,$result.Status,$result.Servers,$result.TargetCount)
             if ($result.Report) { Write-Host "Report: $($result.Report)" }
+            Write-KBReportSummary -Rows $rows -Files $files
+            if ($PassThru) { $rows }
         }
         exit $result.ExitCode
     }
     $elevation = Invoke-KBAutoElevation -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters `
         -NoAutoElevate:$NoAutoElevate -AsJson:$AsJson -InPipeline:($MyInvocation.PipelineLength -gt 1) `
         -PreviewPreference $WhatIfPreference -ConfirmationPreference ([string]$ConfirmPreference)
-    if ($null -ne $elevation) { exit $elevation.ExitCode }
+    if ($null -ne $elevation) {
+        $rows = @($elevation.ReportData)
+        $files = $elevation.ExportFiles
+        Set-Variable -Name report -Scope Global -Value $rows -WhatIf:$false -Confirm:$false
+        Set-Variable -Name reportFiles -Scope Global -Value $files -WhatIf:$false -Confirm:$false
+        Write-KBReportSummary -Rows $rows -Files $files
+        if ($PassThru) { $rows }
+        exit $elevation.ExitCode
+    }
+    $contextParameters = @{ NoWrite=[bool]$WhatIfPreference }
+    if ($PSBoundParameters.ContainsKey('ReportDirectory')) { $contextParameters.ReportDirectory=$ReportDirectory }
+    $context = New-KBReportContext @contextParameters
     $parameters = @{
         Mode = $Mode
         PayloadDirectory = $PayloadDirectory
@@ -79,14 +108,29 @@ try {
     if ($ReceiptPath) { $parameters.ReceiptPath = $ReceiptPath }
     if ($PSBoundParameters.ContainsKey('WhatIf')) { $parameters.WhatIf = $PSBoundParameters.WhatIf }
     if ($PSBoundParameters.ContainsKey('Confirm')) { $parameters.Confirm = $PSBoundParameters.Confirm }
-    if (-not $AsJson) { $before = Invoke-KBLocal -Mode Detect }
+    if ($Mode -ne 'Detect') { $before = Invoke-KBLocal -Mode Detect }
     $result = Invoke-KBLocal @parameters
+    if ($Mode -eq 'Detect') { $before=$result; $after=$result }
+    else { $after=Invoke-KBLocal -Mode Detect }
+    $record = [pscustomobject]@{
+        Target=$env:COMPUTERNAME; Mode=$Mode; UTC=$startedUtc; Status=$result.Status
+        RestartSearch=$RestartSearch.IsPresent; Detection=$before; Current=$after
+        Result=$(if ($Mode -eq 'Detect') { $null } else { $result })
+        RecoveryAttestation=$null; Error=$null; ObservationError=$null
+    }
+    $detailPath = if ($context.NoWrite) { $null } else { $context.JsonPath }
+    $rows = @(ConvertTo-KBReportRows -Records @($record) -RunId $context.RunId -DetailReportPath $detailPath)
+    Set-Variable -Name report -Scope Global -Value $rows -WhatIf:$false -Confirm:$false
+    $exportAttempted = $true
+    $files = Save-KBReportExports -Context $context -Records @($record) -Rows $rows -NoCsv:$NoCsv
+    Set-Variable -Name reportFiles -Scope Global -Value $files -WhatIf:$false -Confirm:$false
     if ($AsJson) {
         $result | ConvertTo-Json -Depth 6
     } else {
-        $after = if ($Mode -eq 'Detect') { $result } else { Invoke-KBLocal -Mode Detect }
         Write-KBConsoleResult -Mode $Mode -Result $result -Before $before -After $after `
             -Preview:$WhatIfPreference -StabilitySeconds $StabilitySeconds
+        Write-KBReportSummary -Rows $rows -Files $files
+        if ($PassThru) { $rows }
     }
     if ($result.Status -eq 'FilesStagedRestartRequired' -or $result.Status -eq 'RolledBackRestartRequired') {
         exit 10
@@ -95,10 +139,14 @@ try {
     exit 0
 } catch {
     $failure = $_
+    $failureRows = $failure.Exception.Data['KB5130098ReportRows']
+    $failureFiles = $failure.Exception.Data['KB5130098ReportFiles']
+    if ($null -ne $failureRows) { $rows=@($failureRows) }
+    if ($null -ne $failureFiles) { $files=$failureFiles }
     if ($remote) {
-        $report = $failure.Exception.Data['KB5130098FleetReport']
-        if ($report) { [Console]::Error.WriteLine("Remote rollout stopped. Report (including unvisited targets): $report") }
-    } elseif (-not $AsJson -and $moduleLoaded) {
+        $reportPath = $failure.Exception.Data['KB5130098FleetReport']
+        if ($reportPath) { [Console]::Error.WriteLine("Remote rollout stopped. Report (including unvisited targets): $reportPath") }
+    } elseif ($moduleLoaded) {
         $observationError = $null
         if ($null -ne $before -and $null -eq $after) {
             try { $after = Invoke-KBLocal -Mode Detect } catch { $observationError = $_.Exception.Message }
@@ -111,8 +159,32 @@ try {
                 CreatedFiles = @($failure.Exception.Data['KB5130098CreatedFiles'])
             }
         }
-        Write-KBConsoleResult -Mode $Mode -Result $result -Before $before -After $after `
-            -ErrorMessage $failure.Exception.Message -ObservationError $observationError -StabilitySeconds $StabilitySeconds
+        $record = [pscustomobject]@{
+            Target=$env:COMPUTERNAME; Mode=$Mode; UTC=$startedUtc; Status='FailedStop'
+            RestartSearch=$RestartSearch.IsPresent; Detection=$before; Current=$after; Result=$result
+            RecoveryAttestation=$null; Error=$failure.Exception.Message; ObservationError=$observationError
+        }
+        $runId = if ($null -ne $context) { $context.RunId } else { [guid]::NewGuid().ToString('N') }
+        $detailPath = if ($null -ne $context -and -not $context.NoWrite) { $context.JsonPath } else { $null }
+        $rows = @(ConvertTo-KBReportRows -Records @($record) -RunId $runId -DetailReportPath $detailPath)
+        if ($null -ne $context -and -not $exportAttempted) {
+            try {
+                $files = Save-KBReportExports -Context $context -Records @($record) -Rows $rows -NoCsv:$NoCsv
+            } catch {
+                [Console]::Error.WriteLine("Report export also failed: $($_.Exception.Message)")
+                $files = $_.Exception.Data['KB5130098ReportFiles']
+            }
+        }
+        if (-not $AsJson) {
+            Write-KBConsoleResult -Mode $Mode -Result $result -Before $before -After $after `
+                -ErrorMessage $failure.Exception.Message -ObservationError $observationError -StabilitySeconds $StabilitySeconds
+        }
+    }
+    Set-Variable -Name report -Scope Global -Value @($rows) -WhatIf:$false -Confirm:$false
+    Set-Variable -Name reportFiles -Scope Global -Value $files -WhatIf:$false -Confirm:$false
+    if (-not $AsJson -and $moduleLoaded) {
+        Write-KBReportSummary -Rows @($rows) -Files $files
+        if ($PassThru) { $rows }
     }
     [Console]::Error.WriteLine($failure.Exception.Message)
     exit 1

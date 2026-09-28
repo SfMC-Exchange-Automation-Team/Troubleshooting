@@ -81,6 +81,9 @@ foreach ($name in @('KB5130098.psd1', 'KB5130098.psm1', 'Invoke-KB5130098.ps1', 
 $examples = Join-Path $package 'examples'
 $null = New-Item -Path $examples -ItemType Directory
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\servers.csv') -Destination (Join-Path $examples 'servers.csv')
+$docs = Join-Path $package 'docs'
+$null = New-Item -Path $docs -ItemType Directory
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\Reporting-and-Splunk.md') -Destination (Join-Path $docs 'Reporting-and-Splunk.md')
 foreach ($rule in $spec.Rules) {
     Copy-Item -LiteralPath (Join-Path $RuleSourceDirectory $rule.Name) -Destination (Join-Path $payload $rule.Name)
 }

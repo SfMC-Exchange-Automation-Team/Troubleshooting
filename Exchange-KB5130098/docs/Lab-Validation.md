@@ -1,7 +1,7 @@
 # KB5130098: validation and operational lessons
 
 - **Observed:** September 25, 2026
-- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, display refinement and reporting defaults; not a customer rollout
+- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory and structured reporting; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -93,7 +93,7 @@ Green indicates presence only, not verified remediation or workload recovery.
 
 ## 1.1.2 report-directory default
 
-The suite passes **149 tests**, including minimal native direct, CSV and legacy commands that
+The 1.1.2 suite passed **149 tests**, including minimal native direct, CSV and legacy commands that
 omit ReportDirectory, along with explicit override and empty-input checks.
 Module tests verify the one shared default, unique per-run reports, no report
 creation during WhatIf, and failure before any target connection when the report
@@ -109,6 +109,41 @@ on the caller and returned the expected existing-rules review result. No
 parameter prompt occurred; existing operational confirmation behavior was not
 changed. Independent fingerprints confirmed unchanged Exchange files, ACLs,
 service states/PIDs and NodeRunner identities on caller and target.
+
+## 1.2.0 report objects and exports
+
+The suite passes **175 tests**. Reporting coverage verifies that session-level
+`$report` contains typed rows rather than formatted strings, `$reportFiles` names
+the files, and terminal output remains usable. Native cases exercise explicit
+`-PassThru`, machine JSON, stale-result clearing, errors, preview/no-file behavior,
+and `-NoCsv`.
+
+CSV tests round-trip commas, quotes, multiline errors and Korean text. Formula-like
+spreadsheet strings are neutralized only in CSV, while objects and JSON preserve
+the original value. Detailed JSON keeps nested data; finalized UTF-8 JSONL has
+one complete object per physical line, a run ID, UTC timestamp, scalar fields
+and typed booleans. Final JSONL is not rewritten as a fleet checkpoint.
+
+Tests preserve failed and unvisited targets, prevent missing observations from
+looking successful, and surface export failures while retaining available rows.
+Elevation tests use the real native child bootstrap and a private reserved-file
+handoff to return report data, validate the child's exit code, enforce ACLs and
+cleanup, and reject missing/mismatched handoffs. Actual UAC consent is not clicked
+or bypassed by these tests.
+
+The Splunk guidance was checked against published configuration specifications.
+Neither a customer Splunk connection nor live Splunk ingestion was performed;
+field extraction, timestamp mapping, duplicate handling and customer index policy
+must still be validated by that environment's Splunk administrator.
+
+Read-only live checks subsequently exercised local human output, one remote
+target, a two-target CSV with machine JSON, NoCsv, and a preview in the same
+PowerShell session. The report variable retained typed rows in every case;
+terminal summaries/paths were present, CSV identities matched the objects,
+detailed JSON parsed, and JSONL contained exactly one UTF-8 object per row.
+NoCsv omitted only CSV; the preview exported no files. Installed Exchange file,
+ACL, service/PID and NodeRunner fingerprints stayed unchanged across caller
+and targets. No Apply or service restart was performed for the reporting update.
 
 ## Why the first workload observation was not enough
 

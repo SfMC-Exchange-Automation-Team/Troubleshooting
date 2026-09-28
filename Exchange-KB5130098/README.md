@@ -1,6 +1,6 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.1.2
+- **Package:** Exchange-KB5130098 1.2.0
 - **Audience:** Exchange Server administrators and change owners
 - **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
 - **Reading time:** About 12 minutes
@@ -8,12 +8,12 @@
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.1.2-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.2.0-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
 
-> **New in 1.1.2:** Remote reports default to `C:\Temp\KB5130098-Reports` on the computer running the script. You can run `.\Invoke-KB5130098.ps1 -ComputerName EX02` without a report-directory prompt. `-ReportDirectory` remains an optional override for direct, CSV and compatibility entry points. Detect still shows a single Status column with green Present values; Apply and restart remain explicit.
+> **New in 1.2.0:** The script retains structured rows in **`$report`**, prints a terminal summary, and exports **CSV, detailed JSON and final JSON Lines by default**. `$reportFiles` holds their paths. Reports use `C:\Temp\KB5130098-Reports` on the caller, with `-ReportDirectory` as an override. `-NoCsv` omits CSV only; previews write no persistent reports. [Reporting and Splunk guidance](docs/Reporting-and-Splunk.md) explains the formats and ingestion boundaries.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
@@ -52,6 +52,17 @@ The safe sequence is:
 
 Do not skip the workload gate. A successful service restart is not proof that mail delivery, indexing, or Outlook has recovered.
 
+### Read the result without opening a file
+
+```powershell
+.\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
+$report
+$report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule
+$reportFiles
+```
+
+`$report` contains actual PowerShell objects, not JSON text or formatting records. They remain at session scope after a normal script invocation, including after a successful UAC result handoff. Use `-PassThru` for explicit assignment such as `$report = .\Invoke-KB5130098.ps1 -PassThru`. An unrelated external `powershell.exe` process cannot set variables in your original shell; read its exports or capture its JSON instead.
+
 | The kit does | The kit does not |
 |---|---|
 | Check exact Exchange/DLL identities and original absence of both rules | Diagnose every deadlock or establish the affected-user scope |
@@ -79,7 +90,7 @@ The actual Exchange install path is discovered from the registry. The destinatio
 <ExchangeInstallPath>\Bin\Search\Ceres\Native
 ```
 
-Use **64-bit Windows PowerShell 5.1**. For a local interactive human run, the CLI can display the normal Windows UAC prompt and reopen itself in the correct elevated host. The new window shows the result and waits for Enter before closing; the original process then receives its exit code. Declining UAC produces an explicit error, not a successful no-op.
+Use **64-bit Windows PowerShell 5.1**. For a local interactive human run, the CLI can display the normal Windows UAC prompt and reopen itself in the correct elevated host. The new window shows the result and waits for Enter before closing; the original session then receives its exit code, `$report` and `$reportFiles` through a private data-only handoff that is deleted afterward. Declining UAC produces an explicit error, not a successful no-op.
 
 For **local operations**, `-AsJson`, pipelines, remoting and unattended runs must already be elevated. `-NoAutoElevate` disables the local relaunch, not the privilege checks. The builder retains its existing elevation requirement. Remote orchestration uses your existing Kerberos identity and requires an administrative 64-bit session on each target; it does not invoke local UAC to change that identity or enable remoting. No execution-policy bypass or automatic maintenance approval is added.
 Explicit switches and inherited WhatIf/confirmation preferences are both preserved across the relaunch; a session-level preview must remain a preview.
@@ -100,7 +111,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.1.2 source ZIP](downloads/Exchange-KB5130098-1.1.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.2-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.2.0 source ZIP](downloads/Exchange-KB5130098-1.2.0-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.0-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
@@ -153,7 +164,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.1.2-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.2.0-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -223,6 +234,8 @@ Only `-Mode Apply` displays `Before` and `Current`, as observations from this in
 
 Every **Present** file-state value is green in the console. This is a visual indication of existence only: existing-rule stop warnings, payload checks, and workload-recovery requirements are unchanged. Plain-text capture and `-AsJson` do not depend on console color.
 
+After the status/action display, a summary of `$report` and the export paths is printed. Local Detect now writes report files outside the Exchange installation; it still never modifies Exchange files or services. `-WhatIf` keeps the report objects in memory but does not create persistent exports.
+
 For automation or JSON capture, use an **already elevated** shell and opt in explicitly:
 
 ```powershell
@@ -250,6 +263,7 @@ From the domain management workstation:
 ```
 
 No report path is required. The default is **`C:\Temp\KB5130098-Reports` on the calling computer**, not on the remote target. Each run receives a unique subfolder containing its `rollout.json`; the exact path is printed when the run completes or is stopped by a target error.
+The same run also finalizes `results.csv` and `results.jsonl`. The detailed JSON is a checkpoint; the CSV and JSON Lines are final per-target summaries, including `NotRun` targets after a graceful failure.
 
 For multiple targets with an optional custom report location:
 
@@ -372,6 +386,33 @@ This is an abbreviated JSON example, not the complete output. The actual result 
 **The words `WorkloadValidationRequired` are deliberate. The deployment is not a recovery sign-off.**
 
 ## 7. Save the receipt and check the workload
+
+### Report formats
+
+JSON keeps named fields, booleans, arrays and nested detail for automation. CSV
+is a flat, spreadsheet-friendly summary. The report variable lets you work with
+the same typed results without parsing either format.
+
+```powershell
+$report | Where-Object Status -eq 'FailedStop'
+
+# Explicit pipeline capture:
+$report = .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com -PassThru
+
+# Omit CSV when only JSON files are wanted:
+.\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com -NoCsv
+```
+
+`-AsJson` keeps the machine-output mode; do not combine it with `-PassThru`.
+For Splunk file monitoring, use **`results.jsonl`**: one complete JSON object per
+physical line, with a run ID, UTC timestamp and target computer. It is finalized
+once, not rewritten for every checkpoint. Do not monitor `rollout.json` as a
+stream of new final events or ingest both CSV and JSONL as duplicate events.
+See [the reporting/Splunk guide](docs/Reporting-and-Splunk.md) for configuration
+examples, field extraction, timestamp handling and validation. No customer
+Splunk connection or configuration changes are performed by the script.
+
+### Operational receipts are separate
 
 Each modifying operation stores:
 
@@ -558,7 +599,17 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
 
-## What changed in 1.1.2
+## What changed in 1.2.0
+
+- Session-level `$report` contains typed per-target summary rows; `$reportFiles` holds the export locations.
+- Default terminal output includes the report summary. `-PassThru` enables explicit object pipelines; `-AsJson` remains separate.
+- Local and remote runs export CSV and detailed JSON plus finalized one-event-per-line JSON for Splunk-style file ingestion.
+- `-NoCsv` disables only CSV. Preview/declined remote plans remain in-memory with no persistent exports.
+- UAC returns report data to the original session through a private, locked, data-only handoff; no credentials or executable content are passed in that result file.
+- Failed/stopped/unvisited targets, export errors and observed versus verified recovery remain distinguishable.
+- Splunk configuration is guidance only and must be validated by the customer's administrator.
+
+### Previous 1.1.2 changes
 
 - Remote reports use `C:\Temp\KB5130098-Reports` by default on the caller, with a unique subfolder per run.
 - The primary direct/CSV entry points and the compatibility wrapper delegate omitted report paths to one shared default.

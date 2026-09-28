@@ -18,6 +18,11 @@ Describe 'Consent-based local elevation boundaries' {
             Mock Test-Path { $true }
             Mock Get-Location { [pscustomobject]@{ Provider = [pscustomobject]@{ Name = 'FileSystem' }; ProviderPath = 'C:\Staging with spaces' } }
             Mock Start-Process { [pscustomobject]@{ ExitCode = 0 } }
+            Mock New-KBReportRelay { [pscustomobject]@{ Path='C:\Fixture\report.clixml' } }
+            Mock Read-KBReportRelay {
+                [pscustomobject]@{ ReportData=@([pscustomobject]@{ComputerName='Fixture';Status='Fixture'}); ExportFiles=$null }
+            }
+            Mock Remove-KBReportRelay {}
         }
 
         It 'does not relaunch an already elevated 64-bit Windows PowerShell process' {
@@ -86,6 +91,7 @@ Describe 'Consent-based local elevation boundaries' {
             Mock Start-Process { throw (New-Object ComponentModel.Win32Exception 1223) }
             { Invoke-KBAutoElevation -ScriptPath 'C:\Kit\Invoke-KB5130098.ps1' -BoundParameters @{} } | Should -Throw '*declined or could not be started*'
             Should -Invoke Start-Process -Times 1 -Exactly
+            Should -Invoke Remove-KBReportRelay -Times 1 -Exactly
         }
 
         It 'refuses to infer success from an unknown child exit code' {
@@ -143,6 +149,8 @@ param(
     StabilitySeconds = $StabilitySeconds
     WorkingDirectory = (Get-Location).ProviderPath
 } | ConvertTo-Json
+$global:report = @([pscustomobject]@{ ComputerName='Fixture'; Status='Fixture'; Flag=$WhatIfPreference })
+$global:reportFiles = [pscustomobject]@{ Json='C:\Fixture\rollout.json'; Csv='C:\Fixture\results.csv'; JsonLines='C:\Fixture\results.jsonl' }
 exit $TestExit
 '@ | Set-Content -LiteralPath $script:child -Encoding ASCII
     }
@@ -180,11 +188,12 @@ exit $TestExit
             $bound.Remove('WhatIf')
             $bound.Remove('Confirm')
         }
+        $relay = & (Get-Module KB5130098) { New-KBReportRelay }
         $encoded = & (Get-Module KB5130098) {
-            param($Path, $Bound, $Working)
+            param($Path, $Bound, $Working, $RelayPath)
             New-KBElevationCommand -ScriptPath $Path -BoundParameters $Bound -WorkingDirectory $Working `
-                -WaitForUser:$false -PreviewPreference $true -ConfirmationPreference None
-        } $script:child $bound $script:fixtureRoot
+                -WaitForUser:$false -PreviewPreference $true -ConfirmationPreference None -ReportRelayPath $RelayPath
+        } $script:child $bound $script:fixtureRoot $relay.Path
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $start.Arguments = "-NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -219,6 +228,17 @@ exit $TestExit
             $result.TimeoutSeconds | Should -Be 177
             $result.StabilitySeconds | Should -Be 43
             Test-Path -LiteralPath $marker | Should -BeFalse
-        } finally { $process.Dispose() }
+            $handoff = & (Get-Module KB5130098) {
+                param($Relay, $Code)
+                Read-KBReportRelay -Relay $Relay -ExpectedExitCode $Code
+            } $relay $Code
+            $handoff.ReportData[0].ComputerName | Should -Be 'Fixture'
+            $handoff.ReportData[0].Flag | Should -BeTrue
+            $handoff.ExportFiles.Csv | Should -Be 'C:\Fixture\results.csv'
+        } finally {
+            $process.Dispose()
+            & (Get-Module KB5130098) { param($Relay) Remove-KBReportRelay $Relay } $relay
+        }
+        Test-Path -LiteralPath $relay.Directory | Should -BeFalse
     }
 }

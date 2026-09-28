@@ -4,7 +4,9 @@ BeforeAll {
     $script:fixtureRoot = Join-Path $TestDrive 'Native entry point fixture'
     $null = New-Item -Path $script:fixtureRoot -ItemType Directory
     Copy-Item -LiteralPath (Join-Path $script:packageRoot 'Invoke-KB5130098.ps1') -Destination $script:fixtureRoot
+    Copy-Item -LiteralPath (Join-Path $script:packageRoot 'KB5130098.psd1') -Destination $script:fixtureRoot
     $fixtureModule = @'
+$script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'KB5130098.psd1')
 $script:fixtureRules = @()
 $script:elevationCalls = 0
 $script:localCalls = 0
@@ -17,13 +19,28 @@ function Invoke-KBAutoElevation {
     $script:elevationPreview = $PreviewPreference
     $script:elevationConfirm = $ConfirmationPreference
     $script:elevationCalls++
+    if ($env:KB5130098_TEST_RELAY -eq '1') {
+        [pscustomobject]@{
+            ExitCode=20
+            ReportData=@([pscustomobject]@{ ComputerName='ELEVATED-FIXTURE'; Mode='Detect'; Status='RuleFilesPresentStop'; ActionTaken='Fixture handoff'; LocalCalls=$script:localCalls })
+            ExportFiles=$null
+        }
+    }
+}
+function New-KBReportContext {
+    param([string]$ReportDirectory, [switch]$NoWrite)
+    $root = Join-Path $PSScriptRoot 'fixture-reports'
+    $id = [guid]::NewGuid().ToString('N')
+    $directory = Join-Path $root $id
+    if (-not $NoWrite) { $null = New-Item -Path $directory -ItemType Directory -Force }
+    [pscustomobject]@{ Root=$root; RunId=$id; Directory=$directory; JsonPath=Join-Path $directory 'rollout.json'; NoWrite=$NoWrite.IsPresent }
 }
 function Invoke-KBFleet {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string[]]$ComputerName, [string]$CsvPath, [string]$Mode,
         [string]$PackageDirectory, [string]$PayloadDirectory, [string]$ReportDirectory,
-        [switch]$RestartSearch, [switch]$MaintenanceWindowApproved, [switch]$Quiet,
+        [switch]$RestartSearch, [switch]$MaintenanceWindowApproved, [switch]$Quiet, [switch]$NoCsv,
         [int]$TimeoutSeconds, [int]$StabilitySeconds
     )
     $code = 0
@@ -37,6 +54,8 @@ function Invoke-KBFleet {
         RestartSearch=$RestartSearch.IsPresent; MaintenanceWindowApproved=$MaintenanceWindowApproved.IsPresent
         Quiet=$Quiet.IsPresent; WhatIf=[bool]$WhatIfPreference
         ElevationCalls=$script:elevationCalls; LocalCalls=$script:localCalls
+        ReportData=@($ComputerName | ForEach-Object { [pscustomobject]@{ComputerName=$_; Mode=$Mode; Status=$status; ActionTaken='Fixture only'} })
+        ExportFiles=$null
     }
 }
 function Invoke-KBLocal {
@@ -94,13 +113,18 @@ function Invoke-KBLocal {
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $script:packageRoot 'KB5130098.psm1'), [ref]$tokens, [ref]$errors)
     if ($errors.Count -ne 0) { throw 'Production module does not parse.' }
-    $formatter = $ast.Find({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-KBConsoleResult'
-    }, $false)
-    if ($null -eq $formatter) { throw 'Production console formatter was not found.' }
-    ($fixtureModule + "`r`n" + $formatter.Extent.Text +
-        "`r`nExport-ModuleMember -Function Invoke-KBLocal,Invoke-KBAutoElevation,Write-KBConsoleResult,Invoke-KBFleet") |
+    $supportNames = @('Write-KBConsoleResult','Get-KBReportValue','ConvertTo-KBReportRows',
+        'Write-KBFleetReport','Save-KBReportExports','Write-KBReportSummary')
+    $support = foreach ($name in $supportNames) {
+        $function = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $false)
+        if ($null -eq $function) { throw "Production report helper was not found: $name" }
+        $function.Extent.Text
+    }
+    ($fixtureModule + "`r`n" + ($support -join "`r`n") +
+        "`r`nExport-ModuleMember -Function Invoke-KBLocal,Invoke-KBAutoElevation,Write-KBConsoleResult,Invoke-KBFleet,New-KBReportContext,ConvertTo-KBReportRows,Save-KBReportExports,Write-KBReportSummary") |
         Set-Content -LiteralPath (Join-Path $script:fixtureRoot 'KB5130098.psm1') -Encoding ASCII
 
     function Invoke-NativeFixture {
@@ -318,6 +342,107 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         $result.Error | Should -BeNullOrEmpty
         $result.Output | Should -Match 'What if:'
         Test-Path -LiteralPath $report | Should -BeFalse
+    }
+
+    Describe 'Caller report variable and default exports' {
+        It 'publishes the elevated result into the original session without running the local operation again' {
+            $command = '$env:KB5130098_TEST_RELAY=''1''; & ''.\Invoke-KB5130098.ps1''; $code=$LASTEXITCODE; ''HANDOFF:'' + (@($report) | ConvertTo-Json -Compress); exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+            $result.ExitCode | Should -Be 20
+            $match = [regex]::Match($result.Output, '(?m)^HANDOFF:(.+)$')
+            $match.Success | Should -BeTrue
+            $rows = $match.Groups[1].Value | ConvertFrom-Json
+            $rows[0].ComputerName | Should -Be 'ELEVATED-FIXTURE'
+            $rows[0].Status | Should -Be 'RuleFilesPresentStop'
+            $rows[0].LocalCalls | Should -Be 0
+        }
+
+        It 'retains typed rows and export paths in the invoking PowerShell scope' {
+            $command = '& ''.\Invoke-KB5130098.ps1'' -AsJson | Out-Null; $code=$LASTEXITCODE; [pscustomobject]@{Rows=@($report);Files=$reportFiles;IsString=($report[0] -is [string])} | ConvertTo-Json -Depth 8; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+            $result.ExitCode | Should -Be 0
+            $capture = $result.Output | ConvertFrom-Json
+            $capture.IsString | Should -BeFalse
+            $capture.Rows.Count | Should -Be 1
+            $capture.Rows[0].Status | Should -Be 'EligibleMissingBothRules'
+            $capture.Rows[0].TokenRule | Should -Be 'Missing'
+            Test-Path -LiteralPath $capture.Files.Json | Should -BeTrue
+            Test-Path -LiteralPath $capture.Files.Csv | Should -BeTrue
+            Test-Path -LiteralPath $capture.Files.JsonLines | Should -BeTrue
+            @(Import-Csv -LiteralPath $capture.Files.Csv).Count | Should -Be 1
+        }
+
+        It 'prints the human report summary but does not replace objects with formatting data' {
+            $command = '& ''.\Invoke-KB5130098.ps1''; $code=$LASTEXITCODE; ''CAPTURE:'' + (@($report) | ConvertTo-Json -Compress); exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command) -Human
+            $result.ExitCode | Should -Be 0
+            $result.Output | Should -Match '\$report contains 1 structured server result'
+            $result.Output | Should -Match 'CSV:'
+            $match = [regex]::Match($result.Output, '(?m)^CAPTURE:(.+)$')
+            $match.Success | Should -BeTrue
+            $captured = $match.Groups[1].Value | ConvertFrom-Json
+            $captured[0].ComputerName | Should -Not -BeNullOrEmpty
+            $captured[0].Status | Should -Be 'EligibleMissingBothRules'
+            $captured[0].ActionTaken | Should -Be 'Detection only; no Exchange changes'
+        }
+
+        It 'supports explicit pipeline capture with PassThru' {
+            $command = '$captured=@(& ''.\Invoke-KB5130098.ps1'' -PassThru 6>$null); $code=$LASTEXITCODE; [pscustomobject]@{Count=$captured.Count;Status=$captured[0].Status;IsFormatting=($captured[0].GetType().FullName -like ''*Internal.Format*'')} | ConvertTo-Json -Compress; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command) -Human
+            $result.ExitCode | Should -Be 0
+            $data = ($result.Output.Trim() -split "`r?`n")[-1] | ConvertFrom-Json
+            $data.Count | Should -Be 1
+            $data.Status | Should -Be 'EligibleMissingBothRules'
+            $data.IsFormatting | Should -BeFalse
+        }
+
+        It 'can omit CSV while retaining structured rows, detailed JSON and JSON Lines' {
+            $command = '& ''.\Invoke-KB5130098.ps1'' -AsJson -NoCsv | Out-Null; $code=$LASTEXITCODE; $reportFiles | ConvertTo-Json; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+            $result.ExitCode | Should -Be 0
+            $files = $result.Output | ConvertFrom-Json
+            $files.Csv | Should -BeNullOrEmpty
+            Test-Path -LiteralPath $files.Json | Should -BeTrue
+            Test-Path -LiteralPath $files.JsonLines | Should -BeTrue
+        }
+
+        It 'retains preview rows in memory without writing persistent reports' {
+            $command = '& ''.\Invoke-KB5130098.ps1'' -Mode Apply -WhatIf -AsJson | Out-Null; $code=$LASTEXITCODE; [pscustomobject]@{Rows=@($report);Files=$reportFiles} | ConvertTo-Json -Depth 6; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command) -Status NoChanges -Human
+            $result.ExitCode | Should -Be 0
+            $capture = $result.Output | ConvertFrom-Json
+            $capture.Rows[0].Status | Should -Be 'NoChanges'
+            $capture.Files.Json | Should -BeNullOrEmpty
+            $capture.Files.Csv | Should -BeNullOrEmpty
+            $capture.Files.JsonLines | Should -BeNullOrEmpty
+        }
+
+        It 'replaces stale caller results with the current failure and preserves native exit 1' {
+            $command = '$report=''STALE''; & ''.\Invoke-KB5130098.ps1'' -AsJson | Out-Null; $code=$LASTEXITCODE; @($report) | ConvertTo-Json -Compress; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command) -Status Throw
+            $result.ExitCode | Should -Be 1
+            $result.Error | Should -Match 'Native fixture failure'
+            $rows = $result.Output | ConvertFrom-Json
+            $rows[0].Status | Should -Be 'FailedStop'
+            $rows[0].Error | Should -Match 'Native fixture failure'
+            $rows[0].TokenRule | Should -Be 'Not observed'
+        }
+
+        It 'sets report for remote results without contaminating AsJson output' {
+            $command = '& ''.\Invoke-KB5130098.ps1'' -ComputerName EX01,EX02 -AsJson | Out-Null; $code=$LASTEXITCODE; @($report) | ConvertTo-Json -Compress; exit $code'
+            $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+            $result.ExitCode | Should -Be 0
+            $rows = $result.Output | ConvertFrom-Json
+            $rows.Count | Should -Be 2
+            $rows.ComputerName | Should -Be @('EX01','EX02')
+        }
+
+        It 'refuses ambiguous JSON text and object output before executing the operation' {
+            $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1" -AsJson -PassThru'
+            $result.ExitCode | Should -Be 1
+            $result.Output | Should -BeNullOrEmpty
+            $result.Error | Should -Match 'Choose either'
+        }
     }
 
     It 'does not discard an explicitly supplied invalid fleet package path' {
