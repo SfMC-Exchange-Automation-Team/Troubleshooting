@@ -1,5 +1,5 @@
 @{
-    PackageVersion = '1.0.1'
+    PackageVersion = '1.2.1'
     Article = 'https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098'
     GuidanceReviewed = '2026-09-25'
     ExchangeVersion = '15.2.2562.49'

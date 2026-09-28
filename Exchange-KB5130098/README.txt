@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.0.1
+Exchange KB5130098 workaround automation | 1.2.1
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -10,6 +10,21 @@ process and pilot on one affected server before wider use. Version 1.0.0 was
 piloted on one lab server; that initial run did not prove workload recovery.
 Version 1.0.1 corrects native invocation paths and deployment-agent exit handling;
 it does not change applicability, payload, or the automated restart scope.
+Version 1.0.2 adds interactive UAC relaunch and human-readable before/action/current
+summaries. Machine callers must now specify -AsJson explicitly.
+Version 1.1.0 integrates serial remote orchestration and strict CSV targeting into
+the primary entry point. RestartSearch is explicit for both local and remote
+primary Apply; the old fleet wrapper retains its historical Apply/restart behavior.
+Version 1.1.1 shows a single STATUS column unless Mode is Apply, and colors
+Present file-state values green without changing eligibility or recovery gates.
+Version 1.1.2 makes ReportDirectory optional everywhere. Omitted remote report
+paths use C:\Temp\KB5130098-Reports on the calling computer.
+Version 1.2.0 retains structured session-level $report objects and $reportFiles,
+prints their summary, and exports CSV, detailed JSON and final JSON Lines by
+default for local and remote runs. Previews produce no persistent report exports.
+Version 1.2.1 colors a pinned-identity mismatch red, a confirmed match green,
+and Missing rule files green only for a matching identity; Missing on an
+ineligible installation is yellow, while unobserved state stays neutral.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -58,10 +73,12 @@ CONTENTS
 
 KB5130098.psd1                Exact build/file identities from the KB
 KB5130098.psm1                Local implementation and guarded service restart
-Invoke-KB5130098.ps1          Detect / Apply / support-approved Rollback CLI
-Invoke-KB5130098Fleet.ps1     Explicit-target, serial WinRM inventory/rollout
+Invoke-KB5130098.ps1          Local / explicit-target / CSV inventory and rollout
+Invoke-KB5130098Fleet.ps1     Compatibility wrapper (legacy Apply includes restart)
 Build-KB5130098Package.ps1    Workstation-only media extraction and ZIP builder
 tests\                       Isolated development tests (source kit only)
+examples\servers.csv          Fictional target-list template; edit before use
+docs\Reporting-and-Splunk.md   Report variables, CSV/JSON formats and Splunk examples
 
 The source kit contains NO Microsoft binaries. The builder produces a small
 deployment ZIP containing only the automation and two verified BIN files, not
@@ -72,8 +89,27 @@ outside your organization. Checksums detect changes; they are not code signing.
 
 PREREQUISITES
 
-64-bit Windows PowerShell 5.1, elevated as local administrator (SYSTEM is
-supported for local staging through an approved deployment agent). Use C: for
+64-bit Windows PowerShell 5.1. The local CLI can request normal Windows UAC
+elevation for an interactive human run and reopen itself in the correct host.
+The elevated window displays the results and waits for Enter before closing;
+the original process then receives its exit code and report data. A private,
+locked, data-only handoff is removed after the parent receives it. No credential
+or executable content is written to that result handoff. It never changes execution
+policy or supplies approval for an Exchange operation. Parameters, including
+explicit false switches and WhatIf, are preserved. Declined elevation is an error,
+not a successful no-op.
+Inherited WhatIf and confirmation preferences are preserved too; elevation must
+not turn a session-level preview into a modifying operation.
+
+For local operations, JSON capture (-AsJson), pipelines, remoting and unattended
+runs must already be elevated. -NoAutoElevate suppresses local relaunch explicitly;
+it does not bypass the administrator requirement. Remote orchestration instead
+uses existing Kerberos rights and administrative 64-bit sessions on each target,
+without local UAC or changed credentials. The builder retains its elevation
+requirement. SYSTEM remains supported for local
+staging through an approved deployment agent. A package intended for interactive
+UAC launch must be readable from the initial unelevated account; keep write access
+restricted to administrators and follow your code-signing policy. Use C: for
 build/staging/reports. The script discovers the actual Exchange install path
 from the local registry; it does not assume the default path. Write paths
 through junctions/reparse points or F: are intentionally refused. Detection
@@ -112,25 +148,116 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.0.1-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.2.1-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
+For repeated manual use, keep a stable working folder such as
+C:\Scripts\Exchange-KB5130098. Update verified contents in place while no run is
+active, preserving user edits and reports. Versions belong in metadata/archive
+names, not a new working directory for every release.
 
 2. INVENTORY BEFORE CHANGES
 
 Copy/extract the deployment ZIP to an affected server's staging location.
-In elevated Windows PowerShell, in the extracted package:
+In Windows PowerShell, in the extracted package (approve UAC if prompted):
 
   powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
 
+Human output is the default: STATUS, ACTION TAKEN, and NEXT STEP. A no-argument
+run is Detect only: it never copies rules or restarts services and shows each
+observed value once. Only -Mode Apply uses BEFORE / CURRENT comparisons, including
+an explicitly labelled Apply -WhatIf preview. Those observations refer to this
+invocation, not earlier history. Rollback shows resulting STATUS and describes
+removals in ACTION TAKEN. Errors retain observed state and partial-operation receipts.
+Present values are green in human output. Green means a file exists, not that
+its contents are verified or the workload has recovered; stop warnings remain.
+Existing -AsJson status/exit meanings and operational checks remain; the remote
+JSON envelope additionally includes ReportData rows and ExportFiles paths.
+
+RESULT OBJECTS AND DEFAULT EXPORTS
+
+After a normal script call in the same PowerShell session:
+
+  $report
+  $report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule
+  $report | Where-Object Status -eq 'FailedStop'
+  $reportFiles
+
+$report contains one flat, typed object per target, not a JSON string or formatted
+screen output. It is refreshed at session scope for each invocation. For explicit
+assignment or use inside a function, use:
+
+  $report = .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com -PassThru
+
+-AsJson and -PassThru are alternatives. An external powershell.exe process cannot
+set a variable in an unrelated parent shell; read the exports or capture its JSON.
+The script's own UAC relaunch returns the data to the original invoking session.
+
+Local and remote runs save these files in a unique caller-side report directory:
+  rollout.json    Full nested detail; rewritten checkpoints during remote rollout.
+  results.csv     Default one-row-per-target summary, suitable for spreadsheets.
+  results.jsonl   Final one-object-per-line JSON events with RunId/TimestampUtc.
+
+CSV is convenient for Excel. JSON preserves structure and types for automation.
+For Splunk monitoring use the finalized results.jsonl, not the rewritten checkpoint
+or both formats together. Review docs\Reporting-and-Splunk.md with the customer's
+Splunk administrator; the script does not send to or configure Splunk.
+
+-NoCsv omits CSV only. -ReportDirectory optionally overrides the shared
+C:\Temp\KB5130098-Reports default for local or remote runs. -WhatIf retains objects
+in memory but writes no persistent report exports. No report-directory prompt
+is required. Write failures are explicit errors, not silent fallbacks.
+
+Final JSONL is written once per run, not updated for every checkpoint. A gracefully
+stopped fleet retains FailedStop/NotRun rows; a hard termination may leave only
+the detailed checkpoint. CSV neutralizes formula-leading text, while JSON and
+objects retain the original values. Review hostnames/paths/errors before sharing.
+
+For the original JSON interface, start in an elevated shell and opt in explicitly:
+
+  powershell.exe -NoProfile -NonInteractive -File .\Invoke-KB5130098.ps1 -Mode Detect -AsJson
+
 Or from the management workstation, inventory an explicit list:
 
-  .\Invoke-KB5130098Fleet.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
+  .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
 
-Fleet Detect writes only staged automation and reports, not the Exchange
+ReportDirectory is optional. The shared default is C:\Temp\KB5130098-Reports on
+the calling computer, with a unique subfolder per run. JSON, CSV and JSON Lines
+paths are printed and retained in $reportFiles. Custom paths remain supported:
+
+  .\Invoke-KB5130098.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
+
+Remote Detect writes only staged automation and reports, not the Exchange
 installation, rule files or service state. Errors stop the run. Nonapplicable
 builds/existing rules are reported and never silently treated as remediated.
+An invalid or unwritable report location stops before target connections; no
+silent fallback or lost reporting. Choose another approved ReportDirectory if
+the default is not usable. Operational confirmations and approvals are unchanged.
+
+CSV TARGETS FOR LARGER ENVIRONMENTS
+
+Use a reviewed comma-separated file with a ComputerName header, for example:
+
+  ComputerName,Site
+  EX01.contoso.com,SiteA
+  EX02.contoso.com,SiteB
+
+  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -Confirm:$false
+
+ComputerName and CsvPath are mutually exclusive. ReportDirectory uses the same
+optional default for CSV input. All records are validated before any connection or report:
+blank target cells, duplicate names (ignoring case), invalid DNS/NetBIOS names,
+IPs/wildcards/URLs, duplicate/empty headers, malformed quotes and inconsistent
+field counts stop the run. Input order is preserved; whitespace around names is
+trimmed. Blank physical lines are ignored. UTF-8 CSV, standard quoting and
+multiline metadata are supported. Only ComputerName selects a target: extra
+columns, including Enabled, do not filter servers or grant approval.
+
+The bundled examples\servers.csv uses fictional names and must be edited.
+Parsing is tested with 2,500 targets; this is not a live fleet-scale claim.
+Use -AsJson for machine-readable inventory or file-only staging, with the usual
+-Confirm:$false and native exit-code forwarding where appropriate.
 
 EligibleMissingBothRules means exactly:
   ExSetup.exe numeric file version: 15.2.2562.49 (15.02.2562.049 in the KB)
@@ -186,7 +313,11 @@ workload under its own maintenance/runbook gates, then repeat the postchecks.
 
 After the first server is confirmed recovered, an interactive serial fleet run:
 
-  .\Invoke-KB5130098Fleet.ps1 -Mode Apply -ComputerName EX02.contoso.com,EX03.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports' -MaintenanceWindowApproved
+  .\Invoke-KB5130098.ps1 -Mode Apply -ComputerName EX02.contoso.com,EX03.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
+
+Or use the approved CSV roster:
+
+  .\Invoke-KB5130098.ps1 -Mode Apply -CsvPath 'C:\Temp\approved-servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
 
 The fleet runner processes exactly one server at a time, including its restart.
 It stops for a manual workload-recovery attestation after EVERY server. It
@@ -195,6 +326,17 @@ exact name. A failed or unavailable check means stop, not attestation.
 There is no unattended/parallel restart switch, even with -Confirm:$false.
 Fleet -WhatIf lists intent only and makes no remote connection; use Detect for
 actual eligibility checks.
+
+Without -RestartSearch, primary remote Apply stages files only and returns 10.
+It does not request recovery attestation or imply recovery. Restarted remote
+Apply requires a local interactive console and refuses -AsJson or unattended
+operation before the first connection; read rollout.json for structured results.
+A JSON WhatIf plan is allowed because it does not connect or restart anything.
+Any failure stops subsequent targets; unvisited roster entries remain NotRun.
+
+Invoke-KB5130098Fleet.ps1 is now only a compatibility wrapper. Its Apply still
+includes a restart, preserving the legacy maintenance/recovery gates. New callers
+should use the primary entry point. Rollback remains local and receipt-bound.
 
 Required recovery evidence:
   - In OWA, use a mailbox whose ACTIVE database is on the changed server.
@@ -212,11 +354,11 @@ Distribute the generated deployment ZIP, not the SQL package. Run elevated
 64-bit Windows PowerShell on individually approved, inventoried targets.
 The unattended staging command below ADDS FILES but NEVER restarts services:
 
-  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false; exit $LASTEXITCODE"
+  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
 
 Use that command line in your deployment-agent configuration. When invoking
 from an existing PowerShell session, call the script directly with
--Mode Apply -Confirm:$false instead. Windows PowerShell 5.1 -File cannot pass
+-Mode Apply -Confirm:$false -AsJson instead. Windows PowerShell 5.1 -File cannot pass
 an explicit false value to a switch, which is why the agent example uses -Command.
 The final exit forwards the script's custom code to the deployment agent; without
 it, Windows PowerShell can turn codes 10 and 20 into process exit 1. This example
@@ -226,11 +368,13 @@ does not expand it before the child runs.
 
 Custom exit codes for the LOCAL entry point:
   0  Detection eligible, WhatIf/no change, or requested operation completed.
-     Read JSON Status: 0 does NOT mean workload recovery is proven.
+     Read the human action/current-state summary or -AsJson Status:
+     0 does NOT mean workload recovery is proven.
   1  Error/verification failure. Stop and retain logs; do not blindly retry.
   10 Two files staged/removed; Search restart is still required.
      This is NOT a request to reboot Windows. Map to a custom non-reboot status.
   20 NotApplicableStop or RuleFilesPresentStop; review before further action.
+     For remote Detect, at least one target has a stopped eligibility result.
 
 Detection exit 0 means ELIGIBLE/MISSING, not compliance/remediated. Do not use
 the Detect command as a ConfigMgr "installed" detection rule. Author deployment
@@ -249,8 +393,8 @@ LOGS AND FAILURE HANDLING
 
 Each modifying operation creates a protected, unique receipt.json and
 events.jsonl under %ProgramData%\Exchange-KB5130098. Only Administrators and
-SYSTEM receive access to that operation directory. The returned JSON identifies
-the exact receipt path. It records original absence, successfully copied/removed
+SYSTEM receive access to that operation directory. The human summary or -AsJson
+result identifies the exact receipt path. It records original absence, successfully copied/removed
 files and lifecycle state. Code-only fleet staging is retained under
 C:\ProgramData\Exchange-KB5130098-Staging\<unique ID>; the report records it.
 Keep remote receipts and local rollout.json as your change evidence.
@@ -290,7 +434,74 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.0.1 CHANGES
+1.2.0 CHANGES
+
+- Keep actual typed per-target results in session-level $report, with paths in
+  $reportFiles, and print a terminal summary. -PassThru supports object pipelines.
+- Export CSV by default alongside detailed JSON and final JSON Lines. -NoCsv
+  disables only CSV; previews remain in-memory with no persistent output files.
+- Return local UAC report data through a private reserved result file, removed
+  after use, without executable content or credentials.
+- Preserve report state for failures/unvisited targets and expose export errors.
+- Include a Splunk ingestion guide; no live customer connection/configuration
+  is attempted and integration must be validated in the customer's environment.
+
+1.2.1 CHANGES
+
+- Color "No - stop" red and a confirmed pinned identity match green.
+- Color Missing rules green only when the pinned identity matches; use yellow
+  for Missing on an explicitly ineligible installation and neutral when unknown.
+- Retain green Present styling. Console colors do not change machine results,
+  status decisions, exit codes, operation scope or recovery gates.
+
+1.1.2 CHANGES (PREVIOUS RELEASE)
+
+- Default remote reports to C:\Temp\KB5130098-Reports on the calling computer.
+- Primary direct/CSV and legacy entry points no longer prompt for an omitted
+  ReportDirectory. Valid explicitly supplied paths remain unchanged.
+- Unique per-run report folders, existing path protections, and explicit write
+  errors are retained. No target selection or operation approval is inferred.
+- Regression tests run minimal native commands without a report argument and
+  exercise default/custom report output, CSV, legacy WhatIf and write failures.
+
+1.1.1 CHANGES (PREVIOUS RELEASE)
+
+- Single STATUS column for Detect/default and other non-Apply operations.
+- BEFORE / CURRENT only for Apply, including previews labelled as no changes.
+- Present file-state values use green console text locally and remotely.
+- No change to machine JSON, reports, exit codes or modifying operations.
+
+1.1.0 CHANGES (PREVIOUS RELEASE)
+
+- Primary CLI accepts either -ComputerName or -CsvPath with -ReportDirectory.
+- The full input roster is validated before connections; ordering is preserved.
+- Remote execution shares one module orchestrator and the same local engine.
+- Remote Apply does not restart unless -RestartSearch is explicit; restarted
+  rollout remains serial and requires interactive workload attestation.
+- Existing fleet entry point is a thin wrapper preserving legacy Apply/restart.
+- Reports include original/current state and NotRun records after an early stop.
+- The deployment ZIP includes examples\servers.csv; no credentials or target
+  discovery are implied by importing a file.
+
+1.0.2 CHANGES (PREVIOUS RELEASE)
+
+- Human BEFORE/CURRENT, ACTION TAKEN and NEXT STEP output is now the local CLI
+  default. No-argument execution remains Detect only, never an implicit Apply.
+- -AsJson preserves the machine result shape and exit codes. Update automation
+  explicitly; start it already elevated so it never depends on a UAC prompt.
+- Local interactive human runs can relaunch through standard Windows UAC into
+  64-bit Windows PowerShell 5.1. The child shows the result and waits for Enter;
+  the parent waits and returns the child's exact exit code. JSON/pipeline,
+  remoting, noninteractive and -NoAutoElevate invocations never prompt for UAC.
+- Arguments are serialized as data, including explicit false switches, quotes,
+  trailing separators and the working directory. No execution-policy changes,
+  credential files, extra Exchange approvals or recursive elevation are added.
+- Failure summaries show observed partial file state and the operation receipt
+  when available. No automatic rollback, overwrite or retry is introduced.
+- UAC protocol tests use mocked launch/context boundaries and a real native
+  child fixture; they do not click a consent prompt or execute Exchange Apply.
+
+1.0.1 CHANGES (PREVIOUS RELEASE)
 
 - Resolve omitted payload/package defaults inside the script body so native
   powershell.exe -File works; explicitly supplied paths remain unchanged.
