@@ -1,6 +1,6 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.2.0
+- **Package:** Exchange-KB5130098 1.2.1
 - **Audience:** Exchange Server administrators and change owners
 - **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
 - **Reading time:** About 12 minutes
@@ -8,12 +8,14 @@
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.2.0-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.2.1-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
 
 > **New in 1.2.0:** The script retains structured rows in **`$report`**, prints a terminal summary, and exports **CSV, detailed JSON and final JSON Lines by default**. `$reportFiles` holds their paths. Reports use `C:\Temp\KB5130098-Reports` on the caller, with `-ReportDirectory` as an override. `-NoCsv` omits CSV only; previews write no persistent reports. [Reporting and Splunk guidance](docs/Reporting-and-Splunk.md) explains the formats and ingestion boundaries.
+
+> **New in 1.2.1:** Human output colors the pinned identity result red for `No - stop`, green for `Yes`, and colors `Missing` green only when identity matches. Missing files on an explicitly ineligible installation are yellow; unobserved state stays neutral. The existing green `Present` styling is retained.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
@@ -111,7 +113,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.2.0 source ZIP](downloads/Exchange-KB5130098-1.2.0-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.0-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.2.1 source ZIP](downloads/Exchange-KB5130098-1.2.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.1-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
@@ -164,7 +166,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.2.0-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.2.1-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -598,6 +600,12 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 ```
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
+
+## What changed in 1.2.1
+
+- `No - stop` is red and a confirmed `Yes` is green in the shared human formatter.
+- `Missing` is green only for a matching pinned identity, yellow when the identity fails, and neutral when it could not be observed.
+- Existing `Present` green styling is preserved. Console colors do not alter detection, JSON/report values, exit codes or actions.
 
 ## What changed in 1.2.0
 

@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.2.0
+Exchange KB5130098 workaround automation | 1.2.1
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -22,6 +22,9 @@ paths use C:\Temp\KB5130098-Reports on the calling computer.
 Version 1.2.0 retains structured session-level $report objects and $reportFiles,
 prints their summary, and exports CSV, detailed JSON and final JSON Lines by
 default for local and remote runs. Previews produce no persistent report exports.
+Version 1.2.1 colors a pinned-identity mismatch red, a confirmed match green,
+and Missing rule files green only for a matching identity; Missing on an
+ineligible installation is yellow, while unobserved state stays neutral.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -145,7 +148,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.2.0-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.2.1-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -442,6 +445,14 @@ Microsoft payload and actual workload before a production rollout.
 - Preserve report state for failures/unvisited targets and expose export errors.
 - Include a Splunk ingestion guide; no live customer connection/configuration
   is attempted and integration must be validated in the customer's environment.
+
+1.2.1 CHANGES
+
+- Color "No - stop" red and a confirmed pinned identity match green.
+- Color Missing rules green only when the pinned identity matches; use yellow
+  for Missing on an explicitly ineligible installation and neutral when unknown.
+- Retain green Present styling. Console colors do not change machine results,
+  status decisions, exit codes, operation scope or recovery gates.
 
 1.1.2 CHANGES (PREVIOUS RELEASE)
 

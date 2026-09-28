@@ -2,7 +2,7 @@ BeforeDiscovery {
     Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KB5130098.psm1') -Force
 }
 
-Describe 'Console status columns and presence colors' {
+Describe 'Console status columns and contextual colors' {
     InModuleScope KB5130098 {
         BeforeEach {
             $script:beforeState = [pscustomobject]@{
@@ -35,8 +35,8 @@ Describe 'Console status columns and presence colors' {
             Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
                 ([string]$Object).Trim() -eq 'Present' -and $ForegroundColor -eq 'Green'
             }
-            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter {
-                $ForegroundColor -eq 'Green' -and ([string]$Object).Trim() -ne 'Present'
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                ([string]$Object).Trim() -eq 'Yes' -and $ForegroundColor -eq 'Green'
             }
             Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
                 [string]$Object -eq "KB5130098 | DETECT | $Target"
@@ -50,10 +50,29 @@ Describe 'Console status columns and presence colors' {
                 [string]$Object -match '^CHECK\s+BEFORE\s+CURRENT$'
             }
             Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
-                ([string]$Object).Trim() -eq 'Missing' -and $NoNewline
+                ([string]$Object).Trim() -eq 'Missing' -and $NoNewline -and $ForegroundColor -eq 'Green'
             }
             Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
                 ([string]$Object).Trim() -eq 'Present' -and $ForegroundColor -eq 'Green'
+            }
+        }
+
+        It 'colors an identity stop red and missing rules yellow instead of green' {
+            $ineligible = [pscustomobject]@{
+                Status='NotApplicableStop'
+                ExchangeVersion='15.2.2562.46'
+                DllVersion='16.0.5194.1000'
+                ExistingRules=@()
+            }
+            Write-KBConsoleResult -Mode Detect -Result $ineligible -Before $ineligible -After $ineligible
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                ([string]$Object).Trim() -eq 'No - stop' -and $ForegroundColor -eq 'Red'
+            }
+            Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
+                ([string]$Object).Trim() -eq 'Missing' -and $ForegroundColor -eq 'Yellow'
+            }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter {
+                ([string]$Object).Trim() -eq 'Missing' -and $ForegroundColor -eq 'Green'
             }
         }
 
@@ -68,16 +87,24 @@ Describe 'Console status columns and presence colors' {
             }
         }
 
-        It 'does not color missing or unobserved values green' {
+        It 'colors missing rules green when the pinned identity matches' {
             Write-KBConsoleResult -Mode Detect -Result $script:beforeState -Before $script:beforeState -After $script:beforeState
             Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
-                ([string]$Object).Trim() -eq 'Missing'
+                ([string]$Object).Trim() -eq 'Missing' -and $ForegroundColor -eq 'Green'
             }
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                ([string]$Object).Trim() -eq 'Yes' -and $ForegroundColor -eq 'Green'
+            }
+        }
+
+        It 'leaves unobserved values neutral when the installation could not be inspected' {
             Write-KBConsoleResult -Mode Detect -ErrorMessage 'The installation could not be inspected.'
             Should -Invoke Write-Host -Times 5 -Exactly -ParameterFilter {
-                [string]$Object -eq 'Not observed'
+                [string]$Object -eq 'Not observed' -and $null -eq $ForegroundColor
             }
-            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Green' }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter {
+                [string]$Object -eq 'Not observed' -and $ForegroundColor -eq 'Green'
+            }
         }
 
         It 'shows rollback resulting state without comparison columns' {

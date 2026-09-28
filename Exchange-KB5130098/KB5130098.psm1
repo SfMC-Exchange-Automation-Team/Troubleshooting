@@ -247,15 +247,26 @@ function Write-KBConsoleResult {
         }
         if ($Property -eq 'IdentityMatch') {
             if ($State.Status -eq 'NotApplicableStop') { return 'No - stop' }
-            return 'Yes'
+            if ($State.Status -in @('EligibleMissingBothRules', 'RuleFilesPresentStop')) { return 'Yes' }
+            return 'Not observed'
         }
         [string]$State.$Property
     }
     $writeState = {
-        param([string]$Value, [int]$Width, [switch]$NoNewline)
+        param([string]$Value, [int]$Width, [switch]$NoNewline, [string]$IdentityMatch)
         $text = if ($Width -gt 0) { $Value.PadRight($Width) } else { $Value }
-        if ($Value -eq 'Present') {
-            Write-Host $text -ForegroundColor Green -NoNewline:$NoNewline
+        $color = $null
+        switch ($Value) {
+            'Present' { $color = 'Green' }
+            'Yes' { $color = 'Green' }
+            'No - stop' { $color = 'Red' }
+            'Missing' {
+                if ($IdentityMatch -eq 'Yes') { $color = 'Green' }
+                elseif ($IdentityMatch -eq 'No - stop') { $color = 'Yellow' }
+            }
+        }
+        if ($color) {
+            Write-Host $text -ForegroundColor $color -NoNewline:$NoNewline
         } else {
             Write-Host $text -NoNewline:$NoNewline
         }
@@ -281,9 +292,13 @@ function Write-KBConsoleResult {
     )) {
         Write-Host ('{0,-26} ' -f $row.Label) -NoNewline
         if ($compareStates) {
-            & $writeState (& $readState $Before $row.Property $row.Rule) -Width 25 -NoNewline
+            $beforeIdentity = & $readState $Before 'IdentityMatch' ''
+            $beforeValue = & $readState $Before $row.Property $row.Rule
+            & $writeState -Value $beforeValue -Width 25 -NoNewline -IdentityMatch $beforeIdentity
         }
-        & $writeState (& $readState $After $row.Property $row.Rule)
+        $afterIdentity = & $readState $After 'IdentityMatch' ''
+        $afterValue = & $readState $After $row.Property $row.Rule
+        & $writeState -Value $afterValue -IdentityMatch $afterIdentity
     }
     Write-Host ''
     Write-Host 'ACTION TAKEN' -ForegroundColor Cyan
