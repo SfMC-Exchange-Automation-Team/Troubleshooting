@@ -1,0 +1,144 @@
+Exchange KB5130098 1.2.1 - narrated walkthrough
+Illustrative commands and abbreviated output; no new deployment was performed.
+Generic natural-sounding synthetic voice generated offline; not voice cloning.
+
+One script. Clear results. Guarded changes.
+
+Let's walk through version one point two point one of the Exchange Korean WordBreaker workaround.
+We'll use one script for local checks, remote servers, and a CSV roster, then make sense of the results.
+This is custom automation, not a Microsoft-signed hotfix or a permanent product fix.
+The commands and output are illustrative. This video does not perform a new deployment.
+The safe sequence remains: verify, detect, preview, pilot, validate, and only then expand.
+
+Start with source; build the payload locally
+
+GitHub distributes source and tests, not the Microsoft rule binaries.
+Build the deployment package on an elevated management workstation, never on Exchange.
+This example uses rule files you already have. The builder still verifies their exact sizes and hashes.
+Alternatively, supply the approved Microsoft media, or explicitly choose the documented download option.
+The result is a deployment zip and checksum sidecar. SQL Server is not installed.
+Review the code, licensing, signing policy, and current Microsoft guidance before proceeding.
+
+Verify once, then keep a stable working folder
+
+Compare the archive hash with your trusted build record and stop on any mismatch.
+The guide contains the complete guard. A sidecar from an untrusted download is not authentication.
+Verify a fresh extraction, then keep the reviewed runtime in a stable working folder.
+For example, use the unversioned Scripts folder shown here.
+When updating, preserve user edits and reports, and do not replace code while a run is active.
+
+Detect shows state, action and the next step
+
+Run the primary script without a mode to detect the current state.
+Local interactive runs can request normal Windows UAC elevation into sixty-four-bit PowerShell five point one.
+Automation, remoting, and local JSON capture must already have the required rights.
+Detect shows one Status column, followed by the action taken and next step.
+Here the identity matches and both files are absent. Nothing has been applied.
+Detect does not modify Exchange files or services, though a normal run saves reports.
+
+Read the stop condition before the colors
+
+On an ineligible installation, No, stop is red, and the missing files are yellow.
+Do not change the manifest to make that server pass.
+A confirmed identity match is green. Missing is green only with a matching identity.
+Present is also green, but means existence only.
+If either rule exists, the tool stops. Even matching file hashes are not permission to reapply.
+Read the overall status and next step. Color alone never proves recovery.
+
+The same entry point handles remote and CSV
+
+For remote inventory, add Computer Name. For a larger environment, supply a reviewed CSV roster instead.
+The Computer Name header is required, and every target is validated before any connection.
+Blank or duplicate targets and malformed rows stop the run. Input order is preserved.
+Extra columns are metadata only. They do not skip targets or grant approval.
+Use existing administrative Kerberos access to the normal PowerShell endpoint.
+No report directory is required, and no trust settings or credentials are changed automatically.
+
+Your results stay in $report
+
+After the command, dollar report contains real PowerShell objects, one row per target.
+The terminal prints a summary, and dollar report Files holds the export paths.
+Filter or format the objects without parsing JSON or scraping the console.
+Use Pass Through when you want explicit pipeline assignment.
+A successful automatic UAC handoff returns the data to the original session.
+An unrelated external PowerShell process cannot set variables in your existing shell.
+
+CSV for people; JSON for structured detail
+
+CSV is the easiest format for a spreadsheet: one server per row.
+JSON preserves field names, booleans, arrays, and nested detail for another script or system.
+Normal local and remote runs export CSV, detailed JSON, and JSON Lines by default.
+Each run gets a unique folder under the default report location on the caller.
+Report Directory overrides the root, and No CSV omits only the CSV file.
+What If keeps results in memory. An invalid path or export failure is an error, not a silent fallback.
+
+For Splunk, collect the finalized JSON Lines
+
+For a Splunk file collector, use the finalized JSON Lines file.
+It has one complete event per line, with a run ID, target name, and UTC finalization time.
+Do not tail the detailed rollout file as final events, because checkpoints rewrite it.
+The guide includes event boundaries, timestamps, and field extraction examples.
+Do not combine search-time JSON extraction with indexed JSON extraction for the same source type.
+The customer's Splunk administrator must validate ingestion. No live Splunk integration is being claimed.
+
+Preview locally before approving a change
+
+On a still-eligible target, run Apply with What If.
+This checks local applicability and payload without copying files or restarting Search.
+Only Apply, including its preview, gets Before and Current columns.
+They describe this invocation, not reconstructed history.
+A preview can still fail on an ineligible installation or existing rules.
+Remote What If is different: it validates the roster and shows a plan, without contacting targets.
+
+Apply once, with restart explicitly requested
+
+After the actual maintenance and health checks, approve one pilot server.
+The primary script stages files only unless Restart Search is explicitly supplied.
+With the approved window and restart requested, it adds the two files without overwriting anything.
+It verifies copied identities and normal inherited read permissions, then restarts only Host Controller Service.
+The tool does not drain transport, move databases, or place Exchange into maintenance mode.
+Without the restart switch, exit ten means files changed and a controlled Search restart is still required.
+
+Verify the workload, not just the process
+
+The restart path observes the exact Content Engine process and the same process ID for thirty seconds by default.
+That is a bounded startup check, not workload certification.
+Use a mailbox whose active database is on the changed server.
+Test new ordinary and Korean delivery and server-side search, including a negative control.
+Check the original symptoms and fresh errors, and assess historical backlog separately.
+Do not proceed to another server until the required evidence passes.
+
+Expand serially with the same primary script
+
+For expansion, use the primary script with approved names or a reviewed CSV.
+A restarted remote rollout is serial and requires a local interactive console.
+After each server, perform the workload checks before entering the exact recovery attestation.
+There is no unattended or parallel restart shortcut.
+The old Fleet script remains only for compatibility, and its Apply still includes a restart.
+The primary script calls the shared module directly, not that wrapper. Use the primary for new procedures.
+
+Exit codes guide action; receipts preserve evidence
+
+Always interpret the status, action, and exit code together.
+Zero is not proof of recovery. One is an error. Ten is a pending Search restart, not a Windows reboot request.
+Twenty means an applicability or existing-rule stop that needs review.
+Modifying operations keep protected receipts and events. A partial failure is not automatically undone.
+Do not blindly retry Apply, and do not invent Support approval for rollback.
+Deployment-agent command wrappers must explicitly forward dollar last exit code, as shown in the guide.
+
+If recovery fails, identify the actual caller
+
+If files look right but the workload still fails, stop rollout and preserve evidence.
+The earlier lab pilot found stale caller connections after the Content Engine restart.
+An event provider name did not identify the originating service; process IDs and feeder logs did.
+Any targeted caller recovery required separate evidence and approval.
+Later English and Korean EWS checks passed, but that did not certify Outlook, OWA, or historical backlog.
+Do not turn that lab-specific recovery into a blanket restart recommendation.
+
+Keep the evidence and expand only when ready
+
+Version one point two point one passed one hundred seventy-seven offline tests, including the downloadable source archive.
+Read-only lab detection also verified the staged package. No new Apply or restart was performed for the color update.
+These checks support the tool's behavior, not a claim that your workload is recovered.
+Use the current guide, the reporting and Splunk notes, and the validation summary.
+Verify the package, pilot carefully, retain your evidence, and expand only after the workload checks pass.

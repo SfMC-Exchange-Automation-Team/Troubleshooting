@@ -1,13 +1,14 @@
 # KB5130098: validation and operational lessons
 
-- **Observed:** September 25, 2026
-- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory and structured reporting; not a customer rollout
+- **Original workload pilot:** September 25, 2026
+- **Latest package/display verification:** September 28, 2026
+- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting and 1.2.1 colors; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
 published. The [usage guide](../README.md) describes the supported operator flow.
 
-## What was tested
+## Original pilot observations
 
 | Area | Observation |
 |---|---|
@@ -24,8 +25,10 @@ published. The [usage guide](../README.md) describes the supported operator flow
 | Final diagnostic window | 275 CTS lines observed; no matched feeder/Korean-init/timeout failures and no relevant application warnings/errors. |
 | Final health | Transport queues empty; database copies Mounted/Healthy with zero copy/replay queues; monitored services running. |
 
-The recorded video's visual commands are illustrative. Its final test results
-summarize the original 1.0.1 observations; it does not show a new live deployment.
+The historical 1.0.1 video's visual commands are illustrative. Its final results
+summarize the original observations above. The current 1.2.1 walkthrough adds
+the newer interface and reporting behavior; neither video shows a new live
+deployment. Later feature-validation evidence is separated by version below.
 
 ## 1.0.2 console and elevation coverage
 
@@ -86,8 +89,9 @@ status rather than an Apply comparison.
 
 Formatter tests inspect actual `Write-Host` calls to verify that each Present
 file-state value is green for local and remote target labels, in either Apply
-column, and alongside unchanged existing-file stop warnings. Missing and
-unobserved values are not colored green. Native output tests verify the exact
+column, and alongside unchanged existing-file stop warnings. In **1.1.1**, Missing
+and unobserved values were not colored green; see the 1.2.1 update below for the
+current contextual colors. Native output tests verify the exact
 column shapes, unchanged action/error messages, and machine JSON/exit behavior.
 Green indicates presence only, not verified remediation or workload recovery.
 
@@ -112,7 +116,7 @@ service states/PIDs and NodeRunner identities on caller and target.
 
 ## 1.2.0 report objects and exports
 
-The suite passes **175 tests**. Reporting coverage verifies that session-level
+The 1.2.0 suite passed **175 tests**. Reporting coverage verifies that session-level
 `$report` contains typed rows rather than formatted strings, `$reportFiles` names
 the files, and terminal output remains usable. Native cases exercise explicit
 `-PassThru`, machine JSON, stale-result clearing, errors, preview/no-file behavior,
@@ -144,6 +148,41 @@ detailed JSON parsed, and JSONL contained exactly one UTF-8 object per row.
 NoCsv omitted only CSV; the preview exported no files. Installed Exchange file,
 ACL, service/PID and NodeRunner fingerprints stayed unchanged across caller
 and targets. No Apply or service restart was performed for the reporting update.
+
+## 1.2.1 contextual colors and current walkthrough
+
+The 1.2.1 suite passed **177 tests** from both the worktree and the generated
+source archive. The archive's 15 manifest-covered files were hash-verified.
+Formatter tests inspect `Write-Host` foreground colors: a pinned mismatch is
+red, a confirmed match is green, and Missing is green with a matching identity
+or yellow with an explicit mismatch. Unobserved state stays neutral. Present
+remains green, without removing the existing-rule stop. Native entry-point
+tests continue to cover output columns, machine JSON and exit behavior.
+
+The stable package directory on the manual-run lab server was updated in place
+to 1.2.1. All nine deployment-manifest entries and the packaged payload identities
+were verified; extra files were preserved and the previous tracked files were
+retained in a protected backup. Read-only Detect returned `RuleFilesPresentStop`
+and exit 20 with both rules present. No Apply, installed-rule changes or service
+restarts were performed for this display update.
+
+The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) replaces the
+older video as the current learning path. It uses illustrative commands and
+abbreviated output with offline synthetic narration, visible captions, a
+transcript and chapter markers. Rebuilding the media does not constitute a new
+deployment or workload test. The earlier EWS observations, lack of certified
+OWA/Outlook or backlog recovery, and untested customer Splunk integration remain
+unchanged.
+
+The rebuilt media runs **9 minutes 26 seconds** at **1920 x 1080**, with
+16 embedded chapters and 93 caption cues. Full video/audio decoding completed
+without errors; the standalone narration matches the video's audio stream.
+Caption text matches the narration source and the guide's chapter times match
+the media. Encoded frames were visually inspected, and an offline speech
+transcription recognized the key safety and reporting statements. Documented
+PowerShell examples were syntax-checked against current parameter names without
+executing the modifying examples. These are media/documentation checks, not a
+new Exchange or Splunk validation.
 
 ## Why the first workload observation was not enough
 

@@ -7,7 +7,8 @@
 
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
-[Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
+[Watch or download the 1.2.1 walkthrough](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4) ·
+[Listen to the narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a) ·
 [Download source and tests](downloads/Exchange-KB5130098-1.2.1-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
@@ -17,34 +18,40 @@ The video uses illustrative commands and clearly labelled recorded lab results. 
 
 > **New in 1.2.1:** Human output colors the pinned identity result red for `No - stop`, green for `Yes`, and colors `Missing` green only when identity matches. Missing files on an explicitly ineligible installation are yellow; unobserved state stays neutral. The existing green `Present` styling is retained.
 
-> **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
+> **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The updated video starts with this source/build boundary; section 2 gives the complete build instructions.
 
 ## Video walkthrough
 
-**5 minutes 56 seconds · 1080p · natural-sounding synthetic narration · on-screen captions · 12 embedded chapters**
+**9 minutes 26 seconds · 1080p · natural-sounding synthetic narration · on-screen captions · 16 embedded chapters**
 
-The recording demonstrates **1.0.1** and its 55-test baseline. Its elevated-shell setup, JSON screenshots and separate fleet entry point predate the later console and CSV changes; use the commands below. The workload safety gates remain unchanged.
+This walkthrough explains **1.2.1**: one primary local/remote/CSV entry point, UAC boundaries, color-coded human output, retained `$report` objects, default CSV/JSON/JSONL exports, and the Splunk collection contract. Commands and abbreviated output are illustrative, not a screen recording of a fresh deployment. The **177-test** baseline and read-only lab verification are identified separately from the earlier workload pilot.
 
-Narration was generated locally; no narration text, private lab material, or audio was sent to an online speech service.
+Narration was generated locally using a generic natural-sounding synthetic voice, not voice cloning. No narration text, private lab material, or audio was sent to an online speech service.
 
-[![Preview of the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Poster.png)](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4)
+[![Preview of the 1.2.1 narrated walkthrough](docs/Exchange-KB5130098-1.2.1-Poster.png)](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4)
 
 | Start | Chapter |
 |---|---|
-| 00:00 | Controlled deployment overview |
-| 00:27 | Package choice and prerequisites |
-| 00:59 | Verify and extract |
-| 01:28 | Detect and interpret the result |
-| 01:55 | Local WhatIf |
-| 02:18 | Apply to one approved pilot |
-| 02:50 | Receipts and result status |
-| 03:17 | Workload validation |
-| 03:50 | Diagnose blocked callers |
-| 04:22 | Serial fleet rollout |
-| 04:48 | Unattended staging and exit codes |
-| 05:18 | Recorded results and limits |
+| 00:00 | One script, clear results, guarded changes |
+| 00:32 | Source-only distribution and local payload build |
+| 01:11 | Integrity checks and stable working folder |
+| 01:40 | Local Detect and UAC boundaries |
+| 02:16 | Color meanings and stop conditions |
+| 02:48 | Remote targets and CSV rosters |
+| 03:25 | Working with `$report` |
+| 03:58 | Default CSV, JSON and JSONL exports |
+| 04:37 | Splunk collection guidance |
+| 05:15 | Local Apply preview |
+| 05:46 | One approved pilot and explicit restart |
+| 06:25 | Workload recovery checks |
+| 06:59 | Serial rollout and the legacy wrapper |
+| 07:34 | Exit codes, failures and receipts |
+| 08:12 | Evidence-led caller diagnosis |
+| 08:50 | Recorded validation and handoff |
 
-Accessibility and reuse: [plain-text transcript](docs/Exchange-KB5130098-1.0.1-Transcript.txt), [WebVTT captions](docs/Exchange-KB5130098-1.0.1-Captions.vtt), and [SRT captions](docs/Exchange-KB5130098-1.0.1-Captions.srt). Download the MP4 if GitHub displays a binary-file page instead of a player. Keep this folder's structure when downloading the article and companion files.
+Accessibility and reuse: [audio-only narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a), [plain-text transcript](docs/Exchange-KB5130098-1.2.1-Transcript.txt), [WebVTT captions](docs/Exchange-KB5130098-1.2.1-Captions.vtt), and [SRT captions](docs/Exchange-KB5130098-1.2.1-Captions.srt). The MP4 includes visible captions and chapter markers. Download it if GitHub displays a binary-file page instead of a player. Keep this folder's structure when downloading the article and companion files.
+
+The [original 1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains available as historical material, not current operating instructions. It predates the unified entry point, human-output and reporting changes. Use the 1.2.1 walkthrough above for current usage.
 
 ## At a glance
 
@@ -115,7 +122,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 Use the checked-out files in this folder, or download the [1.2.1 source ZIP](downloads/Exchange-KB5130098-1.2.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.1-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
 
-Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
+Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the historical recording; it does not include automatic elevation or the new human summary.
 
 The locally generated deployment ZIP includes the runtime scripts and both verified BIN files. It does not include SQL media or a replacement DLL. **That deployment ZIP is not hosted in this public repository.**
 
@@ -155,7 +162,7 @@ Keep the generated ZIP, its SHA256 sidecar, and the returned build hash together
 
 Each build produces its own ZIP and SHA256 sidecar. Use the expected hash from your trusted, reviewed build record, not a hard-coded hash from someone else's build.
 
-For reference only, the narrated video's original lab deployment ZIP had this SHA256; it is not distributed here and is **not** the expected hash for a new build:
+For reference only, the historical **1.0.1** recording's lab deployment ZIP had this SHA256; it is not distributed here and is **not** the expected hash for 1.2.1 or any new build:
 
 ```text
 SHA256
@@ -192,7 +199,7 @@ Set-Location (Join-Path $destination 'Exchange-KB5130098')
 
 Verify hashes from a trusted source. A sidecar from the same untrusted download is not authentication or code signing.
 
-If you rebuild or sign the code, the archive hash changes. Use your reviewed release's newly generated manifest and sidecar, not the recorded-video reference hash.
+If you rebuild or sign the code, the archive hash changes. Use your reviewed release's newly generated manifest and sidecar, not an earlier release's checksum.
 
 For regular manual use, keep the verified runtime in a **stable folder**, such as `C:\Scripts\Exchange-KB5130098`, and update its managed contents in place. Keep versions in archive names and metadata, not the working directory name. Preserve user-edited files and reports, and do not replace code while a run is active. The fresh extraction directory above is a temporary integrity-check workspace, not a reason to move the operator's working directory each release.
 
@@ -205,12 +212,14 @@ The two payload identities are:
 
 ## 4. Run Detect before changing anything
 
-From the extracted package on the intended server:
+From the stable, verified package folder on the intended server, in your existing PowerShell session:
 
 ```powershell
-powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
+.\Invoke-KB5130098.ps1
 $LASTEXITCODE
 ```
+
+No mode means **Detect**. You can also supply `-Mode Detect` explicitly. Calling the script directly lets `$report` and `$reportFiles` remain available in this session; starting an unrelated `powershell.exe` does not.
 
 Read the **human status, action, next step, and exit code**. A default Detect run reports the observed state once; it does not imply an Apply took place:
 
@@ -234,7 +243,18 @@ NEXT STEP
 
 Only `-Mode Apply` displays `Before` and `Current`, as observations from this invocation rather than reconstructed historical state. A successful Apply shows the rules changing from missing to present, whether Search was restarted, and the actual receipt path. An Apply preview is still explicitly labelled **Preview only**. Rollback reports its resulting state in one `Status` column and describes the removals in `Action taken`. A failure reports what could be observed and does not pretend that partial files were rolled back.
 
-Every **Present** file-state value is green in the console. This is a visual indication of existence only: existing-rule stop warnings, payload checks, and workload-recovery requirements are unchanged. Plain-text capture and `-AsJson` do not depend on console color.
+### Console colors in 1.2.1
+
+| Displayed value | Color | Meaning |
+|---|---|---|
+| Pinned build/DLL match: `Yes` | Green | The pinned identity matches; this is not the complete Apply eligibility decision |
+| Pinned build/DLL match: `No - stop` | Red | The installation does not match; stop and do not weaken the manifest |
+| `Missing` with a matching pinned identity | Green | The rule is absent on a matching build/DLL, not installed or remediated |
+| `Missing` with `No - stop` | Yellow | The rule is absent, but the installation is ineligible for this package |
+| `Present` | Green | The file exists; **either existing rule still blocks Apply** |
+| `Not observed`, or absence with an unknown identity | Neutral/default | The required observation is unavailable; do not infer a pass |
+
+**Read the overall status and next step, not color alone.** Green `Present` is not hash verification or proof of recovery; green `Missing` is not compliance. A partial pair can have green file-state cells while still returning `RuleFilesPresentStop`. Neither indication authorizes an overwrite or another Apply. Plain-text capture, `$report`, CSV, and JSON retain their ordinary values without color codes.
 
 After the status/action display, a summary of `$report` and the export paths is printed. Local Detect now writes report files outside the Exchange installation; it still never modifies Exchange files or services. `-WhatIf` keeps the report objects in memory but does not create persistent exports.
 
