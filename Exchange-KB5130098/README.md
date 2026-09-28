@@ -1,19 +1,19 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.1.0
+- **Package:** Exchange-KB5130098 1.1.1
 - **Audience:** Exchange Server administrators and change owners
-- **Validated:** September 25, 2026
+- **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
 - **Reading time:** About 12 minutes
 
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.1.0-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.1.1-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
 
-> **New in 1.1.0:** Use one entry point for local work, `-ComputerName` targets, or a `-CsvPath` roster. The primary script never implies a restart: add `-RestartSearch` explicitly. The **BEFORE / CURRENT / ACTION TAKEN / NEXT STEP** output and safe no-argument Detect default remain.
+> **New in 1.1.1:** Detect/default runs show one **STATUS** column. **BEFORE / CURRENT** comparisons appear only with `-Mode Apply`, including an Apply preview. **Present** is green in human output; it means a file exists, not that it is verified or the workload has recovered. Local, direct remote and CSV operations share the same display. The safe no-argument Detect default and explicit restart requirement remain.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
@@ -100,7 +100,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.1.0 source ZIP](downloads/Exchange-KB5130098-1.1.0-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.0-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.1.1 source ZIP](downloads/Exchange-KB5130098-1.1.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.1-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
@@ -153,7 +153,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.1.0-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.1.1-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -199,18 +199,17 @@ powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
 $LASTEXITCODE
 ```
 
-Read the **human state comparison, action, next step, and exit code**. For example, a default Detect run on an eligible, unchanged server is explicit:
+Read the **human status, action, next step, and exit code**. A default Detect run reports the observed state once; it does not imply an Apply took place:
 
 ```text
 KB5130098 | DETECT | EX01
-Before and current state refer to this invocation, not earlier history.
 
-CHECK                      BEFORE                   CURRENT
-Exchange build             15.2.2562.49             15.2.2562.49
-Korean DLL version         16.0.5194.1000            16.0.5194.1000
-Pinned build/DLL match      Yes                      Yes
-ko.token.rule.bin          Missing                  Missing
-ko.complex.rule.bin        Missing                  Missing
+CHECK                      STATUS
+Exchange build             15.2.2562.49
+Korean DLL version          16.0.5194.1000
+Pinned build/DLL match      Yes
+ko.token.rule.bin          Missing
+ko.complex.rule.bin        Missing
 
 ACTION TAKEN
   Checked eligibility only. No files copied or removed. No services restarted.
@@ -220,7 +219,9 @@ NEXT STEP
   .\Invoke-KB5130098.ps1 -Mode Apply -WhatIf
 ```
 
-`Before` and `Current` are observations from this invocation, not reconstructed historical state. A successful Apply instead shows the rules changing from missing to present, whether Search was restarted, and the actual receipt path. A failure reports what could be observed and does not pretend that partial files were rolled back.
+Only `-Mode Apply` displays `Before` and `Current`, as observations from this invocation rather than reconstructed historical state. A successful Apply shows the rules changing from missing to present, whether Search was restarted, and the actual receipt path. An Apply preview is still explicitly labelled **Preview only**. Rollback reports its resulting state in one `Status` column and describes the removals in `Action taken`. A failure reports what could be observed and does not pretend that partial files were rolled back.
+
+Every **Present** file-state value is green in the console. This is a visual indication of existence only: existing-rule stop warnings, payload checks, and workload-recovery requirements are unchanged. Plain-text capture and `-AsJson` do not depend on console color.
 
 For automation or JSON capture, use an **already elevated** shell and opt in explicitly:
 
@@ -550,7 +551,14 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
 
-## What changed in 1.1.0
+## What changed in 1.1.1
+
+- Non-Apply operations use a single Status column rather than duplicate Before/Current observations.
+- Apply and Apply previews retain the comparison; action and next-step guidance remain explicit.
+- Present file-state values are green across the shared local/remote console formatter.
+- JSON, report structures, exit codes, eligibility checks and modifying operations are unchanged.
+
+### Previous 1.1.0 changes
 
 - One primary entry point for local operations, direct remote names and strict CSV target lists.
 - Whole-input validation before connections, case-insensitive duplicate checks and deterministic input ordering.

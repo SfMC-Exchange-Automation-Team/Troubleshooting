@@ -6,7 +6,8 @@ Detects eligibility or applies the narrowly scoped KB5130098 workaround locally.
 No Exchange changes occur in Detect mode. Apply never overwrites existing rules.
 Restart is opt-in and requires an approved maintenance window. Workload validation
 is always manual. Local interactive runs can request UAC elevation. Human-readable
-before/action/current output is the default; -AsJson preserves machine output.
+status/action output is the default, with before/current comparisons for Apply.
+-AsJson preserves machine output.
 See README.txt for rollout gates, exit codes and rollback limits.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Local')]

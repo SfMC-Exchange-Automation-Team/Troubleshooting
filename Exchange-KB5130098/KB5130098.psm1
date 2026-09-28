@@ -177,11 +177,27 @@ function Write-KBConsoleResult {
         }
         [string]$State.$Property
     }
+    $writeState = {
+        param([string]$Value, [int]$Width, [switch]$NoNewline)
+        $text = if ($Width -gt 0) { $Value.PadRight($Width) } else { $Value }
+        if ($Value -eq 'Present') {
+            Write-Host $text -ForegroundColor Green -NoNewline:$NoNewline
+        } else {
+            Write-Host $text -NoNewline:$NoNewline
+        }
+    }
+    $compareStates = $Mode -eq 'Apply'
     Write-Host ''
     Write-Host ("KB5130098 | {0} | {1}" -f $Mode.ToUpperInvariant(), $ComputerName) -ForegroundColor Cyan
-    Write-Host 'Before and current state refer to this invocation, not earlier history.'
+    if ($compareStates) {
+        Write-Host 'Before and current state refer to this invocation, not earlier history.'
+    }
     Write-Host ''
-    Write-Host ('{0,-26} {1,-24} {2}' -f 'CHECK', 'BEFORE', 'CURRENT') -ForegroundColor Cyan
+    if ($compareStates) {
+        Write-Host ('{0,-26} {1,-24} {2}' -f 'CHECK', 'BEFORE', 'CURRENT') -ForegroundColor Cyan
+    } else {
+        Write-Host ('{0,-26} {1}' -f 'CHECK', 'STATUS') -ForegroundColor Cyan
+    }
     foreach ($row in @(
         @{ Label = 'Exchange build'; Property = 'ExchangeVersion'; Rule = '' },
         @{ Label = 'Korean DLL version'; Property = 'DllVersion'; Rule = '' },
@@ -189,8 +205,11 @@ function Write-KBConsoleResult {
         @{ Label = 'ko.token.rule.bin'; Property = ''; Rule = 'ko.token.rule.bin' },
         @{ Label = 'ko.complex.rule.bin'; Property = ''; Rule = 'ko.complex.rule.bin' }
     )) {
-        Write-Host ('{0,-26} {1,-24} {2}' -f $row.Label,
-            (& $readState $Before $row.Property $row.Rule), (& $readState $After $row.Property $row.Rule))
+        Write-Host ('{0,-26} ' -f $row.Label) -NoNewline
+        if ($compareStates) {
+            & $writeState (& $readState $Before $row.Property $row.Rule) -Width 25 -NoNewline
+        }
+        & $writeState (& $readState $After $row.Property $row.Rule)
     }
     Write-Host ''
     Write-Host 'ACTION TAKEN' -ForegroundColor Cyan

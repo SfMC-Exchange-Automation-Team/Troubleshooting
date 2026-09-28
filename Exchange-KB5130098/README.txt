@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.1.0
+Exchange KB5130098 workaround automation | 1.1.1
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -15,6 +15,8 @@ summaries. Machine callers must now specify -AsJson explicitly.
 Version 1.1.0 integrates serial remote orchestration and strict CSV targeting into
 the primary entry point. RestartSearch is explicit for both local and remote
 primary Apply; the old fleet wrapper retains its historical Apply/restart behavior.
+Version 1.1.1 shows a single STATUS column unless Mode is Apply, and colors
+Present file-state values green without changing eligibility or recovery gates.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -135,7 +137,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.1.0-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.1.1-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -151,10 +153,15 @@ In Windows PowerShell, in the extracted package (approve UAC if prompted):
 
   powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
 
-Human output is now the default: BEFORE / CURRENT, ACTION TAKEN, and NEXT STEP.
-A no-argument run is still Detect only: it never copies rules or restarts services.
-Before/current are observations from this invocation, not a claim about earlier
-history. Errors show any available current state and partial-operation receipt.
+Human output is the default: STATUS, ACTION TAKEN, and NEXT STEP. A no-argument
+run is Detect only: it never copies rules or restarts services and shows each
+observed value once. Only -Mode Apply uses BEFORE / CURRENT comparisons, including
+an explicitly labelled Apply -WhatIf preview. Those observations refer to this
+invocation, not earlier history. Rollback shows resulting STATUS and describes
+removals in ACTION TAKEN. Errors retain observed state and partial-operation receipts.
+Present values are green in human output. Green means a file exists, not that
+its contents are verified or the workload has recovered; stop warnings remain.
+-AsJson, report structures, exit codes and operational checks are unchanged.
 
 For the original JSON interface, start in an elevated shell and opt in explicitly:
 
@@ -367,7 +374,14 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.1.0 CHANGES
+1.1.1 CHANGES
+
+- Single STATUS column for Detect/default and other non-Apply operations.
+- BEFORE / CURRENT only for Apply, including previews labelled as no changes.
+- Present file-state values use green console text locally and remotely.
+- No change to machine JSON, reports, exit codes or modifying operations.
+
+1.1.0 CHANGES (PREVIOUS RELEASE)
 
 - Primary CLI accepts either -ComputerName or -CsvPath with -ReportDirectory.
 - The full input roster is validated before connections; ordering is preserved.

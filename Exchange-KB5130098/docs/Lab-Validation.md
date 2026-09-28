@@ -1,7 +1,7 @@
 # KB5130098: validation and operational lessons
 
 - **Observed:** September 25, 2026
-- **Scope:** Original 1.0.1 lab pilot, console/elevation coverage, and 1.1.0 unified CSV inventory; not a customer rollout
+- **Scope:** Original 1.0.1 lab pilot, console/elevation coverage, unified CSV inventory, and 1.1.1 display refinement; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -50,7 +50,7 @@ historical state.
 
 ## 1.1.0 unified targeting and CSV coverage
 
-The full suite passes **130 tests**. It covers strict CSV headers, quoted commas
+The 1.1.0 suite passed **130 tests**. It covers strict CSV headers, quoted commas
 and multiline metadata, blank/malformed rows, exact field counts, DNS/NetBIOS
 validation, case-insensitive duplicates, deterministic ordering and a 2,500-name
 roster without truncation. Extra metadata, including an `Enabled` column, is not
@@ -76,6 +76,20 @@ all three servers. No live Apply, rollback, service restart, parallel deployment
 credential setting or trust-policy change was performed for this feature test.
 This validates three-target inventory, not a claim that a large modifying rollout
 has been exercised.
+
+## 1.1.1 display refinement
+
+The suite now has **136 tests**. Non-Apply output shows one Status column; only
+Apply and its explicitly labelled previews retain Before/Current. Rollback
+continues to describe the removals and required follow-up but shows resulting
+status rather than an Apply comparison.
+
+Formatter tests inspect actual `Write-Host` calls to verify that each Present
+file-state value is green for local and remote target labels, in either Apply
+column, and alongside unchanged existing-file stop warnings. Missing and
+unobserved values are not colored green. Native output tests verify the exact
+column shapes, unchanged action/error messages, and machine JSON/exit behavior.
+Green indicates presence only, not verified remediation or workload recovery.
 
 ## Why the first workload observation was not enough
 

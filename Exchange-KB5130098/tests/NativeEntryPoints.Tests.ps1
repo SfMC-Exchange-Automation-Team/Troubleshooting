@@ -209,17 +209,17 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         $json.WhatIf | Should -BeTrue
     }
 
-    Describe 'Native human-readable before/action/current output' {
+    Describe 'Native human-readable status and Apply comparisons' {
         It 'makes a default Detect run unmistakably read-only' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1"' -Human
             $result.ExitCode | Should -Be 0
             $result.Error | Should -BeNullOrEmpty
-            $result.Output | Should -Match 'BEFORE'
-            $result.Output | Should -Match 'CURRENT'
+            $result.Output | Should -Match 'CHECK\s+STATUS'
+            $result.Output | Should -Not -Match '\bBEFORE\b|\bCURRENT\b'
             $result.Output | Should -Match 'ACTION TAKEN'
             $result.Output | Should -Match 'Checked eligibility only'
             $result.Output | Should -Match 'No files copied or removed\. No services restarted'
-            $result.Output | Should -Match 'ko\.token\.rule\.bin\s+Missing\s+Missing'
+            $result.Output | Should -Match '(?m)^ko\.token\.rule\.bin\s+Missing\s*$'
             $result.Output | Should -Match 'NOT applied'
             $result.Output | Should -Not -Match '^\s*\{'
         }
@@ -227,6 +227,7 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         It 'shows a preview without claiming that files were copied or Search restarted' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1" -Mode Apply -RestartSearch -MaintenanceWindowApproved -WhatIf' -Human
             $result.ExitCode | Should -Be 0
+            $result.Output | Should -Match 'CHECK\s+BEFORE\s+CURRENT'
             $result.Output | Should -Match 'Preview only'
             $result.Output | Should -Match 'ko\.complex\.rule\.bin\s+Missing\s+Missing'
             $result.Output | Should -Not -Match 'Restarted HostControllerService'
@@ -251,11 +252,13 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
             $result.Output | Should -Match 'Workload recovery is NOT yet proven'
         }
 
-        It 'shows rollback as present-to-missing and retains restart-pending exit 10' {
+        It 'shows rollback resulting status without an Apply comparison and retains exit 10' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1" -Mode Rollback -MaintenanceWindowApproved -MicrosoftSupportApprovedRollback' `
                 -Status RolledBackRestartRequired -Human
             $result.ExitCode | Should -Be 10
-            $result.Output | Should -Match 'ko\.token\.rule\.bin\s+Present\s+Missing'
+            $result.Output | Should -Match 'CHECK\s+STATUS'
+            $result.Output | Should -Not -Match '\bBEFORE\b|\bCURRENT\b'
+            $result.Output | Should -Match '(?m)^ko\.token\.rule\.bin\s+Missing\s*$'
             $result.Output | Should -Match 'Backed up and removed'
             $result.Output | Should -Match 'Search was NOT restarted'
         }
@@ -263,7 +266,9 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         It 'explains an existing-rule stop without presenting it as an Apply success' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1"' -Status RuleFilesPresentStop -Human
             $result.ExitCode | Should -Be 20
-            $result.Output | Should -Match 'ko\.token\.rule\.bin\s+Present\s+Present'
+            $result.Output | Should -Match 'CHECK\s+STATUS'
+            $result.Output | Should -Not -Match '\bBEFORE\b|\bCURRENT\b'
+            $result.Output | Should -Match '(?m)^ko\.token\.rule\.bin\s+Present\s*$'
             $result.Output | Should -Match 'Existing rules were not overwritten'
             $result.Output | Should -Match 'Stop and reassess'
         }
@@ -271,7 +276,7 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         It 'reports a pinned-identity mismatch and returns 20' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1"' -Status NotApplicableStop -Human
             $result.ExitCode | Should -Be 20
-            $result.Output | Should -Match 'Pinned build/DLL match\s+No - stop\s+No - stop'
+            $result.Output | Should -Match '(?m)^Pinned build/DLL match\s+No - stop\s*$'
             $result.Output | Should -Match 'does not match the pinned requirements'
         }
 
