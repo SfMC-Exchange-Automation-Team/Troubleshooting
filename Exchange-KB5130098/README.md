@@ -1,6 +1,6 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.1.1
+- **Package:** Exchange-KB5130098 1.1.2
 - **Audience:** Exchange Server administrators and change owners
 - **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
 - **Reading time:** About 12 minutes
@@ -8,12 +8,12 @@
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the narrated walkthrough](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.1.1-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.1.2-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
 
-> **New in 1.1.1:** Detect/default runs show one **STATUS** column. **BEFORE / CURRENT** comparisons appear only with `-Mode Apply`, including an Apply preview. **Present** is green in human output; it means a file exists, not that it is verified or the workload has recovered. Local, direct remote and CSV operations share the same display. The safe no-argument Detect default and explicit restart requirement remain.
+> **New in 1.1.2:** Remote reports default to `C:\Temp\KB5130098-Reports` on the computer running the script. You can run `.\Invoke-KB5130098.ps1 -ComputerName EX02` without a report-directory prompt. `-ReportDirectory` remains an optional override for direct, CSV and compatibility entry points. Detect still shows a single Status column with green Present values; Apply and restart remain explicit.
 
 > **Public repository / source-only distribution:** Microsoft rule binaries, SQL media, deployment ZIPs containing those binaries, credentials, and private lab logs are not included. Build the deployment ZIP locally using [the builder](Build-KB5130098Package.ps1) and the exact Microsoft media or verified rule files. Review applicable licensing and approvals before redistributing the generated payload. The video begins with a built deployment ZIP; complete section 2 first if you do not already have one.
 
@@ -100,7 +100,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.1.1 source ZIP](downloads/Exchange-KB5130098-1.1.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.1-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.1.2 source ZIP](downloads/Exchange-KB5130098-1.1.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.1.2-source.zip.sha256). The archive contains the builder, regression suite and [example CSV](examples/servers.csv), but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the recorded walkthrough; it does not include automatic elevation or the new human summary.
 
@@ -153,7 +153,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.1.1-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.1.2-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -246,6 +246,14 @@ Detection exit `0` means **eligible and missing**, not "installed" or "compliant
 From the domain management workstation:
 
 ```powershell
+.\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
+```
+
+No report path is required. The default is **`C:\Temp\KB5130098-Reports` on the calling computer**, not on the remote target. Each run receives a unique subfolder containing its `rollout.json`; the exact path is printed when the run completes or is stopped by a target error.
+
+For multiple targets with an optional custom report location:
+
+```powershell
 .\Invoke-KB5130098.ps1 `
     -Mode Detect `
     -ComputerName EX01.contoso.com,EX02.contoso.com `
@@ -253,7 +261,7 @@ From the domain management workstation:
     -Confirm:$false
 ```
 
-Use an explicit target list. Remote Detect stages code and writes reports, but does not add Exchange rule files or restart services. It stops on errors. `ReportDirectory` is required for remote runs.
+Use an explicit target list. Remote Detect stages code and writes reports, but does not add Exchange rule files or restart services. It stops on errors. If the default or explicitly selected report path cannot be used, the error is surfaced before any target connection; reports are not silently redirected or discarded. Specify another approved local path with `-ReportDirectory` if needed.
 
 **Remote `-WhatIf` is not inventory:** it validates the entire input list and shows the plan but makes no remote connections or reports. Use Detect without WhatIf for actual eligibility.
 
@@ -274,14 +282,13 @@ Then inventory it:
 .\Invoke-KB5130098.ps1 `
     -Mode Detect `
     -CsvPath 'C:\Temp\servers.csv' `
-    -ReportDirectory 'C:\Temp\KB5130098-Reports' `
     -Confirm:$false
 ```
 
 For unattended inventory, use `-AsJson` and the same required remote-access rights:
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Detect -CsvPath 'C:\Temp\servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -AsJson -Confirm:$false; exit $LASTEXITCODE"
+powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Detect -CsvPath 'C:\Temp\servers.csv' -AsJson -Confirm:$false; exit $LASTEXITCODE"
 ```
 
 CSV rules:
@@ -551,7 +558,15 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
 
-## What changed in 1.1.1
+## What changed in 1.1.2
+
+- Remote reports use `C:\Temp\KB5130098-Reports` by default on the caller, with a unique subfolder per run.
+- The primary direct/CSV entry points and the compatibility wrapper delegate omitted report paths to one shared default.
+- Explicit valid report paths are preserved. Empty, invalid or inaccessible paths fail clearly rather than silently falling back.
+- Native minimal-command and report-creation tests cover omitted parameters, custom paths, CSV, legacy invocation, previews and write failures.
+- Target selection, maintenance/restart approvals, remote access, JSON, exit codes and recovery gates are unchanged.
+
+### Previous 1.1.1 changes
 
 - Non-Apply operations use a single Status column rather than duplicate Before/Current observations.
 - Apply and Apply previews retain the comparison; action and next-step guidance remain explicit.

@@ -33,6 +33,7 @@ function Invoke-KBFleet {
         Status=$status; ExitCode=$code; Mode=$Mode; Report='C:\Fixture\rollout.json'
         Servers=0; TargetCount=@($ComputerName).Count; ComputerName=$ComputerName; CsvPath=$CsvPath
         PackageDirectory=$PackageDirectory; PayloadDirectory=$PayloadDirectory
+        ReportDirectorySupplied=$PSBoundParameters.ContainsKey('ReportDirectory'); ReportDirectoryValue=$ReportDirectory
         RestartSearch=$RestartSearch.IsPresent; MaintenanceWindowApproved=$MaintenanceWindowApproved.IsPresent
         Quiet=$Quiet.IsPresent; WhatIf=[bool]$WhatIfPreference
         ElevationCalls=$script:elevationCalls; LocalCalls=$script:localCalls
@@ -332,6 +333,72 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
 }
 
 Describe 'Unified native local/remote/CSV dispatch' {
+    It 'accepts the minimal one-server command without prompting for a report directory' {
+        $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1" -ComputerName EX02'
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'Remote Detect: Completed'
+        $result.Output | Should -Not -Match 'Supply values|ReportDirectory:'
+    }
+
+    It 'leaves an omitted report directory to the shared default for direct and CSV dispatch' -ForEach @(
+        @{ TargetArguments = '-ComputerName EX02' }
+        @{ TargetArguments = '-CsvPath "C:\Approved targets.csv"' }
+    ) {
+        $result = Invoke-NativeFixture -Arguments ('-File ".\Invoke-KB5130098.ps1" {0} -AsJson' -f $TargetArguments)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        ($result.Output | ConvertFrom-Json).ReportDirectorySupplied | Should -BeFalse
+    }
+
+    It 'preserves an explicit report-directory override rather than replacing it with the default' {
+        $report = 'C:\Chosen reports\'
+        $command = '& ''.\Invoke-KB5130098.ps1'' -ComputerName EX02 -ReportDirectory ''{0}'' -AsJson; exit $LASTEXITCODE' -f $report
+        $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be 0
+        $json = $result.Output | ConvertFrom-Json
+        $json.ReportDirectorySupplied | Should -BeTrue
+        $json.ReportDirectoryValue | Should -Be $report
+    }
+
+    It 'does not silently replace an explicitly empty report directory' {
+        $result = Invoke-NativeFixture -Arguments '-Command "$ErrorActionPreference=''Stop''; & ''.\Invoke-KB5130098.ps1'' -ComputerName EX02 -ReportDirectory '''' -AsJson; exit $LASTEXITCODE"'
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'ReportDirectory'
+        $result.Output | Should -BeNullOrEmpty
+    }
+
+    It 'runs the real primary remote preview without specifying a report directory' {
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -WhatIf -AsJson' -f $path)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $json = $result.Output | ConvertFrom-Json
+        $json.Status | Should -Be 'NoChanges'
+        $json.Servers | Should -Be 0
+        $json.TargetCount | Should -Be 1
+        $json.Report | Should -BeNullOrEmpty
+    }
+
+    It 'runs the real CSV preview without specifying a report directory' {
+        $csv = Join-Path $TestDrive 'defaults.csv'
+        "ComputerName`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -WhatIf -AsJson' -f $path,$csv)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        ($result.Output | ConvertFrom-Json).Targets | Should -Be @('EX01.example.com')
+    }
+
+    It 'runs the actual legacy wrapper preview without a report-directory prompt' {
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -WhatIf' -f $path)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'No remote connections'
+        $result.Output | Should -Not -Match 'Supply values|ReportDirectory:'
+    }
+
     It 'routes explicit names to remote file-only Apply without local elevation or local execution' {
         $path = Join-Path $script:fixtureRoot 'Invoke-KB5130098.ps1'
         $command = '& ''{0}'' -ComputerName EX01,EX02 -Mode Apply -ReportDirectory ''C:\Reports'' -AsJson -Confirm:$false; exit $LASTEXITCODE' -f $path

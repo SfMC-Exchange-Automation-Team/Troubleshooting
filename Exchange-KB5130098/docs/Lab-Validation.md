@@ -1,7 +1,7 @@
 # KB5130098: validation and operational lessons
 
 - **Observed:** September 25, 2026
-- **Scope:** Original 1.0.1 lab pilot, console/elevation coverage, unified CSV inventory, and 1.1.1 display refinement; not a customer rollout
+- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, display refinement and reporting defaults; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -79,7 +79,7 @@ has been exercised.
 
 ## 1.1.1 display refinement
 
-The suite now has **136 tests**. Non-Apply output shows one Status column; only
+The 1.1.1 suite passed **136 tests**. Non-Apply output shows one Status column; only
 Apply and its explicitly labelled previews retain Before/Current. Rollback
 continues to describe the removals and required follow-up but shows resulting
 status rather than an Apply comparison.
@@ -90,6 +90,25 @@ column, and alongside unchanged existing-file stop warnings. Missing and
 unobserved values are not colored green. Native output tests verify the exact
 column shapes, unchanged action/error messages, and machine JSON/exit behavior.
 Green indicates presence only, not verified remediation or workload recovery.
+
+## 1.1.2 report-directory default
+
+The suite passes **149 tests**, including minimal native direct, CSV and legacy commands that
+omit ReportDirectory, along with explicit override and empty-input checks.
+Module tests verify the one shared default, unique per-run reports, no report
+creation during WhatIf, and failure before any target connection when the report
+directory is invalid or cannot be created. A default is not a silent fallback:
+an explicitly bad path or write failure is still an error.
+
+Only a safe output location is inferred. No target, modifying operation, restart,
+maintenance approval, credentials or recovery attestation is selected implicitly.
+
+Read-only live direct and CSV runs from the calling lab server also omitted
+ReportDirectory. Each created a different report under the documented default
+on the caller and returned the expected existing-rules review result. No
+parameter prompt occurred; existing operational confirmation behavior was not
+changed. Independent fingerprints confirmed unchanged Exchange files, ACLs,
+service states/PIDs and NodeRunner identities on caller and target.
 
 ## Why the first workload observation was not enough
 

@@ -709,7 +709,7 @@ function Invoke-KBFleet {
         [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',
         [Parameter(Mandatory)][string]$PackageDirectory,
         [string]$PayloadDirectory,
-        [Parameter(Mandatory)][string]$ReportDirectory,
+        [ValidateNotNullOrEmpty()][string]$ReportDirectory = 'C:\Temp\KB5130098-Reports',
         [switch]$RestartSearch,
         [switch]$MaintenanceWindowApproved,
         [switch]$Quiet,

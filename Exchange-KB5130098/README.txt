@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.1.1
+Exchange KB5130098 workaround automation | 1.1.2
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -17,6 +17,8 @@ the primary entry point. RestartSearch is explicit for both local and remote
 primary Apply; the old fleet wrapper retains its historical Apply/restart behavior.
 Version 1.1.1 shows a single STATUS column unless Mode is Apply, and colors
 Present file-state values green without changing eligibility or recovery gates.
+Version 1.1.2 makes ReportDirectory optional everywhere. Omitted remote report
+paths use C:\Temp\KB5130098-Reports on the calling computer.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -137,7 +139,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.1.1-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.1.2-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -169,11 +171,20 @@ For the original JSON interface, start in an elevated shell and opt in explicitl
 
 Or from the management workstation, inventory an explicit list:
 
+  .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
+
+ReportDirectory is optional. The shared default is C:\Temp\KB5130098-Reports on
+the calling computer, with a unique subfolder per run. The exact report path is
+printed in the result. Custom paths remain supported, for example:
+
   .\Invoke-KB5130098.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
 
 Remote Detect writes only staged automation and reports, not the Exchange
 installation, rule files or service state. Errors stop the run. Nonapplicable
 builds/existing rules are reported and never silently treated as remediated.
+An invalid or unwritable report location stops before target connections; no
+silent fallback or lost reporting. Choose another approved ReportDirectory if
+the default is not usable. Operational confirmations and approvals are unchanged.
 
 CSV TARGETS FOR LARGER ENVIRONMENTS
 
@@ -183,10 +194,10 @@ Use a reviewed comma-separated file with a ComputerName header, for example:
   EX01.contoso.com,SiteA
   EX02.contoso.com,SiteB
 
-  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -Confirm:$false
+  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -Confirm:$false
 
-ComputerName and CsvPath are mutually exclusive. ReportDirectory is required for
-remote operation. All records are validated before any connection or report:
+ComputerName and CsvPath are mutually exclusive. ReportDirectory uses the same
+optional default for CSV input. All records are validated before any connection or report:
 blank target cells, duplicate names (ignoring case), invalid DNS/NetBIOS names,
 IPs/wildcards/URLs, duplicate/empty headers, malformed quotes and inconsistent
 field counts stop the run. Input order is preserved; whitespace around names is
@@ -374,7 +385,17 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.1.1 CHANGES
+1.1.2 CHANGES
+
+- Default remote reports to C:\Temp\KB5130098-Reports on the calling computer.
+- Primary direct/CSV and legacy entry points no longer prompt for an omitted
+  ReportDirectory. Valid explicitly supplied paths remain unchanged.
+- Unique per-run report folders, existing path protections, and explicit write
+  errors are retained. No target selection or operation approval is inferred.
+- Regression tests run minimal native commands without a report argument and
+  exercise default/custom report output, CSV, legacy WhatIf and write failures.
+
+1.1.1 CHANGES (PREVIOUS RELEASE)
 
 - Single STATUS column for Detect/default and other non-Apply operations.
 - BEFORE / CURRENT only for Apply, including previews labelled as no changes.

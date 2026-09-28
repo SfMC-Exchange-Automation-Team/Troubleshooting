@@ -8,6 +8,7 @@ Restart is opt-in and requires an approved maintenance window. Workload validati
 is always manual. Local interactive runs can request UAC elevation. Human-readable
 status/action output is the default, with before/current comparisons for Apply.
 -AsJson preserves machine output.
+Remote reports default to C:\Temp\KB5130098-Reports on the calling computer.
 See README.txt for rollout gates, exit codes and rollback limits.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Local')]
@@ -15,8 +16,8 @@ param(
     [ValidateSet('Detect', 'Apply', 'Rollback')][string]$Mode = 'Detect',
     [Parameter(Mandatory, ParameterSetName = 'RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName = 'RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
-    [Parameter(Mandatory, ParameterSetName = 'RemoteNames')]
-    [Parameter(Mandatory, ParameterSetName = 'RemoteCsv')][ValidateNotNullOrEmpty()][string]$ReportDirectory,
+    [Parameter(ParameterSetName = 'RemoteNames')]
+    [Parameter(ParameterSetName = 'RemoteCsv')][ValidateNotNullOrEmpty()][string]$ReportDirectory,
     [string]$PayloadDirectory,
     [Parameter(ParameterSetName = 'Local')][string]$StateRoot = (Join-Path $env:ProgramData 'Exchange-KB5130098'),
     [Parameter(ParameterSetName = 'Local')][string]$ReceiptPath,
@@ -44,12 +45,13 @@ try {
         if ($Mode -eq 'Rollback') { throw 'Remote Rollback is not supported. Use the owned receipt locally with the required approvals.' }
         $fleetParameters = @{
             Mode=$Mode; PackageDirectory=$PSScriptRoot; PayloadDirectory=$PayloadDirectory
-            ReportDirectory=$ReportDirectory; RestartSearch=$RestartSearch
+            RestartSearch=$RestartSearch
             MaintenanceWindowApproved=$MaintenanceWindowApproved; Quiet=$AsJson
             TimeoutSeconds=$TimeoutSeconds; StabilitySeconds=$StabilitySeconds
         }
         if ($PSCmdlet.ParameterSetName -eq 'RemoteCsv') { $fleetParameters.CsvPath=$CsvPath }
         else { $fleetParameters.ComputerName=$ComputerName }
+        if ($PSBoundParameters.ContainsKey('ReportDirectory')) { $fleetParameters.ReportDirectory=$ReportDirectory }
         if ($PSBoundParameters.ContainsKey('WhatIf')) { $fleetParameters.WhatIf=$PSBoundParameters.WhatIf }
         if ($PSBoundParameters.ContainsKey('Confirm')) { $fleetParameters.Confirm=$PSBoundParameters.Confirm }
         $result = Invoke-KBFleet @fleetParameters

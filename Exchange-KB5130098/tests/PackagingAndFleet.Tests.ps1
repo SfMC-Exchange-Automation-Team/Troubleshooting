@@ -178,6 +178,50 @@ Describe 'Serial fleet rollout with mocked remoting' {
         Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
     }
 
+    It 'uses the shared default report root and creates a unique report for each run' {
+        Mock Assert-KBLocalWritePath { $script:reports } -ModuleName KB5130098 `
+            -ParameterFilter { $Path -eq 'C:\Temp\KB5130098-Reports' }
+        $first = Invoke-KBFleet -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -Quiet -Confirm:$false
+        $second = Invoke-KBFleet -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -Quiet -Confirm:$false
+        Should -Invoke Assert-KBLocalWritePath -ModuleName KB5130098 -Times 2 -Exactly `
+            -ParameterFilter { $Path -eq 'C:\Temp\KB5130098-Reports' }
+        $first.Report | Should -Not -Be $second.Report
+        Split-Path (Split-Path $first.Report -Parent) -Parent | Should -Be $script:reports
+        Test-Path -LiteralPath $first.Report | Should -BeTrue
+        Test-Path -LiteralPath $second.Report | Should -BeTrue
+    }
+
+    It 'uses the same default for CSV mode without creating reports during preview' {
+        Mock Assert-KBLocalWritePath { $script:reports } -ModuleName KB5130098 `
+            -ParameterFilter { $Path -eq 'C:\Temp\KB5130098-Reports' }
+        $csv = Join-Path $TestDrive 'default-report-targets.csv'
+        "ComputerName`r`nEX01.example.com" | Set-Content -LiteralPath $csv
+        $result = Invoke-KBFleet -CsvPath $csv -PackageDirectory $script:packageRoot -Quiet -WhatIf
+        $result.Status | Should -Be 'NoChanges'
+        Should -Invoke Assert-KBLocalWritePath -ModuleName KB5130098 -Times 1 -Exactly `
+            -ParameterFilter { $Path -eq 'C:\Temp\KB5130098-Reports' }
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+        Test-Path -LiteralPath $script:reports | Should -BeFalse
+    }
+
+    It 'fails explicitly before connecting if the selected default cannot be created' {
+        Mock New-Item { throw 'Report directory access denied.' } -ModuleName KB5130098 `
+            -ParameterFilter { $Path -eq 'C:\Temp\KB5130098-Reports' }
+        { Invoke-KBFleet -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -Quiet -Confirm:$false } |
+            Should -Throw '*Report directory access denied*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+        Should -Invoke New-Item -ModuleName KB5130098 -Times 1 -Exactly
+    }
+
+    It 'rejects an explicitly invalid report path without silently falling back' -ForEach @(
+        @{ ReportPath = 'relative\reports' }
+        @{ ReportPath = ' ' }
+    ) {
+        { Invoke-KBFleet -ComputerName EX01.example.com -PackageDirectory $script:packageRoot `
+            -ReportDirectory $ReportPath -Quiet -WhatIf } | Should -Throw '*local absolute path*'
+        Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
+    }
+
     It 'WhatIf makes no connections and writes no report' {
         Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -WhatIf
         Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
