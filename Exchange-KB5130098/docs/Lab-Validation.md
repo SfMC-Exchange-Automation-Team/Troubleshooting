@@ -5,12 +5,14 @@
 - **Historical builder/CSV/confirmation verification:** September 29, 2026.
 - **2.0.0 offline worktree validation:** September 29, 2026.
 - **2.0.0 source-archive verification/runtime smoke check:** September 29, 2026.
+- **2.0.0 lab working-folder staging/read-only check:** September 29, 2026.
 - **Current operator interface:** 2.0.0; see the [written guide](../README.md).
 
 This separates current offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
-No new 2.0.0 live Exchange build, Apply, service restart, lab deployment or customer
-rollout is claimed.
+No new 2.0.0 live Exchange payload build, Apply, service restart or customer
+rollout is claimed. Copying the tool into a lab working folder and running
+read-only detection, described below, is not remediation.
 Private hostnames, identities, operation IDs, raw logs, credential helpers,
 provisioning and session scaffolding are not published. Operator examples use
 fictional names.
@@ -43,7 +45,8 @@ restart, maintenance approval and per-server recovery gates remain separate.
 The repository folder, `C:\Temp\KB5130098-Reports`, receipts beneath
 `%ProgramData%\Exchange-KB5130098` and established stable lab folders retain their
 existing names. The archive-root change to `Exchange-KoreanRules` is not evidence
-that any lab folder was moved, upgraded or redeployed.
+that any lab folder was moved. The in-place tool update below retained the
+existing unversioned working folder.
 
 ## 2.0.0 worktree validation
 
@@ -87,6 +90,27 @@ operation.
 No live Exchange build, Apply or service restart was performed for these checks,
 and no instructional media was rebuilt. Archive tests and a no-contact preview
 do not add new workload-recovery evidence or change the historical lab limits.
+
+## 2.0.0 working-folder delivery correction
+
+The manual-run lab copy had remained at 1.2.1 while 2.0.0 was available only on
+the GitHub topic branch. The stable working folder was subsequently updated in
+place with the current scripts, shared module/private runtime, documentation,
+source downloads and instructional media. Previous files were backed up in a
+protected directory; unrelated files and the existing verified payload were
+preserved.
+
+The working kit's manifest-tracked files and preserved payload were hash-verified. The actual
+`Get-KoreanRulesState.ps1` entry point then ran in native 64-bit PowerShell in
+read-only mode, returning `RuleFilesPresentStop` and exit 20 with both installed
+rules present. It retained typed results and produced the expected JSON, CSV
+and JSON Lines reports.
+
+Before/after fingerprints confirmed unchanged installed Exchange file hashes,
+Native-directory/file ACLs, monitored service states/PIDs and NodeRunner
+identities. All 38 preexisting report/receipt files were preserved unchanged.
+No Set/Apply, SQL extraction or service restart was performed. This delivery
+check does not extend the historical workload-recovery evidence below.
 
 ## Original workload pilot observations
 

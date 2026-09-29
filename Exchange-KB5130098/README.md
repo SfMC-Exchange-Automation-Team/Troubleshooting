@@ -12,6 +12,33 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
 
+[Start-here checklist](00-START-HERE.txt)
+
+## Find the files: browse, download, and run are different steps
+
+- **Browse the scripts:** [Install](Install-KoreanRules.ps1), [Get](Get-KoreanRulesState.ps1),
+  and [Set](Set-KoreanRulesState.ps1) open their source pages. This README is the
+  current written guide. Check the **version at the top** and the GitHub branch
+  selector; changes on a topic branch do not update the repository's default
+  `main` page until the pull request is merged.
+- **Download the source kit:** the ZIP is stored in this repository's
+  [`downloads` folder](downloads). A browser saves it to its configured download
+  location, commonly `%USERPROFILE%\Downloads`; downloading does not extract it,
+  copy it to an Exchange server, or prepare the Microsoft rule files. Use the
+  browser's Downloads page and **Show in folder** to locate the saved file.
+- **Extract the whole kit:** the archive's top-level folder is
+  `Exchange-KoreanRules`. Keep its module and `private` directory with the three
+  entry points; copying only a script is not a complete installation.
+- **Find locally prepared files:** Install returns `ExpandedPackage` and
+  `PayloadDirectory`. By default the runtime is beneath
+  `C:\Temp\KoreanRules-Ready\<unique-id>\Exchange-KoreanRules`; that is separate
+  from the source folder. Pass the returned payload path to Set, or stage the
+  generated runtime into your chosen stable working folder.
+- **Keep an existing stable working folder:** adopting the new command names
+  does not rename or move it. If you already use
+  `C:\Scripts\Exchange-KB5130098`, update its managed contents in place rather
+  than changing directories for every release.
+
 ## 1. Choose the command deliberately
 
 | Recommended command | Contract |
