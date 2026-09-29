@@ -1,4 +1,4 @@
-# Exchange Korean Rules: historical validation and operational limits
+# Exchange Korean Rules: validation and operational limits
 
 - **Original workload pilot:** September 25, 2026.
 - **Historical console/reporting verification:** through September 28, 2026.
@@ -6,6 +6,7 @@
 - **2.0.0 offline worktree validation:** September 29, 2026.
 - **2.0.0 source-archive verification/runtime smoke check:** September 29, 2026.
 - **2.0.0 lab working-folder staging/read-only check:** September 29, 2026.
+- **2.0.0 walkthrough/narration validation:** September 29, 2026.
 - **Current operator interface:** 2.0.0; see the [written guide](../README.md).
 
 This separates current offline worktree and independent source-archive results,
@@ -69,7 +70,7 @@ The independently rebuilt source archive passed the same suite. Coverage include
   the complete package, including the `private` folder and module, rather than
   potentially returning a stale successful exit.
 
-No new live Exchange operation or media rebuild accompanied it. These
+No new live Exchange operation accompanied that code verification. These
 offline/native checks do not establish production recovery, a large live rollout,
 or additional workload evidence beyond the historical pilot below.
 
@@ -87,8 +88,8 @@ also smoke-tested in **no-contact `-WhatIf` mode**. That check exercised the
 generated entry point, not live target inventory or an Exchange modifying
 operation.
 
-No live Exchange build, Apply or service restart was performed for these checks,
-and no instructional media was rebuilt. Archive tests and a no-contact preview
+No live Exchange build, Apply or service restart was performed for those code checks.
+Archive tests and a no-contact preview
 do not add new workload-recovery evidence or change the historical lab limits.
 
 ## 2.0.0 working-folder delivery correction
@@ -237,6 +238,33 @@ historical test; normal disconnected-mailbox retention applied. The original
 Apply receipt and installed workaround files were retained, not removed merely
 to force another Apply. This is not an instruction to clean up current state.
 
+## Current 2.0.0 walkthrough validation
+
+The [current video](Exchange-KoreanRules-2.0.0-Walkthrough.mp4) was rebuilt for
+the three-command interface with new offline natural-sounding synthetic
+narration, rather than relabeling the 1.2.1 recording. It lasts **8 minutes
+57 seconds**, at **1920 x 1080 / 24 fps**, with **16 chapters** and **81 caption
+cues**. A separate [audio track](Exchange-KoreanRules-2.0.0-Narration.m4a),
+transcript, SRT/WebVTT captions and poster accompany it.
+
+Full video and audio decoding completed without errors. Caption text matches
+every narration-source sentence, cues stay within the timeline without overlap,
+and the guide's chapter times match the media. The audio-only track is identical
+to the video's narration stream. Integrated loudness measured **-16.54 LUFS**
+and true peak **-4.23 dBTP**. Encoded screens were visually inspected, and local
+speech recognition checked the key preparation, output, confirmation, restart
+and recovery statements.
+
+Documentation checks resolved **45 local links**, parsed **31 PowerShell
+blocks/commands**, including **17 video examples**, and checked current parameter
+names. Modifying examples were not executed. The actual four-target remote
+WhatIf display was checked without contacting servers or creating reports.
+
+These are media/documentation checks, not a new Exchange remediation or
+workload pilot. The existing **281-test** code-release evidence remains
+separately scoped above. No source ZIP, Microsoft payload or script behavior
+was changed as part of this video refresh.
+
 ## Historical media and external integration limits
 
 The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) is historical
@@ -245,7 +273,9 @@ summaries. It is not a recording of a fresh deployment or a 2.0.0 demonstration.
 It shows old names and detailed output, not the three-command interface or 4+
 compact behavior. Former workstation-only, ComputerName-only and default-prompt
 instructions are also superseded. Use the [current written guide](../README.md)
-and [reporting contract](Reporting-and-Splunk.md). No video was regenerated.
+and [reporting contract](Reporting-and-Splunk.md). A separate current
+[2.0.0 walkthrough](Exchange-KoreanRules-2.0.0-Walkthrough.mp4) now covers the
+three-command interface and its operating boundaries.
 The [1.0.1 recording](Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
 Historical media decoding, caption/transcript and illustrative-command checks
@@ -257,7 +287,7 @@ Its administrator must validate timestamps, extraction, duplicates and index pol
 ## Public distribution and operational boundaries
 
 The public repository contains source, offline tests, instructions and finished
-historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
+current/historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
 Obtain verified payload using `Install-KoreanRules.ps1` and the
 [Microsoft source guidance](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
 Review licensing before distributing a generated deployment package.
