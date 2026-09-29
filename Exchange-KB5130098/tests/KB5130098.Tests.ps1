@@ -1,6 +1,6 @@
 BeforeDiscovery {
     $packageRoot = Split-Path $PSScriptRoot -Parent
-    Import-Module (Join-Path $packageRoot 'KB5130098.psm1') -Force
+    Import-Module (Join-Path $packageRoot 'KoreanRules.psm1') -Force
 }
 
 Describe 'Published identity contract' {
@@ -21,13 +21,13 @@ Describe 'Published identity contract' {
 }
 
 Describe 'Local deployment with isolated filesystem fixtures' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         BeforeAll {
             $script:realGetIdentity = ${function:Get-KBIdentity}
             $script:realCopyNew = ${function:Copy-KBRuleNew}
         }
         BeforeEach {
-            $script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path (Get-Module KB5130098).ModuleBase 'KB5130098.psd1')
+            $script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path (Get-Module KoreanRules).ModuleBase 'KoreanRules.psd1')
             $script:fixture = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $script:exchange = Join-Path $script:fixture 'Exchange'
             $script:native = Join-Path $script:exchange 'Bin\Search\Ceres\Native'
@@ -61,7 +61,7 @@ Describe 'Local deployment with isolated filesystem fixtures' {
         }
 
         AfterAll {
-            $script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path (Get-Module KB5130098).ModuleBase 'KB5130098.psd1')
+            $script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path (Get-Module KoreanRules).ModuleBase 'KoreanRules.psd1')
         }
 
         It 'detects eligibility without writing Exchange files, state or changing services' {
@@ -247,7 +247,7 @@ Describe 'Local deployment with isolated filesystem fixtures' {
 }
 
 Describe 'Correct ContentEngine process selection' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         It 'requires both exact executable and the ContentEngineNode1 noderoot argument' {
             Mock Get-CimInstance {
                 @(
@@ -264,7 +264,7 @@ Describe 'Correct ContentEngine process selection' {
     }
 
     Describe 'Graceful Search restart boundaries' {
-        InModuleScope KB5130098 {
+        InModuleScope KoreanRules {
             BeforeEach {
                 $script:serviceCalls = New-Object Collections.Generic.List[string]
                 $script:fakeService = [pscustomobject]@{ Status = 'Running'; DependentServices = @() }

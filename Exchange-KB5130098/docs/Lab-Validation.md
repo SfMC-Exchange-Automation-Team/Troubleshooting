@@ -1,329 +1,246 @@
-# KB5130098: validation and operational lessons
+# Exchange Korean Rules: historical validation and operational limits
 
-- **Original workload pilot:** September 25, 2026
-- **Latest package/display verification:** September 28, 2026
-- **Latest offline builder/CSV verification:** September 29, 2026
-- **Latest offline confirmation verification:** September 29, 2026
-- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting, colors, builder/CSV compatibility and opt-in confirmation; not a customer rollout
+- **Original workload pilot:** September 25, 2026.
+- **Historical console/reporting verification:** through September 28, 2026.
+- **Historical builder/CSV/confirmation verification:** September 29, 2026.
+- **2.0.0 offline worktree validation:** September 29, 2026.
+- **2.0.0 source-archive verification/runtime smoke check:** September 29, 2026.
+- **Current operator interface:** 2.0.0; see the [written guide](../README.md).
 
-This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
-credential helpers, test-mailbox provisioning, and session scaffolding are not
-published. The [usage guide](../README.md) describes the supported operator flow.
+This separates current offline worktree and independent source-archive results,
+no-contact runtime checks and sanitized historical evidence.
+No new 2.0.0 live Exchange build, Apply, service restart, lab deployment or customer
+rollout is claimed.
+Private hostnames, identities, operation IDs, raw logs, credential helpers,
+provisioning and session scaffolding are not published. Operator examples use
+fictional names.
 
-## Original pilot observations
+## Current interface does not change the evidence boundary
 
-| Area | Observation |
+Use these names for current operations:
+
+| Command | Scope |
 |---|---|
-| Source and payload identities | Source checksums matched. Both rule files matched the pinned sizes and SHA256 values. |
-| Original 1.0.1 regression suite | 55 passed, zero failed or skipped; includes 16 native Windows PowerShell 5.1 entry-point tests. |
-| Native Detect | Verified eligible/missing rules with exit 0, existing rules with exit 20, and an older ineligible build with exit 20. |
-| Native fleet WhatIf | Exit 0 on all three lab targets, no remote connections or report creation. |
-| Actual fleet inventory | The original serial Kerberos inventory reported the expected three server states without applying the rules. |
-| Original guarded Apply | One eligible pilot received only the two verified BINs and a graceful Host Controller restart. |
-| Existing-file guard | The pilot subsequently refused Apply rather than overwriting rules or restarting again. |
-| Unchanged controls | The other eligible control and older-build control were not patched or restarted. |
-| Final workload | Two ordinary/English and two Korean messages delivered, preserved their bodies, and passed EWS subject/body queries. |
-| Negative controls | Four nonexistent-term queries correctly returned no test item. |
-| Final diagnostic window | 275 CTS lines observed; no matched feeder/Korean-init/timeout failures and no relevant application warnings/errors. |
-| Final health | Transport queues empty; database copies Mounted/Healthy with zero copy/replay queues; monitored services running. |
+| `Install-KoreanRules.ps1` | Build verified payload/runtime; no SQL installation or Exchange Apply |
+| `Get-KoreanRulesState.ps1` | Detect-only local, explicit-name or CSV inventory; no payload required |
+| `Set-KoreanRulesState.ps1` | Apply by default; `-Rollback` is local and receipt-bound |
 
-The historical 1.0.1 video's visual commands are illustrative. Its final results
-summarize the original observations above. The current 1.2.1 walkthrough adds
-the newer interface and reporting behavior; neither video shows a new live
-deployment. Later feature-validation evidence is separated by version below.
+One to three targets retain detailed per-server state/action blocks.
+Four or more automatically end with aggregated **`Status` + `Count`** and report
+paths, not a table enumerating every server. Detailed blocks, per-target progress
+and target-list dumps are suppressed. Errors still name the failed target, and
+mandatory recovery prompts still appear per server; **neither is suppressed**.
+Full `$report`, CSV, JSON/JSONL and explicit `-AsJson`/`-PassThru` streams retain
+every target. Operators can explicitly inspect those rows with
+`$report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule`,
+or use `$report | Format-List *` for all fields.
 
-## 1.0.2 console and elevation coverage
+These interface checks are not proof that a large modifying
+rollout or its workload recovery has been exercised. Standard confirmation is
+still opt-in at the default preference; exact identity, no-overwrite, explicit
+restart, maintenance approval and per-server recovery gates remain separate.
 
-The 1.0.2 suite had 87 tests. Its added coverage includes standard RunAs launch selection,
-32-bit-to-64-bit host selection, cancellation, unknown child exits, no-loop and
-unattended/remoting/JSON/pipeline guards, and preserved arguments with spaces,
-apostrophes, literal PowerShell syntax, trailing separators and false switches.
-Inherited WhatIf and confirmation preferences also cross the boundary, so a
-session-level preview cannot become a modifying run merely because it elevated.
+The repository folder, `C:\Temp\KB5130098-Reports`, receipts beneath
+`%ProgramData%\Exchange-KB5130098` and established stable lab folders retain their
+existing names. The archive-root change to `Exchange-KoreanRules` is not evidence
+that any lab folder was moved, upgraded or redeployed.
 
-The launch/consent boundary is mocked. A real native Windows PowerShell child
-executes the generated bootstrap against a harmless fixture to verify values,
-working directory, loop prevention and exact exit codes 0, 1, 10 and 20. These
-tests do not approve a real UAC prompt or execute Exchange Apply.
+## 2.0.0 worktree validation
 
-Native human-output tests use the actual console formatter with a fixture backend.
-They cover default Detect, WhatIf, staging, completed startup observation, rollback,
-wrong-build/existing-file stops, and a partial failure with current file state and
-its receipt. `-AsJson` separately retains the original machine result/exit behavior.
-Before/current refer to observations from the current invocation, not invented
-historical state.
+The complete worktree suite passed **281 of 281 tests** on September 29, 2026.
+The independently rebuilt source archive passed the same suite. Coverage included:
 
-## 1.1.0 unified targeting and CSV coverage
+- Native invocation of the three public entry points: `Install-KoreanRules.ps1`,
+  `Get-KoreanRulesState.ps1` and `Set-KoreanRulesState.ps1`.
+- The exact **three-target vs four-target** display boundary for explicit names
+  and CSV rosters, in both Detect and Apply.
+- Aggregated `Status` + `Count` output for compact runs rather than automatic
+  enumeration of every server.
+- Preservation of all per-target machine data despite compact human output.
+- Missing and partial payload diagnostics: expected directory, missing filenames
+  and the Install/returned `PayloadDirectory` recovery guidance.
+- Visibility of target-identifying errors and required per-server recovery prompts.
+- Three added native cases for `Get-KoreanRulesState.ps1`,
+  `Set-KoreanRulesState.ps1` and the legacy `Invoke-KB5130098.ps1` state wrapper.
+  A wrapper-only/incomplete package now fails explicitly with guidance to extract
+  the complete package, including the `private` folder and module, rather than
+  potentially returning a stale successful exit.
 
-The 1.1.0 suite passed **130 tests**. It covers strict CSV headers, quoted commas
-and multiline metadata, blank/malformed rows, exact field counts, DNS/NetBIOS
-validation, case-insensitive duplicates, deterministic ordering and a 2,500-name
-roster without truncation. Extra metadata, including an `Enabled` column, is not
-interpreted as a hidden filter or permission to change a server.
+No new live Exchange operation or media rebuild accompanied it. These
+offline/native checks do not establish production recovery, a large live rollout,
+or additional workload evidence beyond the historical pilot below.
 
-Native tests verify that the primary script dispatches `-ComputerName` or
-`-CsvPath` without running the local engine or local UAC path; ambiguous targeting
-and remote rollback are refused. Real no-connection CSV WhatIf produces valid
-machine JSON. Module tests verify file-only Apply, explicit restarted rollout,
-mandatory recovery attestation, duplicate-machine aliases, fail-stop behavior,
-`NotRun` report entries, and pre-connection rejection of unattended restarts.
-The legacy fleet wrapper preserves its earlier Apply/restart contract.
+## 2.0.0 archive and generated-runtime checks
 
-Actual CSV Detect ran against three explicit lab targets in both human and JSON
-modes over Kerberos/WinRM. Two targets already had rule files; the third had an
-older ineligible build. The primary returned exit 20 with all three observed
-records, in CSV order. Human output used the requested server name in each
-before/current/action summary rather than the management computer's name.
+After the incomplete-package guards were added,
+[`Exchange-KoreanRules-2.0.0-source.zip`](../downloads/Exchange-KoreanRules-2.0.0-source.zip)
+independently passed **281 of 281 tests** when tested from the final archive.
+All **21 manifest-covered files** were hash-verified, and the source archive
+contains **no vendor binaries**. No payload-bearing deployment archive is
+distributed publicly.
 
-Independent before/after fingerprints confirmed unchanged Exchange file
-identities, directory ACLs, service states/PIDs and NodeRunner identities across
-all three servers. No live Apply, rollback, service restart, parallel deployment,
-credential setting or trust-policy change was performed for this feature test.
-This validates three-target inventory, not a claim that a large modifying rollout
-has been exercised.
+The actual generated runtime's `Get-KoreanRulesState.ps1` was
+also smoke-tested in **no-contact `-WhatIf` mode**. That check exercised the
+generated entry point, not live target inventory or an Exchange modifying
+operation.
 
-## 1.1.1 display refinement
+No live Exchange build, Apply or service restart was performed for these checks,
+and no instructional media was rebuilt. Archive tests and a no-contact preview
+do not add new workload-recovery evidence or change the historical lab limits.
 
-The 1.1.1 suite passed **136 tests**. Non-Apply output shows one Status column; only
-Apply and its explicitly labelled previews retain Before/Current. Rollback
-continues to describe the removals and required follow-up but shows resulting
-status rather than an Apply comparison.
+## Original workload pilot observations
 
-Formatter tests inspect actual `Write-Host` calls to verify that each Present
-file-state value is green for local and remote target labels, in either Apply
-column, and alongside unchanged existing-file stop warnings. In **1.1.1**, Missing
-and unobserved values were not colored green; see the 1.2.1 update below for the
-current contextual colors. Native output tests verify the exact
-column shapes, unchanged action/error messages, and machine JSON/exit behavior.
-Green indicates presence only, not verified remediation or workload recovery.
+| Area | Recorded observation |
+|---|---|
+| Source/payload identity | Source checksums matched; both rules matched pinned sizes/SHA256. |
+| Native Detect | Eligible/missing returned 0; existing rules and an older ineligible build returned 20. |
+| Fleet preview | Three-target WhatIf returned 0 without connections or report creation. |
+| Actual inventory | Serial Kerberos inventory observed the expected three states without Apply. |
+| Guarded Apply | One eligible pilot received only the two verified BINs and a graceful Host Controller restart. |
+| Existing-file guard | A subsequent Apply was refused; no overwrite or repeat restart occurred. |
+| Controls | Other eligible/older-build controls were not patched or restarted. |
+| Final new-message workload | Two ordinary/English and two Korean messages delivered, preserved bodies and passed EWS subject/body queries. |
+| Negative controls | Four nonexistent-term queries returned no test item. |
+| Final diagnostic window | 275 CTS lines; no matched feeder/Korean-init/timeout failures or relevant application warnings/errors. |
+| Final health | Empty transport queues, Mounted/Healthy database copies with zero copy/replay queues, monitored services running. |
 
-## 1.1.2 report-directory default
+These final observations followed investigation of earlier failed windows.
+A restart or a green service/process state did not, by itself, establish recovery.
 
-The 1.1.2 suite passed **149 tests**, including minimal native direct, CSV and legacy commands that
-omit ReportDirectory, along with explicit override and empty-input checks.
-Module tests verify the one shared default, unique per-run reports, no report
-creation during WhatIf, and failure before any target connection when the report
-directory is invalid or cannot be created. A default is not a silent fallback:
-an explicitly bad path or write failure is still an error.
+## Historical interface and offline coverage
 
-Only a safe output location is inferred. No target, modifying operation, restart,
-maintenance approval, credentials or recovery attestation is selected implicitly.
+The pre-2.0.0 source suites used fixtures/mocks and native Windows PowerShell 5.1
+children. This summary retains the coverage boundaries without substituting an
+old suite count for current-release validation.
 
-Read-only live direct and CSV runs from the calling lab server also omitted
-ReportDirectory. Each created a different report under the documented default
-on the caller and returned the expected existing-rules review result. No
-parameter prompt occurred; existing operational confirmation behavior was not
-changed. Independent fingerprints confirmed unchanged Exchange files, ACLs,
-service states/PIDs and NodeRunner identities on caller and target.
+| Historical area | What was exercised; what it did not prove |
+|---|---|
+| Native invocation and exits | Path defaults, deployment-agent exit forwarding, exact custom exits; not production compliance. |
+| UAC boundary | Launch selection, 32/64-bit host selection, cancellation/no-loop guards and preserved arguments/preferences. Consent was mocked, not approved by tests. |
+| Data handoff | Native harmless child processes, private data-only report handoff, ACL/exit validation and cleanup; no Exchange Apply. |
+| Human output | Status vs Before/Current columns, actions, receipts and contextual colors; green presence was not recovery. |
+| Target parsing | Whole-roster validation, metadata/quoting, ordered large lists, duplicates and DNS rules; parser scale was not a live fleet deployment. |
+| Remote orchestration | File-only/restarted behavior, fail-stop, `NotRun`, duplicate-machine aliases and required recovery attestation in fixtures. |
+| Reporting | Typed rows, stale-data clearing, CSV protection/round trips, detailed JSON, finalized JSONL, NoCsv and preview/export failures. |
+| Builder compatibility | Simulated Exchange hosts, retained elevation/identity/signature checks, extract-only/fresh-output behavior; no live SQL extraction on Exchange. |
+| Native Exchange CSV | `ComputerName` > `Fqdn` > `Name`, optional `#TYPE`, no row fallback and no `PSComputerName` selection. |
+| Confirmation | Default High preference, explicit Confirm/Confirm false, inherited stricter policy and file-free previews; operation-specific gates were retained. |
 
-## 1.2.0 report objects and exports
+Historical package/manifest checks verified the artifacts of those releases.
+They are not verification of the differently named 2.0.0 archives. The current
+worktree and earlier 2.0.0 source archive have separately scoped results above;
+neither inherits historical test totals or earlier archive hashes. Final archive
+status is tracked separately. Current source retains the tests and legacy
+compatibility wrappers.
 
-The 1.2.0 suite passed **175 tests**. Reporting coverage verifies that session-level
-`$report` contains typed rows rather than formatted strings, `$reportFiles` names
-the files, and terminal output remains usable. Native cases exercise explicit
-`-PassThru`, machine JSON, stale-result clearing, errors, preview/no-file behavior,
-and `-NoCsv`.
+## Later read-only lab observations
 
-CSV tests round-trip commas, quotes, multiline errors and Korean text. Formula-like
-spreadsheet strings are neutralized only in CSV, while objects and JSON preserve
-the original value. Detailed JSON keeps nested data; finalized UTF-8 JSONL has
-one complete object per physical line, a run ID, UTC timestamp, scalar fields
-and typed booleans. Final JSONL is not rewritten as a fleet checkpoint.
+Actual CSV Detect observed three explicit targets over Kerberos/WinRM in human
+and JSON modes. Two already had rule files; an older build was ineligible. Exit
+20 and the ordered observations were expected review results, not failed Apply.
+Independent before/after fingerprints showed unchanged Exchange file identities,
+directory ACLs, service states/PIDs and NodeRunner identities.
 
-Tests preserve failed and unvisited targets, prevent missing observations from
-looking successful, and surface export failures while retaining available rows.
-Elevation tests use the real native child bootstrap and a private reserved-file
-handoff to return report data, validate the child's exit code, enforce ACLs and
-cleanup, and reject missing/mismatched handoffs. Actual UAC consent is not clicked
-or bypassed by these tests.
+Read-only reporting checks subsequently exercised local output, a remote target,
+a two-target CSV with JSON, NoCsv and preview in the same PowerShell session.
+Typed rows and report paths were retained. CSV rows matched the objects, detailed
+JSON parsed, and finalized UTF-8 JSONL had one complete object per row. NoCsv
+omitted only CSV; preview exported no files. Caller/target fingerprints stayed
+unchanged. These were inventory/reporting checks, not new Apply or restart tests.
 
-The Splunk guidance was checked against published configuration specifications.
-Neither a customer Splunk connection nor live Splunk ingestion was performed;
-field extraction, timestamp mapping, duplicate handling and customer index policy
-must still be validated by that environment's Splunk administrator.
+A historical display update refreshed a stable manual-run package in place,
+preserving extra files and a protected backup of previous managed contents.
+Detect then returned `RuleFilesPresentStop` with exit 20. This does not claim that
+the same folder was moved or updated for 2.0.0.
 
-Read-only live checks subsequently exercised local human output, one remote
-target, a two-target CSV with machine JSON, NoCsv, and a preview in the same
-PowerShell session. The report variable retained typed rows in every case;
-terminal summaries/paths were present, CSV identities matched the objects,
-detailed JSON parsed, and JSONL contained exactly one UTF-8 object per row.
-NoCsv omitted only CSV; the preview exported no files. Installed Exchange file,
-ACL, service/PID and NodeRunner fingerprints stayed unchanged across caller
-and targets. No Apply or service restart was performed for the reporting update.
+The later builder/CSV and confirmation changes did not include a new live Apply,
+restart, recovery attestation or customer rollout.
 
-## 1.2.1 contextual colors and current walkthrough
+## Why the first workload observation was insufficient
 
-The 1.2.1 suite passed **177 tests** from both the worktree and the generated
-source archive. The archive's 15 manifest-covered files were hash-verified.
-Formatter tests inspect `Write-Host` foreground colors: a pinned mismatch is
-red, a confirmed match is green, and Missing is green with a matching identity
-or yellow with an explicit mismatch. Unobserved state stays neutral. Present
-remains green, without removing the existing-rule stop. Native entry-point
-tests continue to cover output columns, machine JSON and exit behavior.
+The initial ordinary message passed before Apply. After the ContentEngine
+restart, new ordinary mail delivered but did not appear in the tested subject/body
+query during two separate five-minute windows. Those remain genuine failures.
+Healthy monitors or a running process did not justify declaring recovery.
 
-The stable package directory on the manual-run lab server was updated in place
-to 1.2.1. All nine deployment-manifest entries and the packaged payload identities
-were verified; extra files were preserved and the previous tracked files were
-retained in a protected backup. Read-only Detect returned `RuleFilesPresentStop`
-and exit 20 with both rules present. No Apply, installed-rule changes or service
-restarts were performed for this display update.
+Investigation found long-running callers retaining failed FAST/CTS feeder objects.
+Logs distinguished an old feeder reporting blocked delivery, its shutdown, and a
+new feeder opening a session. Several callers recovered without a service restart.
+New-message searches began passing while a residual feeder warning still occurred,
+so investigation continued rather than treating one positive query as completion.
 
-The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) replaces the
-older video for the 1.2.1 learning path. It uses illustrative commands and
-abbreviated output with offline synthetic narration, visible captions, a
-transcript and chapter markers. Rebuilding the media does not constitute a new
-deployment or workload test. The earlier EWS observations, lack of certified
-OWA/Outlook or backlog recovery, and untested customer Splunk integration remain
-unchanged.
+## Attribute failure to the actual caller
 
-The rebuilt media runs **9 minutes 26 seconds** at **1920 x 1080**, with
-16 embedded chapters and 93 caption cues. Full video/audio decoding completed
-without errors; the standalone narration matches the video's audio stream.
-Caption text matches the narration source and the guide's chapter times match
-the media. Encoded frames were visually inspected, and an offline speech
-transcription recognized the key safety and reporting statements. Documented
-PowerShell examples were syntax-checked against current parameter names without
-executing the modifying examples. These are media/documentation checks, not a
-new Exchange or Splunk validation.
+In the lab, `MSExchangeFastSearch` event 1006 originated from multiple processes:
+EWS, Mailbox Transport Delivery and EdgeTransport. **The event provider name is
+not the originating service.** Correlate:
 
-## 1.2.2 builder host restriction and Exchange inventory CSVs
-
-The full suite passed **209 tests** from both the worktree and the generated
-source archive; all 15 manifest-covered archive files were hash-verified.
-Builder tests now simulate an
-Exchange installation and verify that omitted workstation confirmation no longer
-blocks existing-rule, existing-media or download builds. Extract-only media
-execution is mocked: no SQL download/extraction or installation is performed on
-a live Exchange server for these tests. Identity/signature failures still stop
-before execution, and fresh output directories remain required.
-
-Native Windows PowerShell 5.1 tests execute the actual builder with an isolated
-Exchange-host fixture, no required confirmation switch, real file packaging,
-manifest/ZIP hashes and fixture payload verification. The legacy optional switch
-is also covered. The administrator/host-detection stubs are confined to the test
-runner's temporary directory; production administrator checks remain enforced.
-
-CSV tests cover native `Name` and `Fqdn` properties, full-inventory-style exports
-with PowerShell `#TYPE` metadata, case/whitespace normalization, and precedence
-`ComputerName` > `Fqdn` > `Name`. Blank or invalid selected values cannot silently
-fall back to another column. `PSComputerName` is never selected as a target.
-Native previews and mocked remote inventory validate ordering, selected targets,
-and refusal of invalid later rows before any connection or report creation.
-
-These changes did not include a new live fleet rollout or Exchange service
-restart. The 1.2.1 media remains versioned; the guide explicitly corrects its
-former workstation-only and ComputerName-only requirements for 1.2.2.
-
-## 1.2.3 opt-in standard confirmation
-
-The full suite passed **246 tests** from both the worktree and the generated,
-manifest-verified source archive. All four public/shared operation
-entry points use `ConfirmImpact = 'Medium'`, so the default PowerShell
-`ConfirmPreference = 'High'` no longer triggers a standard confirmation prompt.
-No global preference is weakened by the production code.
-
-A 36-case native noninteractive matrix runs the real `ShouldProcess` logic for
-local/module, remote/module, primary local, primary remote names, primary CSV and
-legacy entry points. Test-only boundaries stop before Exchange writes or remote
-connections. Default and explicitly disabled confirmation reach those boundaries;
-explicit confirmation and a stricter inherited policy still request input and
-therefore fail in the noninteractive host. Preview, including explicit Confirm
-combined with WhatIf, reaches neither boundary and writes no reports.
-
-Existing isolated Apply and remote inventory tests now omit Confirm false and
-still complete their fixture operations. File-only/restarted fleet behavior and
-per-server attestation remain covered. Elevation bootstrap coverage additionally
-verifies the default High preference survives the process boundary. Report
-persistence does not prompt independently, including when the caller suppresses
-standard confirmation under a stricter global preference.
-
-No live Apply, restart, recovery attestation or customer rollout was performed for
-this change. UAC consent, maintenance approval, rollback approval and workload
-validation remain separate from standard PowerShell confirmation.
-
-## Why the first workload observation was not enough
-
-The initial ordinary message passed before applying the rules. After the
-ContentEngine restart, new ordinary mail delivered but did not appear in the
-tested subject/body query during two separate five-minute windows.
-
-Those remain genuine failed observation windows. A running process and healthy
-monitor status did not justify declaring recovery.
-
-Subsequent investigation found long-running callers retaining failed FAST/CTS
-feeder objects. The logs distinguished an old feeder reporting blocked delivery,
-its shutdown, and a new feeder opening a session. Several callers recovered
-without a service restart.
-
-New-message searches began passing while a residual feeder warning still occurred.
-That is why the investigation continued instead of treating a positive query as
-the entire recovery criterion.
-
-## Attribute the failure to its caller
-
-`MSExchangeFastSearch` event 1006 was emitted by multiple processes in the lab:
-EWS, Mailbox Transport Delivery, and EdgeTransport.
-
-The **event provider name is not the originating service**. Use:
-
-1. The event XML's `System/Execution/@ProcessID`.
-2. The matching live executable and parent/service identity.
-3. Correlated CTS feeder/session identifiers and timestamps.
-4. The workload's own health and maintenance requirements.
+1. Event XML `System/Execution/@ProcessID`.
+2. The matching live executable, parent and service identity.
+3. CTS feeder/session identifiers and timestamps.
+4. The workload's own health, maintenance and recovery requirements.
 
 The last residual warning was attributed to a preexisting EdgeTransport worker.
-A separately scoped, graceful `MSExchangeTransport` restart on the pilot was
-performed only after verifying empty queues, healthy database copies, the exact
-caller identity, and no running dependent services. Stop/start waits were bounded;
-no process was force-terminated. The new worker was observed stable, while the
-other monitored service and NodeRunner identities remained unchanged.
+A separately approved, graceful `MSExchangeTransport` restart on the pilot
+followed checks of empty queues, healthy database copies, exact caller identity
+and no running dependent services. Waits were bounded; no process was force-killed.
+The new worker was stable; other monitored service/NodeRunner identities were
+unchanged.
 
-This was an **evidence-led lab recovery**, not a new automatic action added to the
-deployment package. Do not turn it into a blanket restart recommendation.
+This was **evidence-led lab recovery**, not an automatic action added to Exchange
+Korean Rules and not a blanket recommendation to restart Transport or Search.
+The tool's automatic approved restart scope remains `HostControllerService`.
 
-## Final workload and limits
+## What the final workload did and did not establish
 
-After the targeted caller recovery, all four new-message tests and all four
-negative controls passed. The diagnostic window remained clear through the final
-snapshot, roughly eight minutes after that validation run began.
+After targeted caller recovery, all four new-message tests and four negative
+controls passed. The diagnostic window stayed clear through the final snapshot,
+roughly eight minutes after that validation run began.
+The test mailbox reported four indexed items; its aggregate not-indexed counter
+did not drain during the two-minute sample.
 
-The temporary mailbox reported four indexed items. Its aggregate not-indexed
-counter did not drain during the two-minute sample. No claim is made that every
-older or retained item was processed.
+Not established:
 
-Not established by this test:
-
-- Complete historical backlog recovery.
-- Sustained production-load behavior.
-- Reproduction of every Korean initialization/deadlock trigger.
-- The original customer's symptoms or impact boundary.
-- OWA or Outlook UI/connectivity recovery; the automated checks used EWS.
+- Complete historical-backlog recovery or sustained production-load behavior.
+- Every Korean initialization/deadlock trigger or the customer's impact boundary.
+- OWA/Outlook UI or connectivity recovery; the automated checks used **EWS**.
 - Live rollback, which was not attempted without actual Support approval.
+- A large modifying fleet rollout or 2.0.0 live deployment.
+- A customer's Splunk connection, ingestion, parsing or alerting.
 
-Temporary recipients, scheduled tasks, and staging were removed. Normal
-disconnected-mailbox retention applied. The original Apply receipt and installed
-workaround files were retained on the pilot; they were not deleted merely to
-exercise another Apply.
+Temporary recipients, scheduled tasks and pilot staging were removed after that
+historical test; normal disconnected-mailbox retention applied. The original
+Apply receipt and installed workaround files were retained, not removed merely
+to force another Apply. This is not an instruction to clean up current state.
 
-## Why retain the guarded kit
+## Historical media and external integration limits
 
-A smaller pilot script offered useful payload confirmation and caller-recovery
-guidance. It did have basic error handling: terminating errors, input hashes,
-existing-file refusal, no-overwrite copying, copied-file hashes, and snapshots.
+The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) is historical
+illustrative material with synthetic narration, captions and recorded-result
+summaries. It is not a recording of a fresh deployment or a 2.0.0 demonstration.
+It shows old names and detailed output, not the three-command interface or 4+
+compact behavior. Former workstation-only, ComputerName-only and default-prompt
+instructions are also superseded. Use the [current written guide](../README.md)
+and [reporting contract](Reporting-and-Splunk.md). No video was regenerated.
+The [1.0.1 recording](Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
-The guarded kit adds explicit applicability, protected incremental receipts,
-inherited-read checks, operation serialization, bounded restart observation, and
-serial fleet recovery gates. Service snapshots alone do not enforce these checks
-or prove workload recovery.
+Historical media decoding, caption/transcript and illustrative-command checks
+were documentation checks, not additional Exchange or Splunk validation.
+The [Splunk examples](Reporting-and-Splunk.md) were reviewed against published
+configuration specifications, not tested end-to-end against a customer instance.
+Its administrator must validate timestamps, extraction, duplicates and index policy.
 
-Version 1.0.1 fixes omitted path defaults under native `-File` invocation and
-documents explicit forwarding of custom exit codes through `-Command`. The guarded
-deployment engine and builder were not broadened or weakened by those corrections.
+## Public distribution and operational boundaries
 
-## Public distribution boundary
+The public repository contains source, offline tests, instructions and finished
+historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
+Obtain verified payload using `Install-KoreanRules.ps1` and the
+[Microsoft source guidance](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
+Review licensing before distributing a generated deployment package.
 
-This repository publishes source, offline tests, the article, and finished
-instructional media. It intentionally does not redistribute Microsoft's rule
-binaries or SQL media. Obtain those through the reviewed local build process and
-the current Microsoft guidance, and review licensing before redistributing the
-generated deployment package.
+Keep exact applicability, no-overwrite creation, protected incremental receipts,
+inherited-read checks, operation serialization, bounded restart observation and
+serial workload gates. A smaller copy/restart script or a healthy service snapshot
+does not replace them. The legacy fleet wrapper's Apply still implies restart;
+current Set requires explicit `-RestartSearch`. Rollback remains local, owned,
+completed-receipt-bound and Support-approved, never routine cleanup.

@@ -1,10 +1,10 @@
 BeforeDiscovery {
     $script:packageRoot = Split-Path $PSScriptRoot -Parent
-    Import-Module (Join-Path $script:packageRoot 'KB5130098.psm1') -Force
+    Import-Module (Join-Path $script:packageRoot 'KoreanRules.psm1') -Force
 }
 
 Describe 'Consent-based local elevation boundaries' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         BeforeEach {
             $script:context = [pscustomobject]@{
                 Administrator = $false
@@ -156,7 +156,7 @@ exit $TestExit
     }
 
     It 'can inspect the real process context without requiring elevation' {
-        $context = & (Get-Module KB5130098) { Get-KBElevationContext }
+        $context = & (Get-Module KoreanRules) { Get-KBElevationContext }
         $context.Administrator | Should -BeOfType bool
         $context.Interactive | Should -BeOfType bool
         $context.Remote | Should -BeOfType bool
@@ -188,8 +188,8 @@ exit $TestExit
             $bound.Remove('WhatIf')
             $bound.Remove('Confirm')
         }
-        $relay = & (Get-Module KB5130098) { New-KBReportRelay }
-        $encoded = & (Get-Module KB5130098) {
+        $relay = & (Get-Module KoreanRules) { New-KBReportRelay }
+        $encoded = & (Get-Module KoreanRules) {
             param($Path, $Bound, $Working, $RelayPath, $Level)
             New-KBElevationCommand -ScriptPath $Path -BoundParameters $Bound -WorkingDirectory $Working `
                 -WaitForUser:$false -PreviewPreference $true -ConfirmationPreference $Level -ReportRelayPath $RelayPath
@@ -228,7 +228,7 @@ exit $TestExit
             $result.TimeoutSeconds | Should -Be 177
             $result.StabilitySeconds | Should -Be 43
             Test-Path -LiteralPath $marker | Should -BeFalse
-            $handoff = & (Get-Module KB5130098) {
+            $handoff = & (Get-Module KoreanRules) {
                 param($Relay, $Code)
                 Read-KBReportRelay -Relay $Relay -ExpectedExitCode $Code
             } $relay $Code
@@ -237,7 +237,7 @@ exit $TestExit
             $handoff.ExportFiles.Csv | Should -Be 'C:\Fixture\results.csv'
         } finally {
             $process.Dispose()
-            & (Get-Module KB5130098) { param($Relay) Remove-KBReportRelay $Relay } $relay
+            & (Get-Module KoreanRules) { param($Relay) Remove-KBReportRelay $Relay } $relay
         }
         Test-Path -LiteralPath $relay.Directory | Should -BeFalse
     }

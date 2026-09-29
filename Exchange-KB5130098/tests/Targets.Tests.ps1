@@ -1,9 +1,9 @@
 BeforeDiscovery {
-    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KB5130098.psm1') -Force
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KoreanRules.psm1') -Force
 }
 
 Describe 'Strict ordered CSV and direct target validation' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         BeforeEach {
             $script:csv = Join-Path $TestDrive (([guid]::NewGuid().ToString('N')) + '.csv')
         }
