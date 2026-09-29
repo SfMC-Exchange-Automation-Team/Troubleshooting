@@ -1,4 +1,4 @@
-ComputerName,Site,Notes
-EX01.contoso.com,SiteA,Approved pilot
-EX02.contoso.com,SiteA,Next approved server
-EX03.contoso.com,SiteB,Inventory before selecting for Apply
+Name,Fqdn,Site,Notes
+EX01,EX01.contoso.com,SiteA,Approved pilot
+EX02,EX02.contoso.com,SiteA,Next approved server
+EX03,EX03.contoso.com,SiteB,Inventory before selecting for Apply

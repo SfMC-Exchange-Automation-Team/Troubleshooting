@@ -505,14 +505,35 @@ Describe 'Unified native local/remote/CSV dispatch' {
         $json.Report | Should -BeNullOrEmpty
     }
 
-    It 'runs the real CSV preview without specifying a report directory' {
+    It 'runs the real <Header> CSV preview without specifying a report directory' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'defaults.csv'
-        "ComputerName`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
         $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
         ($result.Output | ConvertFrom-Json).Targets | Should -Be @('EX01.example.com')
+    }
+
+    It 'reads an unrenamed Exchange inventory CSV with type metadata through the actual native entry point' {
+        $csv = Join-Path $TestDrive 'exchange-inventory.csv'
+        '#TYPE Deserialized.Microsoft.Exchange.Data.Directory.Management.ExchangeServer',
+            '"Name","Fqdn","PSComputerName","ServerRole"',
+            '"EX02","EX02.example.com","management.example.com","Mailbox"',
+            '"EX01","EX01.example.com","management.example.com","Mailbox"' |
+            Set-Content -LiteralPath $csv -Encoding UTF8
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $report = Join-Path $TestDrive 'No inventory-preview reports'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "{2}" -WhatIf -AsJson' -f $path,$csv,$report)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $json = $result.Output | ConvertFrom-Json
+        $json.Targets | Should -Be @('EX02.example.com','EX01.example.com')
+        $json.Servers | Should -Be 0
+        $json.TargetCount | Should -Be 2
+        Test-Path -LiteralPath $report | Should -BeFalse
     }
 
     It 'runs the actual legacy wrapper preview without a report-directory prompt' {
@@ -580,13 +601,94 @@ Describe 'Unified native local/remote/CSV dispatch' {
         Test-Path -LiteralPath $report | Should -BeFalse
     }
 
-    It 'validates all real CSV records before reporting a preview plan' {
+    It 'validates all real <Header> CSV records before reporting a preview plan' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'invalid targets.csv'
-        "ComputerName`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
         $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory C:\Reports -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'CSV record 3'
         $result.Output | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Native builder without a workstation-confirmation requirement' {
+    BeforeAll {
+        $script:builderRoot = Join-Path $TestDrive 'Native builder fixture'
+        $script:builderRules = Join-Path $script:builderRoot 'rules'
+        $null = New-Item -Path $script:builderRules -ItemType Directory -Force
+        foreach ($name in @('Build-KB5130098Package.ps1','Invoke-KB5130098.ps1','Invoke-KB5130098Fleet.ps1','KB5130098.psd1','README.txt')) {
+            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:builderRoot
+        }
+        foreach ($directory in @('examples','docs')) {
+            $null = New-Item -Path (Join-Path $script:builderRoot $directory) -ItemType Directory
+        }
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'examples\servers.csv') -Destination (Join-Path $script:builderRoot 'examples')
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'docs\Reporting-and-Splunk.md') -Destination (Join-Path $script:builderRoot 'docs')
+        foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+            'Native builder fixture; not Microsoft payload' | Set-Content -LiteralPath (Join-Path $script:builderRules $name)
+        }
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $script:packageRoot 'KB5130098.psm1'), [ref]$tokens, [ref]$errors)
+        if ($errors.Count) { throw 'Production module does not parse.' }
+        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload')) {
+            $definition = $ast.Find({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $false)
+            if ($null -eq $definition) { throw "Missing production helper: $name" }
+            $definition.Extent.Text
+        }
+        $fixture = @'
+$script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'KB5130098.psd1')
+foreach ($rule in $script:Spec.Rules) {
+    $path = Join-Path (Join-Path $PSScriptRoot 'rules') $rule.Name
+    $rule.Bytes = (Get-Item -LiteralPath $path).Length
+    $rule.SHA256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+function Assert-KBAdministrator {}
+function Test-Path {
+    [CmdletBinding(DefaultParameterSetName='Path')]
+    param(
+        [Parameter(Position=0, ParameterSetName='Path')][string[]]$Path,
+        [Parameter(ParameterSetName='LiteralPath')][string[]]$LiteralPath,
+        [Alias('Type')][string]$PathType
+    )
+    if ($LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup') { return $true }
+    Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+}
+function Start-Process { throw 'Native builder fixtures must never launch installers.' }
+function Invoke-WebRequest { throw 'Native builder fixtures must never download software.' }
+'@
+        ($fixture + "`r`n" + ($helpers -join "`r`n")) |
+            Set-Content -LiteralPath (Join-Path $script:builderRoot 'KB5130098.psm1') -Encoding ASCII
+    }
+
+    It 'builds under native -File on an Exchange-host fixture with <ArgumentsLabel>' -ForEach @(
+        @{ ArgumentsLabel='no confirmation switch'; Extra='' }
+        @{ ArgumentsLabel='the legacy optional switch'; Extra=' -ManagementWorkstationConfirmed' }
+    ) {
+        $output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $builder = Join-Path $script:builderRoot 'Build-KB5130098Package.ps1'
+        $arguments = '-File "{0}" -RuleSourceDirectory "{1}" -OutputDirectory "{2}" -WorkRoot "{3}"{4}' -f `
+            $builder,$script:builderRules,$output,$work,$Extra
+        $result = Invoke-NativeFixture -Arguments $arguments -WorkingDirectory $TestDrive
+        $result.ExitCode | Should -Be 0 -Because ($result.Error + $result.Output)
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'Exchange installation detected'
+        $result.Output | Should -Not -Match 'Supply values|missing mandatory parameters'
+        $zip = @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File)
+        $zip.Count | Should -Be 1
+        $expected = ([IO.File]::ReadAllText("$($zip[0].FullName).sha256") -split '\s+')[0]
+        (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash | Should -Be $expected
+        foreach ($rule in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+            (Get-FileHash -LiteralPath (Join-Path $output "Exchange-KB5130098\payload\$rule")).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $script:builderRules $rule)).Hash
+        }
     }
 }

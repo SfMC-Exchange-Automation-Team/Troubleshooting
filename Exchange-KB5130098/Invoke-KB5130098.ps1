@@ -8,6 +8,8 @@ Restart is opt-in and requires an approved maintenance window. Workload validati
 is always manual. Local interactive runs can request UAC elevation. Human-readable
 status/action output is the default, with before/current comparisons for Apply.
 -AsJson preserves machine output.
+CSV targets accept ComputerName, Fqdn or Name (in that precedence order).
+Get-ExchangeServer exports do not require a calculated ComputerName property.
 Results remain in caller $report, with paths in $reportFiles. CSV, detailed JSON
 and JSON Lines export by default, except previews. -NoCsv suppresses CSV only.
 Reports default to C:\Temp\KB5130098-Reports on the calling computer.

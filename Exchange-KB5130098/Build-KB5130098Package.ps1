@@ -1,11 +1,13 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Builds a deployable ZIP on an elevated management workstation, never on Exchange.
+Builds a deployable ZIP in elevated PowerShell, including on an Exchange server.
 .DESCRIPTION
 Supply either the exact Microsoft SQL Express package or the two previously
 extracted rule files. -Download explicitly authorizes a 749 MB Microsoft download.
 SQL media is extracted only; SQL Setup and MSI product installation are never run.
+A management workstation remains recommended to avoid extraction load on Exchange.
+ManagementWorkstationConfirmed is optional and retained for older command lines.
 #>
 [CmdletBinding(DefaultParameterSetName = 'ExistingMedia')]
 param(
@@ -13,18 +15,15 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Download')][switch]$Download,
     [Parameter(Mandatory, ParameterSetName = 'ExistingRules')][string]$RuleSourceDirectory,
     [Parameter(Mandatory)][string]$OutputDirectory,
-    [Parameter(Mandatory)][switch]$ManagementWorkstationConfirmed,
+    [switch]$ManagementWorkstationConfirmed,
     [string]$WorkRoot = 'C:\Temp\KB5130098-Build'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'KB5130098.psm1') -Force
 Assert-KBAdministrator
-if (-not $ManagementWorkstationConfirmed) {
-    throw 'Confirm that this computer is a management workstation, not an Exchange server.'
-}
 if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup') {
-    throw 'Exchange installation detected. Run the builder on a management workstation instead.'
+    Write-Warning 'Exchange installation detected. Building here uses local disk and CPU; a management workstation is recommended. This builder only extracts and packages files; it does not apply the workaround or restart Exchange.'
 }
 $spec = Get-KBSpecification
 $output = Assert-KBLocalWritePath $OutputDirectory
@@ -47,7 +46,7 @@ if ($PSCmdlet.ParameterSetName -ne 'ExistingRules') {
     }
     $SqlPackagePath = (Get-Item -LiteralPath $SqlPackagePath).FullName
     if ($SqlPackagePath -notmatch '^[A-Za-z]:\\' -or $SqlPackagePath.Contains('"')) {
-        throw 'Copy the SQL package to a local workstation directory before extraction.'
+        throw 'Copy the SQL package to a local directory before extraction.'
     }
     Assert-KBIdentity -Path $SqlPackagePath -Expected $spec.SqlPackage
     $signature = Get-AuthenticodeSignature -LiteralPath $SqlPackagePath

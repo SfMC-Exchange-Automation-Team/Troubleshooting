@@ -6,7 +6,7 @@ BeforeAll {
     $script:packageRoot = Split-Path $PSScriptRoot -Parent
 }
 
-Describe 'Management workstation builder' {
+Describe 'Guarded package builder' {
     BeforeEach {
         $script:output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $script:work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -22,10 +22,11 @@ Describe 'Management workstation builder' {
         Mock Test-Path { $false } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
         Mock Start-Process { throw 'Tests must not launch installers' }
         Mock Invoke-WebRequest { throw 'Tests must not download software' }
+        Mock Write-Warning {}
     }
 
     It 'creates a small ZIP with only the named payload and runtime files' {
-        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed
+        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work
         (Test-Path -LiteralPath $result.Package) | Should -BeTrue
         $result.SHA256 | Should -Be (Get-FileHash -LiteralPath $result.Package -Algorithm SHA256).Hash
         $expanded = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -46,17 +47,81 @@ Describe 'Management workstation builder' {
         { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
     }
 
-    It 'refuses to extract on an Exchange machine' {
+    It 'packages verified rules on Exchange without requiring workstation confirmation' -ForEach @(
+        @{ LegacySwitch=$false }, @{ LegacySwitch=$true }
+    ) {
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*Exchange installation*'
+        $parameters = @{ RuleSourceDirectory=$script:rules; OutputDirectory=$script:output; WorkRoot=$script:work }
+        if ($LegacySwitch) { $parameters.ManagementWorkstationConfirmed=$true }
+        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
+        Test-Path -LiteralPath $result.Package | Should -BeTrue
+        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -like '*Exchange installation detected*' }
+        Should -Invoke Assert-KBAdministrator -Times 1 -Exactly
+        Should -Invoke Assert-KBPayload -Times 2 -Exactly
+        Should -Invoke Start-Process -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
     }
 
-    It 'rejects untrusted Microsoft media before execution' {
+    It 'allows extract-only media builds on Exchange via <SourceMode> without confirmation' -ForEach @(
+        @{ SourceMode='Download' }, @{ SourceMode='ExistingMedia' }
+    ) {
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
+        $media = Join-Path $TestDrive 'fake-sql.exe'
+        'Fixture only' | Set-Content -LiteralPath $media
+        Mock Assert-KBIdentity {}
+        Mock Get-AuthenticodeSignature {
+            [pscustomobject]@{ Status='Valid'; SignerCertificate=[pscustomobject]@{Subject='CN=Microsoft Corporation, O=Microsoft Corporation, C=US'} }
+        }
+        Mock Invoke-WebRequest { 'Downloaded fixture only' | Set-Content -LiteralPath $OutFile }
+        Mock Start-Process {
+            $extract = [regex]::Match(($ArgumentList -join ' '), '^/q /x:"([^"]+)"$')
+            if ($extract.Success) {
+                $setup = Join-Path $extract.Groups[1].Value 'x64\Setup'
+                $null = New-Item -Path $setup -ItemType Directory -Force
+                'MSI fixture only' | Set-Content -LiteralPath (Join-Path $setup 'SQL_FULLTEXT.MSI')
+            } else {
+                $adminExtract = [regex]::Match(($ArgumentList -join ' '), '^/a "[^"]+" TARGETDIR="([^"]+)" /qn /norestart /L\*V "[^"]+"$')
+                if (-not $adminExtract.Success) { throw 'Unexpected installer arguments.' }
+                $rules = Join-Path $adminExtract.Groups[1].Value 'Program Files\Microsoft SQL Server\MSSQL.X\MSSQL\Binn\ftcomponents\wordbreakers'
+                $null = New-Item -Path $rules -ItemType Directory -Force
+                foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+                    'Extracted fixture only' | Set-Content -LiteralPath (Join-Path $rules $name)
+                }
+            }
+            [pscustomobject]@{ ExitCode=0 }
+        }
+        $parameters = @{ OutputDirectory=$script:output; WorkRoot=$script:work }
+        if ($SourceMode -eq 'Download') { $parameters.Download=$true }
+        else { $parameters.SqlPackagePath=$media }
+        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
+        Test-Path -LiteralPath $result.Package | Should -BeTrue
+        Should -Invoke Write-Warning -Times 1 -Exactly
+        Should -Invoke Assert-KBIdentity -Times 1 -Exactly
+        Should -Invoke Get-AuthenticodeSignature -Times 1 -Exactly
+        Should -Invoke Assert-KBPayload -Times 2 -Exactly
+        Should -Invoke Start-Process -Times 2 -Exactly
+        Should -Invoke Invoke-WebRequest -Times $(if ($SourceMode -eq 'Download') { 1 } else { 0 }) -Exactly
+    }
+
+    It 'still rejects media identity failures on an Exchange host before execution' {
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
+        $media = Join-Path $TestDrive 'wrong-sql.exe'
+        'Fixture only' | Set-Content -LiteralPath $media
+        Mock Assert-KBIdentity { throw 'Size or SHA256 mismatch: fixture media' }
+        Mock Get-AuthenticodeSignature { throw 'Signature lookup must not run after identity failure.' }
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } |
+            Should -Throw '*Size or SHA256 mismatch*'
+        Should -Invoke Get-AuthenticodeSignature -Times 0 -Exactly
+        Should -Invoke Start-Process -Times 0 -Exactly
+    }
+
+    It 'still rejects untrusted Microsoft media on an Exchange host before execution' {
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
         $media = Join-Path $TestDrive 'fake-sql.exe'
         'Fixture only' | Set-Content -LiteralPath $media
         Mock Assert-KBIdentity {}
         Mock Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*valid Microsoft Authenticode*'
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } | Should -Throw '*valid Microsoft Authenticode*'
         Should -Invoke Start-Process -Times 0 -Exactly
     }
 
@@ -251,18 +316,22 @@ Describe 'Serial fleet rollout with mocked remoting' {
         Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
     }
 
-    It 'uses the entire validated CSV roster in order without calling local-only elevation' {
+    It 'uses the entire validated <Header> CSV roster in order without calling local-only elevation' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'targets.csv'
-        "ComputerName,Site`r`nEX02.example.com,A`r`nEX01.example.com,B" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header,Site`r`nEX02.example.com,A`r`nEX01.example.com,B" | Set-Content -LiteralPath $csv -Encoding UTF8
         $result = Invoke-KBFleet -Mode Detect -CsvPath $csv -PackageDirectory $script:packageRoot `
             -ReportDirectory $script:reports -Confirm:$false
         $result.TargetCount | Should -Be 2
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX02.example.com|Connect EX01.example.com'
     }
 
-    It 'rejects an invalid late CSV row before any connection or report creation' {
+    It 'rejects an invalid late <Header> CSV row before any connection or report creation' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'bad-targets.csv'
-        "ComputerName`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
         { Invoke-KBFleet -CsvPath $csv -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*CSV record 3*'
         Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
         Test-Path -LiteralPath $script:reports | Should -BeFalse

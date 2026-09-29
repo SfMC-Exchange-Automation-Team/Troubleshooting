@@ -1,18 +1,21 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.2.1
+- **Package:** Exchange-KB5130098 1.2.2
 - **Audience:** Exchange Server administrators and change owners
 - **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
+- **Builder/CSV compatibility validated:** September 29, 2026
 - **Reading time:** About 12 minutes
 
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the 1.2.1 walkthrough](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4) ·
 [Listen to the narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.2.1-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.2.2-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
+
+> **New in 1.2.2:** The builder no longer blocks Exchange hosts or requires `-ManagementWorkstationConfirmed`. Building on Exchange produces an advisory warning, not a refusal; media and payload identity checks remain mandatory. CSV import accepts native `Get-ExchangeServer` columns: `ComputerName` takes precedence when supplied, otherwise `Fqdn`, then `Name`. No calculated property or column rename is required.
 
 > **New in 1.2.0:** The script retains structured rows in **`$report`**, prints a terminal summary, and exports **CSV, detailed JSON and final JSON Lines by default**. `$reportFiles` holds their paths. Reports use `C:\Temp\KB5130098-Reports` on the caller, with `-ReportDirectory` as an override. `-NoCsv` omits CSV only; previews write no persistent reports. [Reporting and Splunk guidance](docs/Reporting-and-Splunk.md) explains the formats and ingestion boundaries.
 
@@ -25,6 +28,8 @@ The video uses illustrative commands and clearly labelled recorded lab results. 
 **9 minutes 26 seconds · 1080p · natural-sounding synthetic narration · on-screen captions · 16 embedded chapters**
 
 This walkthrough explains **1.2.1**: one primary local/remote/CSV entry point, UAC boundaries, color-coded human output, retained `$report` objects, default CSV/JSON/JSONL exports, and the Splunk collection contract. Commands and abbreviated output are illustrative, not a screen recording of a fresh deployment. The **177-test** baseline and read-only lab verification are identified separately from the earlier workload pilot.
+
+**1.2.2 corrections to the recording:** At 00:32 the video describes the former workstation-only restriction; the current builder permits Exchange hosts with a warning. At 02:48 it describes `ComputerName` as required; the current importer also accepts `Fqdn` and `Name`, including ordinary `Get-ExchangeServer` exports. Use the current commands and selection rules below. The existing recording, narration and captions are retained as versioned 1.2.1 material.
 
 Narration was generated locally using a generic natural-sounding synthetic voice, not voice cloning. No narration text, private lab material, or audio was sent to an online speech service.
 
@@ -51,7 +56,7 @@ Narration was generated locally using a generic natural-sounding synthetic voice
 
 Accessibility and reuse: [audio-only narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a), [plain-text transcript](docs/Exchange-KB5130098-1.2.1-Transcript.txt), [WebVTT captions](docs/Exchange-KB5130098-1.2.1-Captions.vtt), and [SRT captions](docs/Exchange-KB5130098-1.2.1-Captions.srt). The MP4 includes visible captions and chapter markers. Download it if GitHub displays a binary-file page instead of a player. Keep this folder's structure when downloading the article and companion files.
 
-The [original 1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains available as historical material, not current operating instructions. It predates the unified entry point, human-output and reporting changes. Use the 1.2.1 walkthrough above for current usage.
+The [original 1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains available as historical material, not current operating instructions. It predates the unified entry point, human-output and reporting changes. Use the newer walkthrough alongside the 1.2.2 corrections above.
 
 ## At a glance
 
@@ -120,7 +125,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.2.1 source ZIP](downloads/Exchange-KB5130098-1.2.1-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.1-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.2.2 source ZIP](downloads/Exchange-KB5130098-1.2.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.2-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the historical recording; it does not include automatic elevation or the new human summary.
 
@@ -128,41 +133,43 @@ The locally generated deployment ZIP includes the runtime scripts and both verif
 
 ### If you already have the exact verified rules
 
-If you have the two rule files, build on an elevated **management workstation, not an Exchange server**:
+If you have the two rule files, build in **elevated 64-bit Windows PowerShell 5.1**. A management workstation remains recommended, but the builder now permits an Exchange host:
 
 ```powershell
 Set-Location 'C:\Temp\Exchange-KB5130098-Source\Exchange-KB5130098'
 
 .\Build-KB5130098Package.ps1 `
     -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules' `
-    -ManagementWorkstationConfirmed `
     -OutputDirectory 'C:\Temp\KB5130098-Ready'
 ```
 
-The output directory must be new. Both rule files still undergo exact size/hash validation.
+The output directory must be new. Both rule files still undergo exact size/hash validation. `-ManagementWorkstationConfirmed` is no longer required; it remains accepted for compatibility with existing commands and no longer gates execution.
 
 An independently reviewed pilot bundle contained byte-for-byte identical rule files. Its value was the verified payload and useful recovery guidance; it was not a reason to replace the guarded workflow with a simpler copy/restart script.
 
 ### Otherwise, obtain the pinned Microsoft media through the builder
 
-From the source folder on the elevated management workstation:
+From the source folder in an elevated PowerShell session:
 
 ```powershell
 .\Build-KB5130098Package.ps1 `
     -Download `
-    -ManagementWorkstationConfirmed `
     -OutputDirectory 'C:\Temp\KB5130098-Ready'
 ```
 
-This explicitly downloads roughly 749 MB of Microsoft media. Allow several GB of working space. The builder checks the media's version, byte count, SHA256 and Microsoft Authenticode signature, extracts without installing SQL, and verifies the two rules. It also supports `-SqlPackagePath` for an existing exact copy. Follow the [packaged README](README.txt). **Never perform that extraction on Exchange.**
+This explicitly downloads roughly 749 MB of Microsoft media. Allow several GB of working space. The builder checks the media's version, byte count, SHA256 and Microsoft Authenticode signature, extracts without installing SQL, and verifies the two rules. It also supports `-SqlPackagePath` for an existing exact copy. Follow the [packaged README](README.txt).
+
+**Building on Exchange:** the hard host restriction has been removed at operator request. The builder warns about local disk/CPU use and continues without an additional confirmation switch. Microsoft's KB still recommends extracting on a management workstation rather than Exchange; permitting it in this custom tool is not a change to that recommendation. Plan the resource impact through normal change control. The builder does not apply rules to the Exchange installation or restart services; SQL Setup/product installation is never run.
 
 Keep the generated ZIP, its SHA256 sidecar, and the returned build hash together in your approved release record.
+
+**After building, use the generated deployment copy**, not the original source folder. For the example output above it is `C:\Temp\KB5130098-Ready\Exchange-KB5130098`, containing `payload\ko.token.rule.bin` and `payload\ko.complex.rule.bin`. The builder does not populate the source folder's payload. Stage that reviewed runtime in your stable operator folder, or use `-PayloadDirectory` to select the verified rules on the calling computer. Remote Apply validates that caller-side payload before connecting to a target.
 
 ## 3. Verify and extract the deployment ZIP
 
 Each build produces its own ZIP and SHA256 sidecar. Use the expected hash from your trusted, reviewed build record, not a hard-coded hash from someone else's build.
 
-For reference only, the historical **1.0.1** recording's lab deployment ZIP had this SHA256; it is not distributed here and is **not** the expected hash for 1.2.1 or any new build:
+For reference only, the historical **1.0.1** recording's lab deployment ZIP had this SHA256; it is not distributed here and is **not** the expected hash for the current release or any new build:
 
 ```text
 SHA256
@@ -173,7 +180,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.2.1-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.2.2-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -306,10 +313,10 @@ Use an explicit target list. Remote Detect stages code and writes reports, but d
 Start with [examples/servers.csv](examples/servers.csv), copy it to your own list, and replace the fictional targets:
 
 ```csv
-ComputerName,Site,Notes
-EX01.contoso.com,SiteA,Approved pilot
-EX02.contoso.com,SiteA,Next approved server
-EX03.contoso.com,SiteB,Inventory before selecting for Apply
+Name,Fqdn,Site,Notes
+EX01,EX01.contoso.com,SiteA,Approved pilot
+EX02,EX02.contoso.com,SiteA,Next approved server
+EX03,EX03.contoso.com,SiteB,Inventory before selecting for Apply
 ```
 
 Then inventory it:
@@ -329,12 +336,13 @@ powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -
 
 CSV rules:
 
-- A `ComputerName` header is required, ignoring case and surrounding whitespace. Other header names must also be nonempty and unique.
-- Use comma-separated CSV; UTF-8 is recommended. Standard quoted fields and quoted multiline metadata are supported.
+- At least one of `ComputerName`, `Fqdn`, or `Name` is required. Headers are case-insensitive and trimmed; all header names must be nonempty and unique.
+- Selection is **once per file**, in precedence order: **`ComputerName` > `Fqdn` > `Name`**. Explicit `ComputerName` lists retain their meaning; normal Exchange exports with both `Name` and `Fqdn` use `Fqdn`. A blank/invalid value in the selected column is an error, not a reason to fall back to a different column for that row.
+- Use comma-separated CSV; UTF-8 is recommended. Standard quoted fields, quoted multiline metadata and an optional leading PowerShell `#TYPE` export line are supported.
 - Every data record is validated **before any connection or report creation**. Blank target cells, malformed rows, inconsistent field counts, duplicate targets (case-insensitive), wildcards, IP addresses, URLs, and invalid host labels stop the run.
 - Blank physical lines are ignored by the CSV reader; they are not server records.
 - Leading/trailing whitespace in target cells is trimmed. CSV order is preserved, including rollout order.
-- Additional columns such as `Site` or `Notes` are ignored. `Enabled`, approval or action columns do **not** select/skip targets or authorize changes; every valid `ComputerName` data row is included.
+- Unselected columns such as `Site`, `Notes`, or `PSComputerName` are metadata only. `PSComputerName` is often the remoting origin, not the Exchange target, and is never used to select targets. `Enabled`, approval or action columns do **not** select/skip targets or authorize changes; every valid data row is included.
 - `-ComputerName` and `-CsvPath` are mutually exclusive. Use DNS/NetBIOS names appropriate for Kerberos.
 - Target parsing is tested with **2,500 ordered names** without truncation. This is parser coverage, not a claim of a 2,500-server live deployment.
 
@@ -342,9 +350,11 @@ If exporting a list from Exchange Management Shell, review and narrow it to the 
 
 ```powershell
 Get-ExchangeServer |
-    Select-Object @{Name='ComputerName'; Expression={$_.Fqdn}} |
+    Select-Object Name,Fqdn |
     Export-Csv -LiteralPath 'C:\Temp\servers.csv' -NoTypeInformation -Encoding UTF8
 ```
+
+`Get-ExchangeServer | Export-Csv ...` and `Get-ExchangeServer | Select-Object Name | Export-Csv ...` also work without renaming a column. Review the exported roster before using it; exporting every Exchange server does not establish that every server is an approved target.
 
 No new discovery, credentials, trust settings, parallel changes or retry loop are implied by importing a CSV.
 
@@ -620,6 +630,14 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 ```
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
+
+## What changed in 1.2.2
+
+- Allow the builder on Exchange hosts with a resource-use warning instead of a hard refusal. Keep management-workstation extraction as a recommendation, not a required switch.
+- Retain `-ManagementWorkstationConfirmed` as an optional compatibility parameter; elevation, identity/signature checks, extract-only execution and fresh output directories remain enforced.
+- Accept `Get-ExchangeServer` CSV exports using `Fqdn` or `Name`, optional leading type metadata, and legacy `ComputerName` input.
+- Select `ComputerName`, then `Fqdn`, then `Name` once per file; reject invalid/blank selected values and duplicates before any connection.
+- Document the generated deployment folder so a successful build is not followed by an Apply from a payload-less source copy.
 
 ## What changed in 1.2.1
 

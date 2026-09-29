@@ -725,8 +725,9 @@ function Resolve-KBTargets {
         [Parameter(Mandatory, ParameterSetName = 'Csv')][string]$CsvPath
     )
     $rows = New-Object Collections.Generic.List[object]
+    $targetColumn = 'ComputerName'
     if ($PSCmdlet.ParameterSetName -eq 'Csv') {
-        if ([IO.Path]::GetExtension($CsvPath) -ine '.csv') { throw 'Use a .csv file with a ComputerName header.' }
+        if ([IO.Path]::GetExtension($CsvPath) -ine '.csv') { throw 'Use a .csv file with a ComputerName, Fqdn or Name header.' }
         $file = Get-Item -LiteralPath $CsvPath -ErrorAction Stop
         if ($file.PSIsContainer) { throw 'CsvPath must identify a CSV file, not a directory.' }
         Add-Type -AssemblyName Microsoft.VisualBasic
@@ -737,26 +738,39 @@ function Resolve-KBTargets {
             $reader.SetDelimiters(',')
             $reader.HasFieldsEnclosedInQuotes = $true
             $reader.TrimWhiteSpace = $true
-            if ($reader.EndOfData) { throw 'The CSV is empty. Supply a ComputerName header and at least one server.' }
+            if ($reader.EndOfData) { throw 'The CSV is empty. Supply a ComputerName, Fqdn or Name header and at least one server.' }
             $header = $reader.ReadFields()
+            $rowNumber = 1
+            if ($header.Count -eq 1 -and $header[0] -match '^#TYPE\s+.+$') {
+                if ($reader.EndOfData) { throw 'The CSV contains type information but no header or servers.' }
+                $header = $reader.ReadFields()
+                $rowNumber++
+            }
             $headers = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            $targetColumns = @{}
             $column = -1
             for ($index = 0; $index -lt $header.Count; $index++) {
                 $name = $header[$index].Trim()
                 if ([string]::IsNullOrWhiteSpace($name) -or -not $headers.Add($name)) {
                     throw 'CSV headers must be nonempty and unique, ignoring case.'
                 }
-                if ($name -ieq 'ComputerName') { $column = $index }
+                if ($name -in @('ComputerName','Fqdn','Name')) { $targetColumns[$name] = $index }
             }
-            if ($column -lt 0) { throw 'The CSV must contain a ComputerName column. Other columns are metadata only.' }
-            $rowNumber = 1
+            foreach ($candidate in @('ComputerName','Fqdn','Name')) {
+                if ($targetColumns.ContainsKey($candidate)) {
+                    $column = $targetColumns[$candidate]
+                    $targetColumn = $candidate
+                    break
+                }
+            }
+            if ($column -lt 0) { throw 'The CSV must contain a ComputerName, Fqdn or Name column. Export Name and Fqdn from Get-ExchangeServer; no calculated property is required.' }
             while (-not $reader.EndOfData) {
                 $rowNumber++
                 $fields = $reader.ReadFields()
                 if ($fields.Count -ne $header.Count) {
                     throw "CSV record $rowNumber has $($fields.Count) fields; expected $($header.Count)."
                 }
-                $rows.Add([pscustomobject]@{ Value = $fields[$column]; Location = "CSV record $rowNumber" })
+                $rows.Add([pscustomobject]@{ Value = $fields[$column]; Location = "CSV record $rowNumber (column $targetColumn)" })
             }
         } catch [Microsoft.VisualBasic.FileIO.MalformedLineException] {
             throw "Malformed CSV near line $($reader.ErrorLineNumber): $($_.Exception.Message)"
@@ -771,7 +785,7 @@ function Resolve-KBTargets {
     $targets = New-Object Collections.Generic.List[string]
     foreach ($row in $rows) {
         $name = ([string]$row.Value).Trim()
-        if ([string]::IsNullOrWhiteSpace($name)) { throw "$($row.Location) has a blank ComputerName." }
+        if ([string]::IsNullOrWhiteSpace($name)) { throw "$($row.Location) has a blank $targetColumn." }
         $address = $null
         if ($name.Length -gt 253 -or [Net.IPAddress]::TryParse($name, [ref]$address) -or
             @($name.Split('.') | Where-Object { $_ -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$' }).Count -gt 0) {

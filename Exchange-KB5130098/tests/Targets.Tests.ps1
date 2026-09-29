@@ -32,9 +32,79 @@ Describe 'Strict ordered CSV and direct target validation' {
             @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX01', 'EX02')
         }
 
-        It 'requires the ComputerName header rather than guessing an inventory column' {
-            "Name,Site`r`nEX01,A" | Set-Content -LiteralPath $script:csv
-            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*ComputerName column*'
+        It 'accepts the native Exchange server column <Header>' -ForEach @(
+            @{ Header='Name' }, @{ Header='Fqdn' }, @{ Header=' fqDN ' }
+        ) {
+            "$Header,Site`r`nEX02.example.com,A`r`nEX01.example.com,B" | Set-Content -LiteralPath $script:csv
+            @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX02.example.com','EX01.example.com')
+        }
+
+        It 'prefers Fqdn over Name regardless of column order' -ForEach @(
+            @{ Content="Name,Fqdn`r`nEX01,EX01.example.com" }
+            @{ Content="Fqdn,Name`r`nEX01.example.com,EX01" }
+        ) {
+            $Content | Set-Content -LiteralPath $script:csv
+            @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX01.example.com')
+        }
+
+        It 'preserves explicit ComputerName precedence over Exchange inventory columns' {
+            "Name,Fqdn,ComputerName`r`nEX01,EX01.example.com,EX02.example.com" | Set-Content -LiteralPath $script:csv
+            @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX02.example.com')
+        }
+
+        It 'does not fall back per row when the selected column is blank or invalid' -ForEach @(
+            @{ Content="Name,Fqdn`r`nEX01,"; Expected='*column Fqdn*blank Fqdn*' }
+            @{ Content="Name,Fqdn`r`nEX01,EX*"; Expected='*column Fqdn*explicit DNS/NetBIOS*' }
+            @{ Content="ComputerName,Fqdn`r`n,EX01.example.com"; Expected='*column ComputerName*blank ComputerName*' }
+        ) {
+            $Content | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw $Expected
+        }
+
+        It 'accepts ordinary Export-Csv output with its optional PowerShell type-information line' -ForEach @(
+            @{ IncludeType=$true }, @{ IncludeType=$false }
+        ) {
+            $inventory = @(
+                [pscustomobject]@{Name='EX02';Fqdn='EX02.example.com';ServerRole='Mailbox';Site='SiteA'}
+                [pscustomobject]@{Name='EX01';Fqdn='EX01.example.com';ServerRole='Mailbox';Site='SiteB'}
+            )
+            $inventory | Export-Csv -LiteralPath $script:csv -NoTypeInformation:(-not $IncludeType) -Encoding UTF8
+            @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX02.example.com','EX01.example.com')
+        }
+
+        It 'accepts Exchange remoting type metadata and ignores PSComputerName' {
+            '#TYPE Deserialized.Microsoft.Exchange.Data.Directory.Management.ExchangeServer',
+                '"PSComputerName","Name","Fqdn"',
+                '"management.example.com","EX01","EX01.example.com"' |
+                Set-Content -LiteralPath $script:csv -Encoding UTF8
+            @(Resolve-KBTargets -CsvPath $script:csv) | Should -Be @('EX01.example.com')
+        }
+
+        It 'does not infer targets from unrelated properties or remoting origin' {
+            "PSComputerName,Site`r`nEX01,A" | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*ComputerName, Fqdn or Name column*'
+        }
+
+        It 'rejects a type-information line without any header or records' {
+            '#TYPE Microsoft.Exchange.Data.Directory.Management.ExchangeServer' | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*no header or servers*'
+        }
+
+        It 'rejects type-looking rows after the header rather than silently skipping them' {
+            "Name`r`nEX01`r`n#TYPE fake" | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*CSV record 3*explicit DNS/NetBIOS*'
+        }
+
+        It 'retains duplicate-target validation for Exchange inventory columns' -ForEach @(
+            @{ Header='Name' }, @{ Header='Fqdn' }
+        ) {
+            "$Header`r`nEX01.example.com`r`n ex01.EXAMPLE.com " | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*Duplicate target*'
+        }
+
+        It 'rejects duplicate Exchange inventory headers' {
+            "Name,Fqdn,FQDN`r`nEX01,EX01.example.com,EX02.example.com" | Set-Content -LiteralPath $script:csv
+            { Resolve-KBTargets -CsvPath $script:csv } | Should -Throw '*headers*unique*'
         }
 
         It 'rejects empty and header-only inputs' {

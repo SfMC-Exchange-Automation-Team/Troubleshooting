@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.2.1
+Exchange KB5130098 workaround automation | 1.2.2
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -25,6 +25,9 @@ default for local and remote runs. Previews produce no persistent report exports
 Version 1.2.1 colors a pinned-identity mismatch red, a confirmed match green,
 and Missing rule files green only for a matching identity; Missing on an
 ineligible installation is yellow, while unobserved state stays neutral.
+Version 1.2.2 permits package builds on Exchange with an advisory warning and
+no required ManagementWorkstationConfirmed switch. CSV imports accept native
+Get-ExchangeServer Fqdn/Name columns as well as existing ComputerName lists.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -75,7 +78,7 @@ KB5130098.psd1                Exact build/file identities from the KB
 KB5130098.psm1                Local implementation and guarded service restart
 Invoke-KB5130098.ps1          Local / explicit-target / CSV inventory and rollout
 Invoke-KB5130098Fleet.ps1     Compatibility wrapper (legacy Apply includes restart)
-Build-KB5130098Package.ps1    Workstation-only media extraction and ZIP builder
+Build-KB5130098Package.ps1    Verified extract-only media and ZIP builder
 tests\                       Isolated development tests (source kit only)
 examples\servers.csv          Fictional target-list template; edit before use
 docs\Reporting-and-Splunk.md   Report variables, CSV/JSON formats and Splunk examples
@@ -122,25 +125,32 @@ Microsoft.PowerShell endpoint, NOT the constrained Exchange shell endpoint.
 It never enables remoting, changes TrustedHosts or persists credentials.
 No cloud/tenant connection, Exchange cmdlet module or third-party module is needed.
 
-1. BUILD THE PAYLOAD ON A MANAGEMENT WORKSTATION
+1. BUILD THE PAYLOAD (MANAGEMENT WORKSTATION RECOMMENDED)
 
 Open elevated Windows PowerShell and change to the extracted SOURCE kit:
 
   Set-Location 'C:\Temp\Exchange-KB5130098'
 
+Exchange hosts are no longer blocked. The builder emits a warning about local
+disk/CPU usage and continues; it never applies the workaround or restarts Exchange.
+The KB still recommends extracting on a management workstation. This custom
+tool's relaxed restriction is not a change to that recommendation; plan resource
+impact through normal change control. ManagementWorkstationConfirmed is optional
+and accepted only for backward-compatible commands, not as an execution gate.
+
 Download the exact Microsoft SQL Express media, verify Microsoft Authenticode,
 version, byte count and SHA256, extract without installation, and package:
 
-  .\Build-KB5130098Package.ps1 -Download -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+  .\Build-KB5130098Package.ps1 -Download -OutputDirectory 'C:\Temp\KB5130098-Ready'
 
 The download is about 749 MB; allow several GB of free working space.
 Alternatively use an existing, exact copy of the Microsoft media:
 
-  .\Build-KB5130098Package.ps1 -SqlPackagePath 'C:\Temp\SQLEXPR_x64_ENU.exe' -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+  .\Build-KB5130098Package.ps1 -SqlPackagePath 'C:\Temp\SQLEXPR_x64_ENU.exe' -OutputDirectory 'C:\Temp\KB5130098-Ready'
 
 Or package the two files you have already extracted using the KB:
 
-  .\Build-KB5130098Package.ps1 -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules' -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+  .\Build-KB5130098Package.ps1 -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules' -OutputDirectory 'C:\Temp\KB5130098-Ready'
 
 All input paths still undergo exact rule size/hash checks. Output must be a new
 directory. Existing output is never overwritten. Extraction uses a unique
@@ -148,10 +158,17 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.2.1-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.2.2-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
+
+Use the GENERATED runtime, for example:
+  C:\Temp\KB5130098-Ready\Exchange-KB5130098
+It contains payload\ko.token.rule.bin and payload\ko.complex.rule.bin. The source
+folder is not populated by the build. Stage the reviewed generated runtime in
+your stable operator folder, or specify -PayloadDirectory for the verified rules
+on the caller. Remote Apply validates its caller-side payload before connecting.
 For repeated manual use, keep a stable working folder such as
 C:\Scripts\Exchange-KB5130098. Update verified contents in place while no run is
 active, preserving user edits and reports. Versions belong in metadata/archive
@@ -237,13 +254,23 @@ the default is not usable. Operational confirmations and approvals are unchanged
 
 CSV TARGETS FOR LARGER ENVIRONMENTS
 
-Use a reviewed comma-separated file with a ComputerName header, for example:
+Use a reviewed comma-separated file with ComputerName, Fqdn or Name, for example:
 
-  ComputerName,Site
-  EX01.contoso.com,SiteA
-  EX02.contoso.com,SiteB
+  Name,Fqdn,Site
+  EX01,EX01.contoso.com,SiteA
+  EX02,EX02.contoso.com,SiteB
 
   .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -Confirm:$false
+
+Export native Exchange properties without renaming:
+
+  Get-ExchangeServer | Select-Object Name,Fqdn | Export-Csv -LiteralPath 'C:\Temp\servers.csv' -NoTypeInformation -Encoding UTF8
+
+Review and narrow the roster before use. A full Get-ExchangeServer export also
+works, including an optional leading #TYPE line. Select the target column once
+per file, in this precedence order: ComputerName, Fqdn, Name. Header case and
+surrounding whitespace are ignored. Blank/invalid selected values stop the run;
+there is no per-row fallback to a different column.
 
 ComputerName and CsvPath are mutually exclusive. ReportDirectory uses the same
 optional default for CSV input. All records are validated before any connection or report:
@@ -251,8 +278,9 @@ blank target cells, duplicate names (ignoring case), invalid DNS/NetBIOS names,
 IPs/wildcards/URLs, duplicate/empty headers, malformed quotes and inconsistent
 field counts stop the run. Input order is preserved; whitespace around names is
 trimmed. Blank physical lines are ignored. UTF-8 CSV, standard quoting and
-multiline metadata are supported. Only ComputerName selects a target: extra
-columns, including Enabled, do not filter servers or grant approval.
+multiline metadata are supported. Unselected columns, including PSComputerName,
+are metadata only. PSComputerName can identify the remoting origin and is never
+used as a target column. Enabled does not filter servers or grant approval.
 
 The bundled examples\servers.csv uses fictional names and must be edited.
 Parsing is tested with 2,500 targets; this is not a live fleet-scale claim.
@@ -434,7 +462,18 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.2.0 CHANGES
+1.2.2 CHANGES
+
+- Allow builds on Exchange with a disk/CPU advisory warning instead of refusal.
+- Remove the mandatory workstation assertion; accept the old switch for
+  compatibility. Administrator, media identity/signature, extraction and
+  no-overwrite output-directory checks are unchanged.
+- Accept CSV target columns in order ComputerName, Fqdn, Name, plus an optional
+  leading #TYPE line from Export-Csv. Native Exchange properties need no rename.
+- Validate the selected column for every row without silent fallback, target
+  skipping or guessed hosts. Existing whole-roster safety checks remain.
+
+1.2.0 CHANGES (PREVIOUS RELEASE)
 
 - Keep actual typed per-target results in session-level $report, with paths in
   $reportFiles, and print a terminal summary. -PassThru supports object pipelines.

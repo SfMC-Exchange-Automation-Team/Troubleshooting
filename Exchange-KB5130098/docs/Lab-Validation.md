@@ -2,7 +2,8 @@
 
 - **Original workload pilot:** September 25, 2026
 - **Latest package/display verification:** September 28, 2026
-- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting and 1.2.1 colors; not a customer rollout
+- **Latest offline builder/CSV verification:** September 29, 2026
+- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting, colors and builder/CSV compatibility; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -167,7 +168,7 @@ and exit 20 with both rules present. No Apply, installed-rule changes or service
 restarts were performed for this display update.
 
 The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) replaces the
-older video as the current learning path. It uses illustrative commands and
+older video for the 1.2.1 learning path. It uses illustrative commands and
 abbreviated output with offline synthetic narration, visible captions, a
 transcript and chapter markers. Rebuilding the media does not constitute a new
 deployment or workload test. The earlier EWS observations, lack of certified
@@ -183,6 +184,34 @@ transcription recognized the key safety and reporting statements. Documented
 PowerShell examples were syntax-checked against current parameter names without
 executing the modifying examples. These are media/documentation checks, not a
 new Exchange or Splunk validation.
+
+## 1.2.2 builder host restriction and Exchange inventory CSVs
+
+The full suite passed **209 tests** from both the worktree and the generated
+source archive; all 15 manifest-covered archive files were hash-verified.
+Builder tests now simulate an
+Exchange installation and verify that omitted workstation confirmation no longer
+blocks existing-rule, existing-media or download builds. Extract-only media
+execution is mocked: no SQL download/extraction or installation is performed on
+a live Exchange server for these tests. Identity/signature failures still stop
+before execution, and fresh output directories remain required.
+
+Native Windows PowerShell 5.1 tests execute the actual builder with an isolated
+Exchange-host fixture, no required confirmation switch, real file packaging,
+manifest/ZIP hashes and fixture payload verification. The legacy optional switch
+is also covered. The administrator/host-detection stubs are confined to the test
+runner's temporary directory; production administrator checks remain enforced.
+
+CSV tests cover native `Name` and `Fqdn` properties, full-inventory-style exports
+with PowerShell `#TYPE` metadata, case/whitespace normalization, and precedence
+`ComputerName` > `Fqdn` > `Name`. Blank or invalid selected values cannot silently
+fall back to another column. `PSComputerName` is never selected as a target.
+Native previews and mocked remote inventory validate ordering, selected targets,
+and refusal of invalid later rows before any connection or report creation.
+
+These changes did not include a new live fleet rollout or Exchange service
+restart. The 1.2.1 media remains versioned; the guide explicitly corrects its
+former workstation-only and ComputerName-only requirements for 1.2.2.
 
 ## Why the first workload observation was not enough
 
