@@ -9,10 +9,56 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 [Source and tests](downloads/Exchange-KoreanRules-2.0.0-source.zip) ·
 [Source SHA256](downloads/Exchange-KoreanRules-2.0.0-source.zip.sha256) ·
+[Watch/download the 2.0.0 walkthrough](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) ·
+[Audio narration](docs/Exchange-KoreanRules-2.0.0-Narration.m4a) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
 
 [Start-here checklist](00-START-HERE.txt)
+
+## Current 2.0.0 walkthrough
+
+**8 minutes 57 seconds · 1080p · natural-sounding synthetic narration · visible captions · 16 embedded chapters**
+
+[![Preview of the current Korean Rules walkthrough](docs/Exchange-KoreanRules-2.0.0-Poster.png)](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
+
+This rebuilt walkthrough uses **Install / Get / Set**, not the old combined command.
+It covers finding and extracting the kit, the returned payload path, missing-file
+guidance, native Exchange CSV columns, the exact **three-versus-four-target** output
+boundary, optional standard confirmation, reports, and controlled recovery checks.
+Install is preparation only; Set is modifying unless `-WhatIf` is supplied.
+
+Commands and abbreviated output are illustrative. No new Apply or workload pilot
+was performed for the recording. Narration uses a generic neural voice generated
+locally, not voice cloning; no script text or audio was sent to an online speech
+service. Recorded test and lab observations retain their documented limits.
+
+Companions: [audio-only M4A](docs/Exchange-KoreanRules-2.0.0-Narration.m4a),
+[transcript](docs/Exchange-KoreanRules-2.0.0-Transcript.txt),
+[WebVTT](docs/Exchange-KoreanRules-2.0.0-Captions.vtt), and
+[SRT](docs/Exchange-KoreanRules-2.0.0-Captions.srt).
+The MP4 has burned-in captions and chapter markers. If GitHub shows a file page
+instead of a player, select **Download raw file**. Media companions are separate
+from the source ZIP; the source code release and its checksum are unchanged.
+
+| Start | Chapter |
+|---|---|
+| 00:00 | Three commands and their responsibilities |
+| 00:32 | Browse, download and stage |
+| 01:03 | Prepare verified files with Install |
+| 01:40 | Use the returned payload path |
+| 02:12 | Inspect with Get |
+| 02:46 | Color meanings and stop conditions |
+| 03:13 | Native Exchange CSV columns |
+| 03:49 | Four-plus-target compact output |
+| 04:20 | Inspect every row through `$report` |
+| 04:53 | Exports and Splunk collection |
+| 05:29 | Set, WhatIf and optional confirmation |
+| 06:04 | One approved pilot and explicit restart |
+| 06:38 | Workload recovery validation |
+| 07:13 | Serial rollout and recovery attestation |
+| 07:47 | Exit codes, failures and receipts |
+| 08:22 | Evidence and handoff |
 
 ## Find the files: browse, download, and run are different steps
 
@@ -405,7 +451,8 @@ The [1.2.1 video](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
 [SRT](docs/Exchange-KB5130098-1.2.1-Captions.srt) are **historical, not 2.0.0 instructions**.
 They show older command names and detailed output, not the new three-command interface or
 4+ compact behavior. Their workstation-only, ComputerName-only and default-confirmation
-instructions are superseded by this [current written guide](README.md). No video was regenerated.
+instructions are superseded by this [current written guide](README.md) and the
+[current 2.0.0 video](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4).
 The [1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
 [1.0.1 source](downloads/Exchange-KB5130098-1.0.1-source.zip) and
 [1.2.3 source](downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.

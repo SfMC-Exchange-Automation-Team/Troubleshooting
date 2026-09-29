@@ -54,6 +54,13 @@ DOCUMENTATION
   docs\Reporting-and-Splunk.md       Report formats and collection guidance
   docs\Lab-Validation.md             Verified results and limitations
 
+  Current narrated walkthrough and its companions:
+    docs\Exchange-KoreanRules-2.0.0-Walkthrough.mp4
+    docs\Exchange-KoreanRules-2.0.0-Narration.m4a
+    docs\Exchange-KoreanRules-2.0.0-Transcript.txt
+  README.md links the video, captions and chapter index. Media is separate from
+  the source ZIP. The older KB-named recordings are historical, not current usage.
+
   On GitHub, check the branch selector and the guide's version. A topic-branch
   push does not update the default main page until its pull request is merged.
 
