@@ -1,19 +1,22 @@
 # Exchange KB5130098: a controlled deployment walkthrough
 
-- **Package:** Exchange-KB5130098 1.2.2
+- **Package:** Exchange-KB5130098 1.2.3
 - **Audience:** Exchange Server administrators and change owners
 - **Console update validated:** September 28, 2026; original workload pilot September 25, 2026
 - **Builder/CSV compatibility validated:** September 29, 2026
+- **Confirmation defaults validated:** September 29, 2026
 - **Reading time:** About 12 minutes
 
 > **Support boundary:** This is custom PowerShell automation of a narrowly scoped workaround, not a Microsoft-signed hotfix, security update, or permanent product fix. Read the current Microsoft guidance, review the scripts, follow your signing/change-control policy, and pilot one affected server before expanding.
 
 [Watch or download the 1.2.1 walkthrough](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4) ·
 [Listen to the narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a) ·
-[Download source and tests](downloads/Exchange-KB5130098-1.2.2-source.zip) ·
+[Download source and tests](downloads/Exchange-KB5130098-1.2.3-source.zip) ·
 [Read the sanitized lab validation summary](docs/Lab-Validation.md)
 
 The video uses illustrative commands and clearly labelled recorded lab results. It is not a recording of a new deployment. All server names and example paths in the instructions are placeholders; substitute your approved targets.
+
+> **New in 1.2.3:** Standard PowerShell confirmation is opt-in. At the default `$ConfirmPreference = 'High'`, local changes and remote runs no longer require `-Confirm:$false` to avoid a prompt. Use `-Confirm` to request one or `-WhatIf` to preview. Explicit restart selection, maintenance approval, Support-approved rollback and per-server recovery attestation remain required where applicable.
 
 > **New in 1.2.2:** The builder no longer blocks Exchange hosts or requires `-ManagementWorkstationConfirmed`. Building on Exchange produces an advisory warning, not a refusal; media and payload identity checks remain mandatory. CSV import accepts native `Get-ExchangeServer` columns: `ComputerName` takes precedence when supplied, otherwise `Fqdn`, then `Name`. No calculated property or column rename is required.
 
@@ -30,6 +33,8 @@ The video uses illustrative commands and clearly labelled recorded lab results. 
 This walkthrough explains **1.2.1**: one primary local/remote/CSV entry point, UAC boundaries, color-coded human output, retained `$report` objects, default CSV/JSON/JSONL exports, and the Splunk collection contract. Commands and abbreviated output are illustrative, not a screen recording of a fresh deployment. The **177-test** baseline and read-only lab verification are identified separately from the earlier workload pilot.
 
 **1.2.2 corrections to the recording:** At 00:32 the video describes the former workstation-only restriction; the current builder permits Exchange hosts with a warning. At 02:48 it describes `ComputerName` as required; the current importer also accepts `Fqdn` and `Name`, including ordinary `Get-ExchangeServer` exports. Use the current commands and selection rules below. The existing recording, narration and captions are retained as versioned 1.2.1 material.
+
+**1.2.3 correction:** At 05:46 the pilot screen says to review confirmation. Standard PowerShell confirmation is now opt-in with `-Confirm`, not a default stop. The maintenance-window flag and later recovery attestation are separate and unchanged.
 
 Narration was generated locally using a generic natural-sounding synthetic voice, not voice cloning. No narration text, private lab material, or audio was sent to an online speech service.
 
@@ -56,7 +61,7 @@ Narration was generated locally using a generic natural-sounding synthetic voice
 
 Accessibility and reuse: [audio-only narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a), [plain-text transcript](docs/Exchange-KB5130098-1.2.1-Transcript.txt), [WebVTT captions](docs/Exchange-KB5130098-1.2.1-Captions.vtt), and [SRT captions](docs/Exchange-KB5130098-1.2.1-Captions.srt). The MP4 includes visible captions and chapter markers. Download it if GitHub displays a binary-file page instead of a player. Keep this folder's structure when downloading the article and companion files.
 
-The [original 1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains available as historical material, not current operating instructions. It predates the unified entry point, human-output and reporting changes. Use the newer walkthrough alongside the 1.2.2 corrections above.
+The [original 1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains available as historical material, not current operating instructions. It predates the unified entry point, human-output and reporting changes. Use the newer walkthrough alongside the corrections above.
 
 ## At a glance
 
@@ -65,6 +70,21 @@ The safe sequence is:
 **Verify package → Detect → Apply -WhatIf → approve one-server change → Apply/restart → validate the actual workload → consider the next server.**
 
 Do not skip the workload gate. A successful service restart is not proof that mail delivery, indexing, or Outlook has recovered.
+
+### Confirmation is optional, preview and approval are separate
+
+At PowerShell's default `$ConfirmPreference = 'High'`, no standard confirmation
+prompt is issued. `-Mode Apply` proceeds after its checks without requiring
+`-Confirm:$false`. This applies to local operations, remote names/CSV, and the
+legacy wrapper.
+
+- Add `-Confirm` to request confirmation before a modifying operation or remote run.
+- Use `-WhatIf` to preview; it still prevents Exchange changes and report exports.
+- An intentionally stricter session preference (`Medium` or `Low`) is respected.
+  `-Confirm:$false` remains available to explicitly suppress standard confirmation.
+- Report persistence does not add independent confirmation prompts.
+- UAC consent, `-RestartSearch`, `-MaintenanceWindowApproved`, Support-approved
+  rollback and restarted-fleet recovery attestation are **not** removed.
 
 ### Read the result without opening a file
 
@@ -125,7 +145,7 @@ The underlying issue concerns the September 2026 security-update build of Exchan
 
 ### Start with source, then build the deployment ZIP
 
-Use the checked-out files in this folder, or download the [1.2.2 source ZIP](downloads/Exchange-KB5130098-1.2.2-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.2-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
+Use the checked-out files in this folder, or download the [1.2.3 source ZIP](downloads/Exchange-KB5130098-1.2.3-source.zip) and its [SHA256 sidecar](downloads/Exchange-KB5130098-1.2.3-source.zip.sha256). The archive contains the builder, regression suite, [example CSV](examples/servers.csv) and reporting guide, but no Microsoft binaries.
 
 Use the trusted sidecar for the current archive's SHA256. The earlier [1.0.1 archive](downloads/Exchange-KB5130098-1.0.1-source.zip) remains available for the historical recording; it does not include automatic elevation or the new human summary.
 
@@ -180,7 +200,7 @@ After copying your approved deployment ZIP and its trusted sidecar to the stagin
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KB5130098-1.2.2-deploy.zip'
+$zip = 'C:\Temp\Exchange-KB5130098-1.2.3-deploy.zip'
 $checksumRecord = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 
 if ($checksumRecord -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
@@ -300,8 +320,7 @@ For multiple targets with an optional custom report location:
 .\Invoke-KB5130098.ps1 `
     -Mode Detect `
     -ComputerName EX01.contoso.com,EX02.contoso.com `
-    -ReportDirectory 'C:\Temp\KB5130098-Inventory' `
-    -Confirm:$false
+    -ReportDirectory 'C:\Temp\KB5130098-Inventory'
 ```
 
 Use an explicit target list. Remote Detect stages code and writes reports, but does not add Exchange rule files or restart services. It stops on errors. If the default or explicitly selected report path cannot be used, the error is surfaced before any target connection; reports are not silently redirected or discarded. Specify another approved local path with `-ReportDirectory` if needed.
@@ -324,14 +343,13 @@ Then inventory it:
 ```powershell
 .\Invoke-KB5130098.ps1 `
     -Mode Detect `
-    -CsvPath 'C:\Temp\servers.csv' `
-    -Confirm:$false
+    -CsvPath 'C:\Temp\servers.csv'
 ```
 
 For unattended inventory, use `-AsJson` and the same required remote-access rights:
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Detect -CsvPath 'C:\Temp\servers.csv' -AsJson -Confirm:$false; exit $LASTEXITCODE"
+powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Detect -CsvPath 'C:\Temp\servers.csv' -AsJson; exit $LASTEXITCODE"
 ```
 
 CSV rules:
@@ -391,7 +409,10 @@ After completing your maintenance and health checks:
     -MaintenanceWindowApproved
 ```
 
-Review the confirmation prompt. The flag records an operator assertion; it does not create a maintenance window or complete change approval.
+At the default confirmation preference, this proceeds after the checks without a
+standard PowerShell confirmation prompt. Add `-Confirm` if you want that prompt,
+or use `-WhatIf` for a preview. The maintenance flag records an operator assertion;
+it does not create a maintenance window or complete change approval.
 
 The kit:
 
@@ -563,17 +584,21 @@ Reports include the validated roster, per-target original/current detection, ope
 An approved deployment agent can stage the files without restarting Search. This is a **literal deployment-agent/cmd.exe command line**:
 
 ```cmd
-powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
+powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -AsJson; exit $LASTEXITCODE"
 ```
 
 From an existing PowerShell session, invoke the script directly instead:
 
 ```powershell
-.\Invoke-KB5130098.ps1 -Mode Apply -Confirm:$false -AsJson
+.\Invoke-KB5130098.ps1 -Mode Apply -AsJson
 $LASTEXITCODE
 ```
 
 Do not paste the first example into an outer PowerShell double-quoted string without protecting `$LASTEXITCODE` from parent-side expansion.
+
+These examples use the default confirmation preference. An agent that intentionally
+sets a stricter preference can still supply `-Confirm:$false`; it is not required
+for ordinary invocation.
 
 | Exit | Meaning |
 |---:|---|
@@ -630,6 +655,13 @@ if ($result.Result -ne 'Passed' -or $result.TotalCount -eq 0) {
 ```
 
 These tests use isolated fixtures and native child processes; they do not deploy to Exchange or prove workload recovery. The [validation summary](docs/Lab-Validation.md) separates offline coverage, actual lab observations, and limits.
+
+## What changed in 1.2.3
+
+- Standard confirmation is opt-in at the default PowerShell preference across the primary CLI, legacy wrapper and shared local/remote engine.
+- `-Confirm`, `-Confirm:$false`, stricter inherited preferences and `-WhatIf` remain supported; UAC forwards the effective preference.
+- Report creation/export no longer introduces additional confirmation prompts.
+- Restart, maintenance-window, Support-approved rollback, file-identity and per-server recovery gates are unchanged.
 
 ## What changed in 1.2.2
 

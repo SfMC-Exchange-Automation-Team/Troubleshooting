@@ -566,7 +566,7 @@ function Restart-KBHostController {
 }
 
 function Invoke-KBLocal {
-    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param(
         [ValidateSet('Detect', 'Apply', 'Rollback')][string]$Mode = 'Detect',
         [string]$PayloadDirectory = (Join-Path $PSScriptRoot 'payload'),
@@ -814,8 +814,8 @@ function New-KBReportContext {
     $runId = [guid]::NewGuid().ToString('N')
     $directory = Join-Path $root $runId
     if (-not $NoWrite) {
-        $null = New-Item -Path $root -ItemType Directory -Force
-        $null = New-Item -Path $directory -ItemType Directory
+        $null = New-Item -Path $root -ItemType Directory -Force -Confirm:$false
+        $null = New-Item -Path $directory -ItemType Directory -Confirm:$false
     }
     [pscustomobject]@{
         Root=$root; RunId=$runId; Directory=$directory
@@ -922,12 +922,12 @@ function Save-KBReportExports {
                 }
                 [pscustomobject]$values
             }
-            $csvRows | Export-Csv -LiteralPath "$($paths.Csv).new" -NoTypeInformation -Encoding UTF8
-            Move-Item -LiteralPath "$($paths.Csv).new" -Destination $paths.Csv
+            $csvRows | Export-Csv -LiteralPath "$($paths.Csv).new" -NoTypeInformation -Encoding UTF8 -Confirm:$false
+            Move-Item -LiteralPath "$($paths.Csv).new" -Destination $paths.Csv -Confirm:$false
         }
         $lines = @($Rows | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 4 -Compress })
         [IO.File]::WriteAllLines("$($paths.JsonLines).new", [string[]]$lines, (New-Object Text.UTF8Encoding($false)))
-        Move-Item -LiteralPath "$($paths.JsonLines).new" -Destination $paths.JsonLines
+        Move-Item -LiteralPath "$($paths.JsonLines).new" -Destination $paths.JsonLines -Confirm:$false
         $paths
     } catch {
         foreach ($name in @('Json','Csv','JsonLines')) {
@@ -960,12 +960,12 @@ function Write-KBReportSummary {
 function Write-KBFleetReport {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object[]]$Records)
     $temporary = "$Path.new"
-    ConvertTo-Json -InputObject $Records -Depth 12 | Set-Content -LiteralPath $temporary -Encoding UTF8
-    Move-Item -LiteralPath $temporary -Destination $Path -Force
+    ConvertTo-Json -InputObject $Records -Depth 12 | Set-Content -LiteralPath $temporary -Encoding UTF8 -Confirm:$false
+    Move-Item -LiteralPath $temporary -Destination $Path -Force -Confirm:$false
 }
 
 function Invoke-KBFleet {
-    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Names')]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Names')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'Names')][AllowEmptyCollection()][string[]]$ComputerName,
         [Parameter(Mandatory, ParameterSetName = 'Csv')][string]$CsvPath,

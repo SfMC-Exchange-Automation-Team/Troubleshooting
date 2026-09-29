@@ -1,4 +1,4 @@
-Exchange KB5130098 workaround automation | 1.2.2
+Exchange KB5130098 workaround automation | 1.2.3
 Guidance reviewed: September 25, 2026
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -28,6 +28,8 @@ ineligible installation is yellow, while unobserved state stays neutral.
 Version 1.2.2 permits package builds on Exchange with an advisory warning and
 no required ManagementWorkstationConfirmed switch. CSV imports accept native
 Get-ExchangeServer Fqdn/Name columns as well as existing ComputerName lists.
+Version 1.2.3 makes standard PowerShell confirmation opt-in at the default
+ConfirmPreference. WhatIf and operation-specific approval/recovery gates remain.
 
 Sources:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
@@ -158,7 +160,7 @@ subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
 build and preserves logs. Delete that unique work folder after troubleshooting
 or successful packaging when it is no longer needed.
 
-The result is Exchange-KB5130098-1.2.2-deploy.zip plus a SHA256 sidecar. If code
+The result is Exchange-KB5130098-1.2.3-deploy.zip plus a SHA256 sidecar. If code
 signing is required, sign the scripts/module BEFORE building; sign the builder
 too before execution as required by policy. The builder hashes the resulting
 files. Protect the package as administrative code.
@@ -191,6 +193,19 @@ Present values are green in human output. Green means a file exists, not that
 its contents are verified or the workload has recovered; stop warnings remain.
 Existing -AsJson status/exit meanings and operational checks remain; the remote
 JSON envelope additionally includes ReportData rows and ExportFiles paths.
+
+STANDARD CONFIRMATION IS OPT-IN
+
+With the default $ConfirmPreference = 'High', normal local changes and remote
+runs do not prompt for standard PowerShell confirmation. -Confirm:$false is no
+longer required. Apply proceeds after its checks; use -WhatIf to preview first,
+or add -Confirm to explicitly request the standard confirmation prompt.
+
+Stricter session confirmation preferences (Medium or Low) are still honored.
+-Confirm:$false remains an explicit override. Report persistence does not add
+its own confirmation prompts. WhatIf remains non-modifying, including exports.
+This does not remove UAC consent, RestartSearch, MaintenanceWindowApproved,
+MicrosoftSupportApprovedRollback, or per-server recovery attestation.
 
 RESULT OBJECTS AND DEFAULT EXPORTS
 
@@ -250,7 +265,8 @@ installation, rule files or service state. Errors stop the run. Nonapplicable
 builds/existing rules are reported and never silently treated as remediated.
 An invalid or unwritable report location stops before target connections; no
 silent fallback or lost reporting. Choose another approved ReportDirectory if
-the default is not usable. Operational confirmations and approvals are unchanged.
+the default is not usable. Standard confirmation is opt-in; maintenance and
+recovery approval gates are unchanged.
 
 CSV TARGETS FOR LARGER ENVIRONMENTS
 
@@ -260,7 +276,7 @@ Use a reviewed comma-separated file with ComputerName, Fqdn or Name, for example
   EX01,EX01.contoso.com,SiteA
   EX02,EX02.contoso.com,SiteB
 
-  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -Confirm:$false
+  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv'
 
 Export native Exchange properties without renaming:
 
@@ -284,8 +300,8 @@ used as a target column. Enabled does not filter servers or grant approval.
 
 The bundled examples\servers.csv uses fictional names and must be edited.
 Parsing is tested with 2,500 targets; this is not a live fleet-scale claim.
-Use -AsJson for machine-readable inventory or file-only staging, with the usual
--Confirm:$false and native exit-code forwarding where appropriate.
+Use -AsJson for machine-readable inventory or file-only staging, with native
+exit-code forwarding where appropriate. Confirm false is optional, not required.
 
 EligibleMissingBothRules means exactly:
   ExSetup.exe numeric file version: 15.2.2562.49 (15.02.2562.049 in the KB)
@@ -382,13 +398,15 @@ Distribute the generated deployment ZIP, not the SQL package. Run elevated
 64-bit Windows PowerShell on individually approved, inventoried targets.
 The unattended staging command below ADDS FILES but NEVER restarts services:
 
-  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
+  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -AsJson; exit $LASTEXITCODE"
 
 Use that command line in your deployment-agent configuration. When invoking
 from an existing PowerShell session, call the script directly with
--Mode Apply -Confirm:$false -AsJson instead. Windows PowerShell 5.1 -File cannot pass
-an explicit false value to a switch, which is why the agent example uses -Command.
-The final exit forwards the script's custom code to the deployment agent; without
+-Mode Apply -AsJson instead. These examples use the default confirmation
+preference. If an agent sets a stricter preference, -Confirm:$false remains an
+optional override; Windows PowerShell 5.1 -File cannot express that false switch,
+so use -Command when explicitly passing it. When using -Command, the final exit
+forwards the script's custom code to the deployment agent; without
 it, Windows PowerShell can turn codes 10 and 20 into process exit 1. This example
 is a literal deployment-agent/cmd.exe command line. If constructing it inside
 PowerShell, use a single-quoted argument or escape $LASTEXITCODE so the parent
@@ -462,7 +480,15 @@ They do not install Exchange/SQL, download executables or change real services.
 This package must still be piloted on an affected installation with the exact
 Microsoft payload and actual workload before a production rollout.
 
-1.2.2 CHANGES
+1.2.3 CHANGES
+
+- Standard PowerShell confirmation is opt-in at the default High preference.
+  Normal local, remote, CSV and legacy runs no longer need -Confirm:$false.
+- Explicit Confirm, Confirm false, inherited policies, WhatIf and UAC preference
+  forwarding remain supported. Report persistence adds no confirmation prompts.
+- Maintenance/restart/rollback approval and recovery-attestation gates remain.
+
+1.2.2 CHANGES (PREVIOUS RELEASE)
 
 - Allow builds on Exchange with a disk/CPU advisory warning instead of refusal.
 - Remove the mandatory workstation assertion; accept the old switch for

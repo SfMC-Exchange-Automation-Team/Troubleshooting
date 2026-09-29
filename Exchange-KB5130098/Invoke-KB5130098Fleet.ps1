@@ -7,8 +7,10 @@ Prefer Invoke-KB5130098.ps1 -ComputerName or -CsvPath for new usage.
 For compatibility, this entry point's Apply still includes a Search restart
 and requires maintenance approval and recovery attestation after every server.
 Reports default to C:\Temp\KB5130098-Reports on the calling computer.
+Standard PowerShell confirmation is opt-in with -Confirm at the default
+ConfirmPreference; maintenance approval and recovery attestation still apply.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',

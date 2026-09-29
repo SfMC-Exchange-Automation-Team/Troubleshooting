@@ -163,10 +163,10 @@ exit $TestExit
         $context.Is64BitOS | Should -BeTrue
     }
 
-    It 'preserves data and native exit <Code> with inherited preferences <Inherited>' -ForEach @(
-        @{ Code = 0; Inherited = $false }, @{ Code = 1; Inherited = $false },
-        @{ Code = 10; Inherited = $false }, @{ Code = 20; Inherited = $false },
-        @{ Code = 0; Inherited = $true }
+    It 'preserves data and native exit <Code> with inherited preferences <Inherited> and confirmation <Level>' -ForEach @(
+        @{ Code = 0; Inherited = $false; Level='None' }, @{ Code = 1; Inherited = $false; Level='None' },
+        @{ Code = 10; Inherited = $false; Level='None' }, @{ Code = 20; Inherited = $false; Level='None' },
+        @{ Code = 0; Inherited = $true; Level='None' }, @{ Code = 0; Inherited = $true; Level='High' }
     ) {
         $marker = Join-Path $TestDrive 'must-not-be-created'
         $payload = "C:\rules O'Brien\`$(New-Item '$marker')\trailing\"
@@ -190,10 +190,10 @@ exit $TestExit
         }
         $relay = & (Get-Module KB5130098) { New-KBReportRelay }
         $encoded = & (Get-Module KB5130098) {
-            param($Path, $Bound, $Working, $RelayPath)
+            param($Path, $Bound, $Working, $RelayPath, $Level)
             New-KBElevationCommand -ScriptPath $Path -BoundParameters $Bound -WorkingDirectory $Working `
-                -WaitForUser:$false -PreviewPreference $true -ConfirmationPreference None -ReportRelayPath $RelayPath
-        } $script:child $bound $script:fixtureRoot $relay.Path
+                -WaitForUser:$false -PreviewPreference $true -ConfirmationPreference $Level -ReportRelayPath $RelayPath
+        } $script:child $bound $script:fixtureRoot $relay.Path $Level
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $start.Arguments = "-NoProfile -NonInteractive -EncodedCommand $encoded"
@@ -220,7 +220,7 @@ exit $TestExit
             $result.WorkingDirectory | Should -Be $script:fixtureRoot
             $result.RestartSearch | Should -BeFalse
             $result.Confirm | Should -BeFalse
-            $result.ConfirmationPreference | Should -Be 'None'
+            $result.ConfirmationPreference | Should -Be $Level
             $result.WhatIf | Should -BeTrue
             $result.MaintenanceWindowApproved | Should -BeTrue
             $result.MicrosoftSupportApprovedRollback | Should -BeTrue

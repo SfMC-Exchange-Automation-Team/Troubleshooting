@@ -128,8 +128,9 @@ Describe 'Local deployment with isolated filesystem fixtures' {
             Should -Invoke Restart-KBHostController -Times 0 -Exactly
         }
 
-        It 'copies only two files with inherited read ACLs and records restart pending' {
-            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false
+        It 'copies only two files without requiring Confirm false and records restart pending' {
+            $ConfirmPreference = 'High'
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state
             $result.Status | Should -Be 'FilesStagedRestartRequired'
             @(Get-ChildItem -LiteralPath $script:native -File).Count | Should -Be 2
             Assert-KBPayload -Directory $script:native

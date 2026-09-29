@@ -691,4 +691,116 @@ function Invoke-WebRequest { throw 'Native builder fixtures must never download 
                 Should -Be (Get-FileHash -LiteralPath (Join-Path $script:builderRules $rule)).Hash
         }
     }
+
+}
+
+Describe 'Native standard confirmation is opt-in without disabling preview' {
+    BeforeAll {
+        $script:confirmationRoot = Join-Path $TestDrive 'Native confirmation fixture'
+        $null = New-Item -Path $script:confirmationRoot -ItemType Directory
+        foreach ($name in @('Invoke-KB5130098.ps1','Invoke-KB5130098Fleet.ps1','KB5130098.psd1')) {
+            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:confirmationRoot
+        }
+        $overrides = @'
+$script:ConfirmationRoot = $env:KB_CONFIRM_TEST_ROOT
+function Assert-KBAdministrator {}
+function Invoke-KBAutoElevation { return $null }
+function Assert-KBPayload {}
+function Get-Service { [pscustomobject]@{Status='Running'} }
+function Get-KBDetection {
+    [pscustomobject]@{
+        ComputerName='Fixture'; Status='EligibleMissingBothRules'; Eligible=$true
+        NativePath=(Join-Path $script:ConfirmationRoot 'native')
+        ExchangePath=(Join-Path $script:ConfirmationRoot 'exchange')
+        ExchangeVersion='15.2.2562.49'; DllVersion='16.0.5194.1000'
+        DllSHA256='fixture'; ExistingRules=@()
+    }
+}
+function New-KBStateDirectory { throw 'CONFIRM-LOCAL-BOUNDARY' }
+function New-PSSession { throw 'UNEXPECTED-REMOTE-CONNECTION' }
+function Restart-KBHostController { throw 'UNEXPECTED-SERVICE-RESTART' }
+if ($env:KB_CONFIRM_TEST_ENTRY -notin @('LocalModule','PrimaryLocal')) {
+    function Write-KBFleetReport { throw 'CONFIRM-REMOTE-BOUNDARY' }
+}
+Export-ModuleMember -Function *
+'@
+        ([IO.File]::ReadAllText((Join-Path $script:packageRoot 'KB5130098.psm1')) + "`r`n" + $overrides) |
+            Set-Content -LiteralPath (Join-Path $script:confirmationRoot 'KB5130098.psm1') -Encoding UTF8
+        $script:confirmationWorker = Join-Path $script:confirmationRoot 'Run-ConfirmationFixture.ps1'
+        @'
+param([string]$Entry, [string]$Case, [string]$Root)
+$ErrorActionPreference = 'Stop'
+$env:KB_CONFIRM_TEST_ROOT = $Root
+$env:KB_CONFIRM_TEST_ENTRY = $Entry
+$global:ConfirmPreference = if ($Case -in @('InheritedLow','Disabled')) { 'Low' } else { 'High' }
+$parameters = @{}
+if ($Case -in @('Explicit','ExplicitPreview')) { $parameters.Confirm=$true }
+if ($Case -eq 'Disabled') { $parameters.Confirm=$false }
+if ($Case -in @('Preview','ExplicitPreview')) { $parameters.WhatIf=$true }
+$reports = Join-Path $Root 'reports'
+try {
+    switch ($Entry) {
+        'LocalModule' {
+            Import-Module (Join-Path $PSScriptRoot 'KB5130098.psm1') -Force
+            Invoke-KBLocal -Mode Apply -PayloadDirectory $Root -StateRoot (Join-Path $Root 'state') @parameters | ConvertTo-Json -Depth 8
+        }
+        'FleetModule' {
+            Import-Module (Join-Path $PSScriptRoot 'KB5130098.psm1') -Force
+            Invoke-KBFleet -ComputerName example.invalid -PackageDirectory $PSScriptRoot -ReportDirectory $reports -Quiet @parameters | ConvertTo-Json -Depth 8
+        }
+        'PrimaryLocal' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -Mode Apply -StateRoot (Join-Path $Root 'state') -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'PrimaryRemote' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -ComputerName example.invalid -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'PrimaryCsv' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -CsvPath (Join-Path $Root 'targets.csv') -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'Legacy' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098Fleet.ps1') -ComputerName example.invalid -ReportDirectory $reports @parameters | Out-Null
+        }
+        default { throw 'Unknown fixture entry point.' }
+    }
+    exit 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+'@ | Set-Content -LiteralPath $script:confirmationWorker -Encoding ASCII
+    }
+
+    It '<Entry> respects <Case> with the real ShouldProcess boundary' -ForEach @(
+        foreach ($entry in @('LocalModule','FleetModule','PrimaryLocal','PrimaryRemote','PrimaryCsv','Legacy')) {
+            foreach ($case in @('Default','Explicit','Disabled','InheritedLow','Preview','ExplicitPreview')) {
+                @{ Entry=$entry; Case=$case }
+            }
+        }
+    ) {
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path $root -ItemType Directory
+        "Name`r`nexample.invalid" | Set-Content -LiteralPath (Join-Path $root 'targets.csv')
+        $arguments = '-File "{0}" -Entry {1} -Case {2} -Root "{3}"' -f $script:confirmationWorker,$Entry,$Case,$root
+        $result = Invoke-NativeFixture -Arguments $arguments
+        $result.Error | Should -Not -Match 'UNEXPECTED-REMOTE-CONNECTION|UNEXPECTED-SERVICE-RESTART'
+        Test-Path -LiteralPath (Join-Path $root 'state') | Should -BeFalse
+        if ($Case -in @('Preview','ExplicitPreview')) {
+            $result.ExitCode | Should -Be 0 -Because $result.Error
+            $result.Error | Should -BeNullOrEmpty
+            Test-Path -LiteralPath (Join-Path $root 'reports') | Should -BeFalse
+            $result.Output | Should -Not -Match 'CONFIRM-(LOCAL|REMOTE)-BOUNDARY'
+        } elseif ($Case -in @('Explicit','InheritedLow')) {
+            $result.ExitCode | Should -Be 1
+            $result.Error | Should -Match 'NonInteractive|Read and Prompt|ShouldProcess'
+            $result.Error | Should -Not -Match 'CONFIRM-(LOCAL|REMOTE)-BOUNDARY'
+        } else {
+            $result.ExitCode | Should -Be 1
+            $boundary = if ($Entry -in @('LocalModule','PrimaryLocal')) { 'CONFIRM-LOCAL-BOUNDARY' } else { 'CONFIRM-REMOTE-BOUNDARY' }
+            $result.Error | Should -Match $boundary
+            $result.Error | Should -Not -Match 'NonInteractive|Read and Prompt'
+        }
+    }
 }

@@ -10,12 +10,14 @@ status/action output is the default, with before/current comparisons for Apply.
 -AsJson preserves machine output.
 CSV targets accept ComputerName, Fqdn or Name (in that precedence order).
 Get-ExchangeServer exports do not require a calculated ComputerName property.
+Standard PowerShell confirmation is opt-in with -Confirm at the default
+ConfirmPreference. -WhatIf and operation-specific approval gates remain.
 Results remain in caller $report, with paths in $reportFiles. CSV, detailed JSON
 and JSON Lines export by default, except previews. -NoCsv suppresses CSV only.
 Reports default to C:\Temp\KB5130098-Reports on the calling computer.
 See README.txt for rollout gates, exit codes and rollback limits.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Local')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Local')]
 param(
     [ValidateSet('Detect', 'Apply', 'Rollback')][string]$Mode = 'Detect',
     [Parameter(Mandatory, ParameterSetName = 'RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,

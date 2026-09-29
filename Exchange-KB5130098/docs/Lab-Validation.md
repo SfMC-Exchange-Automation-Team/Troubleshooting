@@ -3,7 +3,8 @@
 - **Original workload pilot:** September 25, 2026
 - **Latest package/display verification:** September 28, 2026
 - **Latest offline builder/CSV verification:** September 29, 2026
-- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting, colors and builder/CSV compatibility; not a customer rollout
+- **Latest offline confirmation verification:** September 29, 2026
+- **Scope:** Original lab pilot, console/elevation coverage, unified CSV inventory, structured reporting, colors, builder/CSV compatibility and opt-in confirmation; not a customer rollout
 
 This is a sanitized summary. Private hostnames, identities, operation IDs, raw logs,
 credential helpers, test-mailbox provisioning, and session scaffolding are not
@@ -212,6 +213,33 @@ and refusal of invalid later rows before any connection or report creation.
 These changes did not include a new live fleet rollout or Exchange service
 restart. The 1.2.1 media remains versioned; the guide explicitly corrects its
 former workstation-only and ComputerName-only requirements for 1.2.2.
+
+## 1.2.3 opt-in standard confirmation
+
+The full suite passed **246 tests** from both the worktree and the generated,
+manifest-verified source archive. All four public/shared operation
+entry points use `ConfirmImpact = 'Medium'`, so the default PowerShell
+`ConfirmPreference = 'High'` no longer triggers a standard confirmation prompt.
+No global preference is weakened by the production code.
+
+A 36-case native noninteractive matrix runs the real `ShouldProcess` logic for
+local/module, remote/module, primary local, primary remote names, primary CSV and
+legacy entry points. Test-only boundaries stop before Exchange writes or remote
+connections. Default and explicitly disabled confirmation reach those boundaries;
+explicit confirmation and a stricter inherited policy still request input and
+therefore fail in the noninteractive host. Preview, including explicit Confirm
+combined with WhatIf, reaches neither boundary and writes no reports.
+
+Existing isolated Apply and remote inventory tests now omit Confirm false and
+still complete their fixture operations. File-only/restarted fleet behavior and
+per-server attestation remain covered. Elevation bootstrap coverage additionally
+verifies the default High preference survives the process boundary. Report
+persistence does not prompt independently, including when the caller suppresses
+standard confirmation under a stricter global preference.
+
+No live Apply, restart, recovery attestation or customer rollout was performed for
+this change. UAC consent, maintenance approval, rollback approval and workload
+validation remain separate from standard PowerShell confirmation.
 
 ## Why the first workload observation was not enough
 

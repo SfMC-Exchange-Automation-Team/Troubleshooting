@@ -212,7 +212,8 @@ Describe 'Serial fleet rollout with mocked remoting' {
     }
 
     It 'never connects to the second server before recovery attestation on the first' {
-        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false
+        $ConfirmPreference = 'High'
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Apply EX01.example.com|Attest EX01.example.com|Connect EX02.example.com|Apply EX02.example.com|Attest EX02.example.com'
         $report = Get-Content -LiteralPath $result.Report -Raw | ConvertFrom-Json
         $report.Count | Should -Be 2
@@ -242,8 +243,9 @@ Describe 'Serial fleet rollout with mocked remoting' {
         Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
     }
 
-    It 'Detect never applies or requests a recovery attestation' {
-        $result = Invoke-KBFleet -Mode Detect -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false
+    It 'Detect needs no Confirm false and never applies or requests a recovery attestation' {
+        $ConfirmPreference = 'High'
+        $result = Invoke-KBFleet -Mode Detect -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Connect EX02.example.com'
         $result.Servers | Should -Be 2
         Should -Invoke Read-Host -ModuleName KB5130098 -Times 0 -Exactly
@@ -306,9 +308,10 @@ Describe 'Serial fleet rollout with mocked remoting' {
         Should -Invoke New-PSSession -ModuleName KB5130098 -Times 0 -Exactly
     }
 
-    It 'shared remote Apply stages files without an implicit restart or recovery prompt' {
+    It 'shared remote Apply needs no Confirm false and stages without an implicit restart or recovery prompt' {
+        $ConfirmPreference = 'High'
         $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com `
-            -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false
+            -PackageDirectory $script:packageRoot -ReportDirectory $script:reports
         $result.ExitCode | Should -Be 10
         $result.Status | Should -Be 'FilesStagedRestartRequired'
         $global:KB5130098TestContext.LastRestart | Should -BeFalse
