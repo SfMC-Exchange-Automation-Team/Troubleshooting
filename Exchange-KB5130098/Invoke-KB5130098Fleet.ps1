@@ -3,12 +3,14 @@
 .SYNOPSIS
 Compatibility entry point for the former fleet workflow.
 .DESCRIPTION
-Prefer Invoke-KB5130098.ps1 -ComputerName or -CsvPath for new usage.
+Prefer Get-KoreanRulesState.ps1 or Set-KoreanRulesState.ps1 for new usage.
 For compatibility, this entry point's Apply still includes a Search restart
 and requires maintenance approval and recovery attestation after every server.
 Reports default to C:\Temp\KB5130098-Reports on the calling computer.
+Standard PowerShell confirmation is opt-in with -Confirm at the default
+ConfirmPreference; maintenance approval and recovery attestation still apply.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',
@@ -23,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 Set-Variable -Name report -Scope Global -Value @() -ErrorAction Stop -WhatIf:$false -Confirm:$false
 Set-Variable -Name reportFiles -Scope Global -Value $null -ErrorAction Stop -WhatIf:$false -Confirm:$false
 if (-not $PSBoundParameters.ContainsKey('PackageDirectory')) { $PackageDirectory=$PSScriptRoot }
-Import-Module (Join-Path $PSScriptRoot 'KB5130098.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'KoreanRules.psm1') -Force
 $parameters = @{
     ComputerName=$ComputerName; Mode=$Mode; PackageDirectory=$PackageDirectory
     RestartSearch=($Mode -eq 'Apply')

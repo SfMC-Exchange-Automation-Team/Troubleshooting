@@ -1,26 +1,22 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Compatibility entry point. Use Get-KoreanRulesState or Set-KoreanRulesState.
+Inspects Korean Rules applicability locally or on explicit remote/CSV targets.
+.DESCRIPTION
+Detection requires no installation payload and never modifies Exchange files or
+services. Lists of four or more targets use compact human output. Full results
+remain in $report and the default exports. WhatIf makes no remote connections
+and writes no exports. Standard confirmation is opt-in with -Confirm.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local')]
 param(
-    [ValidateSet('Detect','Apply','Rollback')][string]$Mode='Detect',
     [Parameter(Mandatory, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName='RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
     [ValidateNotNullOrEmpty()][string]$ReportDirectory,
-    [string]$PayloadDirectory,
-    [Parameter(ParameterSetName='Local')][string]$StateRoot,
-    [Parameter(ParameterSetName='Local')][string]$ReceiptPath,
-    [switch]$RestartSearch,
-    [switch]$MaintenanceWindowApproved,
-    [Parameter(ParameterSetName='Local')][switch]$MicrosoftSupportApprovedRollback,
     [Parameter(ParameterSetName='Local')][switch]$NoAutoElevate,
     [switch]$AsJson,
     [switch]$PassThru,
-    [switch]$NoCsv,
-    [ValidateRange(30,600)][int]$TimeoutSeconds=120,
-    [ValidateRange(15,300)][int]$StabilitySeconds=30
+    [switch]$NoCsv
 )
 $ErrorActionPreference = 'Stop'
 $operation = Join-Path $PSScriptRoot 'private\Invoke-KoreanRulesOperation.ps1'
@@ -28,6 +24,7 @@ if (-not (Test-Path -LiteralPath $operation -PathType Leaf)) {
     throw 'Korean Rules package is incomplete. Extract the complete source or deployment package, including its private folder and module; do not copy only the entry-point scripts.'
 }
 $parameters = @{} + $PSBoundParameters
+$parameters.Mode = 'Detect'
 if ($PSCmdlet.ParameterSetName -eq 'Local' -and $MyInvocation.PipelineLength -gt 1) {
     $parameters.NoAutoElevate = $true
 }

@@ -3,10 +3,14 @@ BeforeAll {
     $script:nativePowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script:fixtureRoot = Join-Path $TestDrive 'Native entry point fixture'
     $null = New-Item -Path $script:fixtureRoot -ItemType Directory
-    Copy-Item -LiteralPath (Join-Path $script:packageRoot 'Invoke-KB5130098.ps1') -Destination $script:fixtureRoot
-    Copy-Item -LiteralPath (Join-Path $script:packageRoot 'KB5130098.psd1') -Destination $script:fixtureRoot
+    foreach ($name in @('Invoke-KB5130098.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:fixtureRoot
+    }
+    $null = New-Item -Path (Join-Path $script:fixtureRoot 'private') -ItemType Directory
+    Copy-Item -LiteralPath (Join-Path $script:packageRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $script:fixtureRoot 'private')
+    Copy-Item -LiteralPath (Join-Path $script:packageRoot 'KoreanRules.psd1') -Destination $script:fixtureRoot
     $fixtureModule = @'
-$script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'KB5130098.psd1')
+$script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'KoreanRules.psd1')
 $script:fixtureRules = @()
 $script:elevationCalls = 0
 $script:localCalls = 0
@@ -111,7 +115,7 @@ function Invoke-KBLocal {
     $tokens = $null
     $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $script:packageRoot 'KB5130098.psm1'), [ref]$tokens, [ref]$errors)
+        (Join-Path $script:packageRoot 'KoreanRules.psm1'), [ref]$tokens, [ref]$errors)
     if ($errors.Count -ne 0) { throw 'Production module does not parse.' }
     $supportNames = @('Write-KBConsoleResult','Get-KBReportValue','ConvertTo-KBReportRows',
         'Write-KBFleetReport','Save-KBReportExports','Write-KBReportSummary')
@@ -125,7 +129,7 @@ function Invoke-KBLocal {
     }
     ($fixtureModule + "`r`n" + ($support -join "`r`n") +
         "`r`nExport-ModuleMember -Function Invoke-KBLocal,Invoke-KBAutoElevation,Write-KBConsoleResult,Invoke-KBFleet,New-KBReportContext,ConvertTo-KBReportRows,Save-KBReportExports,Write-KBReportSummary") |
-        Set-Content -LiteralPath (Join-Path $script:fixtureRoot 'KB5130098.psm1') -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $script:fixtureRoot 'KoreanRules.psm1') -Encoding ASCII
 
     function Invoke-NativeFixture {
         param([string]$Arguments, [string]$Status = 'EligibleMissingBothRules',
@@ -505,14 +509,35 @@ Describe 'Unified native local/remote/CSV dispatch' {
         $json.Report | Should -BeNullOrEmpty
     }
 
-    It 'runs the real CSV preview without specifying a report directory' {
+    It 'runs the real <Header> CSV preview without specifying a report directory' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'defaults.csv'
-        "ComputerName`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
         $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
         ($result.Output | ConvertFrom-Json).Targets | Should -Be @('EX01.example.com')
+    }
+
+    It 'reads an unrenamed Exchange inventory CSV with type metadata through the actual native entry point' {
+        $csv = Join-Path $TestDrive 'exchange-inventory.csv'
+        '#TYPE Deserialized.Microsoft.Exchange.Data.Directory.Management.ExchangeServer',
+            '"Name","Fqdn","PSComputerName","ServerRole"',
+            '"EX02","EX02.example.com","management.example.com","Mailbox"',
+            '"EX01","EX01.example.com","management.example.com","Mailbox"' |
+            Set-Content -LiteralPath $csv -Encoding UTF8
+        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $report = Join-Path $TestDrive 'No inventory-preview reports'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "{2}" -WhatIf -AsJson' -f $path,$csv,$report)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $json = $result.Output | ConvertFrom-Json
+        $json.Targets | Should -Be @('EX02.example.com','EX01.example.com')
+        $json.Servers | Should -Be 0
+        $json.TargetCount | Should -Be 2
+        Test-Path -LiteralPath $report | Should -BeFalse
     }
 
     It 'runs the actual legacy wrapper preview without a report-directory prompt' {
@@ -580,13 +605,314 @@ Describe 'Unified native local/remote/CSV dispatch' {
         Test-Path -LiteralPath $report | Should -BeFalse
     }
 
-    It 'validates all real CSV records before reporting a preview plan' {
+    It 'validates all real <Header> CSV records before reporting a preview plan' -ForEach @(
+        @{ Header='ComputerName' }, @{ Header='Fqdn' }, @{ Header='Name' }
+    ) {
         $csv = Join-Path $TestDrive 'invalid targets.csv'
-        "ComputerName`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
+        "$Header`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
         $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory C:\Reports -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'CSV record 3'
         $result.Output | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Native Korean Rules operator entry points' {
+    It 'fails clearly when <Script> was copied without the shared runtime' -ForEach @(
+        @{ Script='Get-KoreanRulesState.ps1' }, @{ Script='Set-KoreanRulesState.ps1' }, @{ Script='Invoke-KB5130098.ps1' }
+    ) {
+        $partial = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path $partial -ItemType Directory
+        $path = Join-Path $partial $Script
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot $Script) -Destination $path
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}"' -f $path)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'package is incomplete'
+        $result.Error | Should -Match 'complete source or deployment package'
+        $result.Output | Should -BeNullOrEmpty
+    }
+
+    It 'Get performs Detect without a mode or payload parameter' {
+        $result = Invoke-NativeFixture -Arguments '-File ".\Get-KoreanRulesState.ps1" -AsJson'
+        $result.ExitCode | Should -Be 0
+        $json = $result.Output | ConvertFrom-Json
+        $json.Mode | Should -Be 'Detect'
+        $json.PayloadDirectory | Should -Be (Join-Path $script:fixtureRoot 'payload')
+        $json.RestartSearch | Should -BeFalse
+    }
+
+    It 'Set defaults to file-only Apply and forwards custom exit codes' {
+        $result = Invoke-NativeFixture -Arguments '-File ".\Set-KoreanRulesState.ps1" -AsJson' -Status FilesStagedRestartRequired
+        $result.ExitCode | Should -Be 10
+        $json = $result.Output | ConvertFrom-Json
+        $json.Mode | Should -Be 'Apply'
+        $json.RestartSearch | Should -BeFalse
+    }
+
+    It 'Get cannot be turned into an Apply or restart command' -ForEach @(
+        @{ Extra='-Mode Apply' }, @{ Extra='-RestartSearch' }, @{ Extra='-Rollback' }
+    ) {
+        $result = Invoke-NativeFixture -Arguments ('-File ".\Get-KoreanRulesState.ps1" {0}' -f $Extra)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'parameter'
+    }
+
+    It 'Set maps explicit Rollback while keeping its local approvals and receipt' {
+        $result = Invoke-NativeFixture -Arguments '-File ".\Set-KoreanRulesState.ps1" -Rollback -ReceiptPath C:\Fixture\receipt.json -MaintenanceWindowApproved -MicrosoftSupportApprovedRollback -AsJson' -Status RolledBackRestartRequired
+        $result.ExitCode | Should -Be 10
+        $json = $result.Output | ConvertFrom-Json
+        $json.Mode | Should -Be 'Rollback'
+        $json.ReceiptPath | Should -Be 'C:\Fixture\receipt.json'
+    }
+
+    It 'canonical <Script> preserves typed pipeline output and session report variables' -ForEach @(
+        @{ Script='Get-KoreanRulesState.ps1'; Expected='Detect' }
+        @{ Script='Set-KoreanRulesState.ps1'; Expected='Apply' }
+    ) {
+        $command = '$captured=@(& ''.\{0}'' -ComputerName EX01,EX02 -PassThru 6>$null); $code=$LASTEXITCODE; ''CAPTURE:'' + ([pscustomobject]@{{Rows=$captured;Saved=@($report)}} | ConvertTo-Json -Depth 6 -Compress); exit $code' -f $Script
+        $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be $(if ($Expected -eq 'Apply') { 10 } else { 0 })
+        $capture = [regex]::Match($result.Output, '(?m)^CAPTURE:(.+)$')
+        $capture.Success | Should -BeTrue
+        $json = $capture.Groups[1].Value | ConvertFrom-Json
+        $json.Rows.Count | Should -Be 2
+        $json.Saved.Count | Should -Be 2
+        $json.Rows[0].Mode | Should -Be $Expected
+        $json.Rows[0].ComputerName | Should -Be 'EX01'
+    }
+
+    It 'real Get preserves all four targets in machine JSON and does not need installation files' {
+        $path = Join-Path $script:packageRoot 'Get-KoreanRulesState.ps1'
+        $reports = Join-Path $TestDrive 'no-canonical-preview-export'
+        $command = '& ''{0}'' -ComputerName EX01,EX02,EX03,EX04 -WhatIf -AsJson -ReportDirectory ''{1}''; exit $LASTEXITCODE' -f $path,$reports
+        $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $json = $result.Output | ConvertFrom-Json
+        $json.Targets | Should -Be @('EX01','EX02','EX03','EX04')
+        $json.ReportData.Count | Should -Be 4
+        $json.Servers | Should -Be 0
+        Test-Path -LiteralPath $reports | Should -BeFalse
+    }
+
+    It 'real Get uses compact human output for four targets but retains all object rows' {
+        $path = Join-Path $script:packageRoot 'Get-KoreanRulesState.ps1'
+        $command = '& ''{0}'' -ComputerName EX01,EX02,EX03,EX04 -WhatIf; $code=$LASTEXITCODE; ''ROWS:'' + @($report).Count; exit $code' -f $path
+        $result = Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be 0
+        $result.Output | Should -Match 'Compact summary'
+        $result.Output | Should -Match 'ROWS:4'
+        $result.Output | Should -Not -Match 'Korean Rules \| DETECT \||CHECK\s+STATUS'
+    }
+
+    It 'real Set explains missing installation files before contacting a remote target' {
+        $path = Join-Path $script:packageRoot 'Set-KoreanRulesState.ps1'
+        $missing = Join-Path $TestDrive 'missing-source-payload'
+        $reports = Join-Path $TestDrive 'no-payload-failure-exports'
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -PayloadDirectory "{1}" -ReportDirectory "{2}"' -f $path,$missing,$reports)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'installation payload is missing'
+        $result.Error | Should -Match 'ko\.token\.rule\.bin, ko\.complex\.rule\.bin'
+        $result.Error | Should -Match 'Install-KoreanRules\.ps1 -Download'
+        $result.Error | Should -Match 'returned PayloadDirectory'
+        $result.Output | Should -Match 'Preflight stopped'
+        $result.Output | Should -Not -Match '\$report contains 0'
+        Test-Path -LiteralPath $reports | Should -BeFalse
+    }
+}
+
+Describe 'Native builder without a workstation-confirmation requirement' {
+    BeforeAll {
+        $script:builderRoot = Join-Path $TestDrive 'Native builder fixture'
+        $script:builderRules = Join-Path $script:builderRoot 'rules'
+        $null = New-Item -Path $script:builderRules -ItemType Directory -Force
+        foreach ($name in @('Build-KB5130098Package.ps1','Install-KoreanRules.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1','KoreanRules.psd1','README.txt')) {
+            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:builderRoot
+        }
+        foreach ($directory in @('examples','docs','private')) {
+            $null = New-Item -Path (Join-Path $script:builderRoot $directory) -ItemType Directory
+        }
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'examples\servers.csv') -Destination (Join-Path $script:builderRoot 'examples')
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'docs\Reporting-and-Splunk.md') -Destination (Join-Path $script:builderRoot 'docs')
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $script:builderRoot 'private')
+        foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+            'Native builder fixture; not Microsoft payload' | Set-Content -LiteralPath (Join-Path $script:builderRules $name)
+        }
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $script:packageRoot 'KoreanRules.psm1'), [ref]$tokens, [ref]$errors)
+        if ($errors.Count) { throw 'Production module does not parse.' }
+        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload')) {
+            $definition = $ast.Find({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $false)
+            if ($null -eq $definition) { throw "Missing production helper: $name" }
+            $definition.Extent.Text
+        }
+        $fixture = @'
+$script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'KoreanRules.psd1')
+foreach ($rule in $script:Spec.Rules) {
+    $path = Join-Path (Join-Path $PSScriptRoot 'rules') $rule.Name
+    $rule.Bytes = (Get-Item -LiteralPath $path).Length
+    $rule.SHA256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+function Assert-KBAdministrator {}
+function Test-Path {
+    [CmdletBinding(DefaultParameterSetName='Path')]
+    param(
+        [Parameter(Position=0, ParameterSetName='Path')][string[]]$Path,
+        [Parameter(ParameterSetName='LiteralPath')][string[]]$LiteralPath,
+        [Alias('Type')][string]$PathType
+    )
+    if ($LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup') { return $true }
+    Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+}
+function Start-Process { throw 'Native builder fixtures must never launch installers.' }
+function Invoke-WebRequest { throw 'Native builder fixtures must never download software.' }
+'@
+        ($fixture + "`r`n" + ($helpers -join "`r`n")) |
+            Set-Content -LiteralPath (Join-Path $script:builderRoot 'KoreanRules.psm1') -Encoding ASCII
+    }
+
+    It 'builds under native -File on an Exchange-host fixture with <ArgumentsLabel>' -ForEach @(
+        @{ ArgumentsLabel='canonical installer'; Extra=''; Script='Install-KoreanRules.ps1' }
+        @{ ArgumentsLabel='legacy builder, no confirmation switch'; Extra=''; Script='Build-KB5130098Package.ps1' }
+        @{ ArgumentsLabel='the legacy optional switch'; Extra=' -ManagementWorkstationConfirmed'; Script='Build-KB5130098Package.ps1' }
+    ) {
+        $output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $builder = Join-Path $script:builderRoot $Script
+        $arguments = '-File "{0}" -RuleSourceDirectory "{1}" -OutputDirectory "{2}" -WorkRoot "{3}"{4}' -f `
+            $builder,$script:builderRules,$output,$work,$Extra
+        $result = Invoke-NativeFixture -Arguments $arguments -WorkingDirectory $TestDrive
+        $result.ExitCode | Should -Be 0 -Because ($result.Error + $result.Output)
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'Exchange installation detected'
+        $result.Output | Should -Not -Match 'Supply values|missing mandatory parameters'
+        $zip = @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File)
+        $zip.Count | Should -Be 1
+        $expected = ([IO.File]::ReadAllText("$($zip[0].FullName).sha256") -split '\s+')[0]
+        (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash | Should -Be $expected
+        foreach ($rule in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+            (Get-FileHash -LiteralPath (Join-Path $output "Exchange-KoreanRules\payload\$rule")).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $script:builderRules $rule)).Hash
+        }
+    }
+
+}
+
+Describe 'Native standard confirmation is opt-in without disabling preview' {
+    BeforeAll {
+        $script:confirmationRoot = Join-Path $TestDrive 'Native confirmation fixture'
+        $null = New-Item -Path $script:confirmationRoot -ItemType Directory
+        foreach ($name in @('Invoke-KB5130098.ps1','Invoke-KB5130098Fleet.ps1','KoreanRules.psd1')) {
+            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:confirmationRoot
+        }
+        $null = New-Item -Path (Join-Path $script:confirmationRoot 'private') -ItemType Directory
+        Copy-Item -LiteralPath (Join-Path $script:packageRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $script:confirmationRoot 'private')
+        $overrides = @'
+$script:ConfirmationRoot = $env:KB_CONFIRM_TEST_ROOT
+function Assert-KBAdministrator {}
+function Invoke-KBAutoElevation { return $null }
+function Assert-KBPayload {}
+function Get-Service { [pscustomobject]@{Status='Running'} }
+function Get-KBDetection {
+    [pscustomobject]@{
+        ComputerName='Fixture'; Status='EligibleMissingBothRules'; Eligible=$true
+        NativePath=(Join-Path $script:ConfirmationRoot 'native')
+        ExchangePath=(Join-Path $script:ConfirmationRoot 'exchange')
+        ExchangeVersion='15.2.2562.49'; DllVersion='16.0.5194.1000'
+        DllSHA256='fixture'; ExistingRules=@()
+    }
+}
+function New-KBStateDirectory { throw 'CONFIRM-LOCAL-BOUNDARY' }
+function New-PSSession { throw 'UNEXPECTED-REMOTE-CONNECTION' }
+function Restart-KBHostController { throw 'UNEXPECTED-SERVICE-RESTART' }
+if ($env:KB_CONFIRM_TEST_ENTRY -notin @('LocalModule','PrimaryLocal')) {
+    function Write-KBFleetReport { throw 'CONFIRM-REMOTE-BOUNDARY' }
+}
+Export-ModuleMember -Function *
+'@
+        ([IO.File]::ReadAllText((Join-Path $script:packageRoot 'KoreanRules.psm1')) + "`r`n" + $overrides) |
+            Set-Content -LiteralPath (Join-Path $script:confirmationRoot 'KoreanRules.psm1') -Encoding UTF8
+        $script:confirmationWorker = Join-Path $script:confirmationRoot 'Run-ConfirmationFixture.ps1'
+        @'
+param([string]$Entry, [string]$Case, [string]$Root)
+$ErrorActionPreference = 'Stop'
+$env:KB_CONFIRM_TEST_ROOT = $Root
+$env:KB_CONFIRM_TEST_ENTRY = $Entry
+$global:ConfirmPreference = if ($Case -in @('InheritedLow','Disabled')) { 'Low' } else { 'High' }
+$parameters = @{}
+if ($Case -in @('Explicit','ExplicitPreview')) { $parameters.Confirm=$true }
+if ($Case -eq 'Disabled') { $parameters.Confirm=$false }
+if ($Case -in @('Preview','ExplicitPreview')) { $parameters.WhatIf=$true }
+$reports = Join-Path $Root 'reports'
+try {
+    switch ($Entry) {
+        'LocalModule' {
+            Import-Module (Join-Path $PSScriptRoot 'KoreanRules.psm1') -Force
+            Invoke-KBLocal -Mode Apply -PayloadDirectory $Root -StateRoot (Join-Path $Root 'state') @parameters | ConvertTo-Json -Depth 8
+        }
+        'FleetModule' {
+            Import-Module (Join-Path $PSScriptRoot 'KoreanRules.psm1') -Force
+            Invoke-KBFleet -ComputerName example.invalid -PackageDirectory $PSScriptRoot -ReportDirectory $reports -Quiet @parameters | ConvertTo-Json -Depth 8
+        }
+        'PrimaryLocal' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -Mode Apply -StateRoot (Join-Path $Root 'state') -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'PrimaryRemote' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -ComputerName example.invalid -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'PrimaryCsv' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098.ps1') -CsvPath (Join-Path $Root 'targets.csv') -ReportDirectory $reports -AsJson @parameters
+            exit $LASTEXITCODE
+        }
+        'Legacy' {
+            & (Join-Path $PSScriptRoot 'Invoke-KB5130098Fleet.ps1') -ComputerName example.invalid -ReportDirectory $reports @parameters | Out-Null
+        }
+        default { throw 'Unknown fixture entry point.' }
+    }
+    exit 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+'@ | Set-Content -LiteralPath $script:confirmationWorker -Encoding ASCII
+    }
+
+    It '<Entry> respects <Case> with the real ShouldProcess boundary' -ForEach @(
+        foreach ($entry in @('LocalModule','FleetModule','PrimaryLocal','PrimaryRemote','PrimaryCsv','Legacy')) {
+            foreach ($case in @('Default','Explicit','Disabled','InheritedLow','Preview','ExplicitPreview')) {
+                @{ Entry=$entry; Case=$case }
+            }
+        }
+    ) {
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path $root -ItemType Directory
+        "Name`r`nexample.invalid" | Set-Content -LiteralPath (Join-Path $root 'targets.csv')
+        $arguments = '-File "{0}" -Entry {1} -Case {2} -Root "{3}"' -f $script:confirmationWorker,$Entry,$Case,$root
+        $result = Invoke-NativeFixture -Arguments $arguments
+        $result.Error | Should -Not -Match 'UNEXPECTED-REMOTE-CONNECTION|UNEXPECTED-SERVICE-RESTART'
+        Test-Path -LiteralPath (Join-Path $root 'state') | Should -BeFalse
+        if ($Case -in @('Preview','ExplicitPreview')) {
+            $result.ExitCode | Should -Be 0 -Because $result.Error
+            $result.Error | Should -BeNullOrEmpty
+            Test-Path -LiteralPath (Join-Path $root 'reports') | Should -BeFalse
+            $result.Output | Should -Not -Match 'CONFIRM-(LOCAL|REMOTE)-BOUNDARY'
+        } elseif ($Case -in @('Explicit','InheritedLow')) {
+            $result.ExitCode | Should -Be 1
+            $result.Error | Should -Match 'NonInteractive|Read and Prompt|ShouldProcess'
+            $result.Error | Should -Not -Match 'CONFIRM-(LOCAL|REMOTE)-BOUNDARY'
+        } else {
+            $result.ExitCode | Should -Be 1
+            $boundary = if ($Entry -in @('LocalModule','PrimaryLocal')) { 'CONFIRM-LOCAL-BOUNDARY' } else { 'CONFIRM-REMOTE-BOUNDARY' }
+            $result.Error | Should -Match $boundary
+            $result.Error | Should -Not -Match 'NonInteractive|Read and Prompt'
+        }
     }
 }

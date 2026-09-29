@@ -1,512 +1,344 @@
-Exchange KB5130098 workaround automation | 1.2.1
-Guidance reviewed: September 25, 2026
+Exchange Korean Rules | 2.0.0
+Operator quick reference
 
 PURPOSE AND SUPPORT BOUNDARY
 
-This is custom, reviewable PowerShell automation of Microsoft's published
-workaround. It is NOT a Microsoft-signed installer, hotfix, security update or
-permanent product fix. Review it through your change-control and code-signing
-process and pilot on one affected server before wider use. Version 1.0.0 was
-piloted on one lab server; that initial run did not prove workload recovery.
-Version 1.0.1 corrects native invocation paths and deployment-agent exit handling;
-it does not change applicability, payload, or the automated restart scope.
-Version 1.0.2 adds interactive UAC relaunch and human-readable before/action/current
-summaries. Machine callers must now specify -AsJson explicitly.
-Version 1.1.0 integrates serial remote orchestration and strict CSV targeting into
-the primary entry point. RestartSearch is explicit for both local and remote
-primary Apply; the old fleet wrapper retains its historical Apply/restart behavior.
-Version 1.1.1 shows a single STATUS column unless Mode is Apply, and colors
-Present file-state values green without changing eligibility or recovery gates.
-Version 1.1.2 makes ReportDirectory optional everywhere. Omitted remote report
-paths use C:\Temp\KB5130098-Reports on the calling computer.
-Version 1.2.0 retains structured session-level $report objects and $reportFiles,
-prints their summary, and exports CSV, detailed JSON and final JSON Lines by
-default for local and remote runs. Previews produce no persistent report exports.
-Version 1.2.1 colors a pinned-identity mismatch red, a confirmed match green,
-and Missing rule files green only for a matching identity; Missing on an
-ineligible installation is yellow, while unobserved state stays neutral.
-
-Sources:
+This is custom PowerShell automation, not a Microsoft-signed hotfix, security
+update or permanent product fix. Source guidance:
 https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098
-https://learn.microsoft.com/en-us/exchange/new-features/build-numbers-and-release-dates
-https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5121608
+Re-read that article, review signing/change control and pilot one affected
+server. The article number is not the tool identity. The tool does not install
+or uninstall an Exchange SU, replace korwbrkr.dll or diagnose a deadlock.
 
-SECURITY UPDATE VS SE
+Current full guide: README.md
+Reports/Splunk: docs\Reporting-and-Splunk.md
+Historical evidence and limits: docs\Lab-Validation.md
 
-The affected build 15.02.2562.049 is Exchange Server SE RTM Sep26SU, released
-September 8, 2026 (KB5121608). SU means Security Update. SE means Subscription
-Edition, the product edition. This is a security update to SE, not a feature/CU
-upgrade to SE. KB5130098 documents a regression and its workaround; it is not
-the security-update installer. This kit only adds the two rule-data files.
-It does not install or uninstall the SU and does not replace korwbrkr.dll.
-Do not remove a security update as an automated workaround.
+THREE RECOMMENDED COMMANDS
 
-IMPACT AND OPEN QUESTIONS
+Install-KoreanRules.ps1    Prepare verified payload and a deployable runtime.
+                          NOT SQL installation; NOT applying rules to Exchange.
+Get-KoreanRulesState.ps1   Detect only: local, -ComputerName, or -CsvPath.
+Set-KoreanRulesState.ps1   Apply by default; -Rollback is receipt-bound/local.
 
-Confirmed by KB5130098: environments processing Korean-language email after
-the September 2026 SU may have missing search results, delayed email delivery,
-and MAPI/Outlook clients that stall, disconnect or become unresponsive. The
-updated Korean WordBreaker is missing required external rule-data files.
+Safe order: prepare, verify, Get, Set -WhatIf, approved pilot, actual workload
+checks, then the next server. Get does not require payload files. Set never
+infers restart: select -RestartSearch and assert -MaintenanceWindowApproved.
 
-The KB does not establish that every Korean email triggers a deadlock, describe
-the full trigger conditions, or state a precise user/message blast radius.
-Do not claim either "only the Korean message/user" or "everyone always".
-Because ContentEngine is shared server-side processing, broader workload
-disruption is a reasonable operational risk, not a documented guarantee that
-every mailbox or transport queue is blocked. Other messages may be affected;
-use message tracking, queues, server health and the support case to establish
-the actual scope. This kit does not diagnose deadlock or inspect message bodies.
+PREREQUISITES AND EXACT IDENTITY
 
-Survey the explicit target list. Apply only to affected installations matching
-EVERY KB criterion. Do not deploy indiscriminately to all Exchange versions,
-roles, servers or machines based solely on symptoms or user language.
-Passive copies or absence of current Korean senders do not prove future safety;
-review affected-server scope with Microsoft Support.
+Use 64-bit Windows PowerShell 5.1. The installer requires elevation. Local
+interactive state commands can request normal UAC and preserve switches,
+WhatIf and confirmation preferences. Their private data-only handoff returns
+exit/report data to the invoking session and is removed afterward.
+Declined elevation is an error. For local JSON, pipelines, remoting and
+unattended operation, start elevated. Set's -NoAutoElevate disables relaunch;
+it does not bypass administrator checks. No execution-policy bypass is used.
+Keep administrative code readable by its initial caller but not world-writable.
 
-Microsoft says it is investigating and will update KB5130098. The article does
-not announce a separate permanent hotfix, release date, future KB number or
-fleet installer. This custom automation is not a commitment from Microsoft.
-Re-read the article before use. Future build/hash changes require new Microsoft
-guidance; do not relax the pinned identities to make the script accept them.
+Remote operations require existing administrative Kerberos/WinRM access to a
+64-bit Microsoft.PowerShell endpoint, not the constrained Exchange shell.
+They do not change credentials, enable remoting or alter TrustedHosts.
+Review Exchange/DAG health, maintenance and workload scope separately.
+Use approved C: build/staging/report locations; writes through reparse points
+or junctions and writes to F: are refused. Detect may observe an installation
+that this tool cannot modify.
 
-CONTENTS
+Apply requires all of:
+  Exchange version: 15.2.2562.49 (published as 15.02.2562.049)
+  korwbrkr.dll: version 16.0.5194.1000, 326544 bytes
+  DLL SHA256:
+    1C6BD8E144BA677EBCC83323AE59DB3881918170F9B3A5189B44611558B92C61
+  Neither rule already present in the destination.
 
-KB5130098.psd1                Exact build/file identities from the KB
-KB5130098.psm1                Local implementation and guarded service restart
-Invoke-KB5130098.ps1          Local / explicit-target / CSV inventory and rollout
-Invoke-KB5130098Fleet.ps1     Compatibility wrapper (legacy Apply includes restart)
-Build-KB5130098Package.ps1    Workstation-only media extraction and ZIP builder
-tests\                       Isolated development tests (source kit only)
-examples\servers.csv          Fictional target-list template; edit before use
-docs\Reporting-and-Splunk.md   Report variables, CSV/JSON formats and Splunk examples
+The destination is registry-discovered:
+  <ExchangeInstallPath>\Bin\Search\Ceres\Native
 
-The source kit contains NO Microsoft binaries. The builder produces a small
-deployment ZIP containing only the automation and two verified BIN files, not
-SQL media, SQL binaries, a DLL, runtime libraries or SQL Setup. SQL Server is
-never installed. Keep the source kit for rebuilding; the deployment ZIP does
-not include the builder. Review applicable licensing before redistribution
-outside your organization. Checksums detect changes; they are not code signing.
+Use the authoritative DLL hash in KoreanRules.psd1 and the full guide when
+checking identity. Never loosen build/hash checks to accept a future update.
+Either existing rule blocks Apply, even a partial pair; no overwrite or
+repair-by-reapply is supported. Eligibility alone does not establish symptoms.
 
-PREREQUISITES
+1. PREPARE THE VERIFIED PAYLOAD
 
-64-bit Windows PowerShell 5.1. The local CLI can request normal Windows UAC
-elevation for an interactive human run and reopen itself in the correct host.
-The elevated window displays the results and waits for Enter before closing;
-the original process then receives its exit code and report data. A private,
-locked, data-only handoff is removed after the parent receives it. No credential
-or executable content is written to that result handoff. It never changes execution
-policy or supplies approval for an Exchange operation. Parameters, including
-explicit false switches and WhatIf, are preserved. Declined elevation is an error,
-not a successful no-op.
-Inherited WhatIf and confirmation preferences are preserved too; elevation must
-not turn a session-level preview into a modifying operation.
+From the source folder, choose ONE input in elevated Windows PowerShell.
+Download requires explicit -Download (approximately 749 MB of Microsoft media):
 
-For local operations, JSON capture (-AsJson), pipelines, remoting and unattended
-runs must already be elevated. -NoAutoElevate suppresses local relaunch explicitly;
-it does not bypass the administrator requirement. Remote orchestration instead
-uses existing Kerberos rights and administrative 64-bit sessions on each target,
-without local UAC or changed credentials. The builder retains its elevation
-requirement. SYSTEM remains supported for local
-staging through an approved deployment agent. A package intended for interactive
-UAC launch must be readable from the initial unelevated account; keep write access
-restricted to administrators and follow your code-signing policy. Use C: for
-build/staging/reports. The script discovers the actual Exchange install path
-from the local registry; it does not assume the default path. Write paths
-through junctions/reparse points or F: are intentionally refused. Detection
-can report an F: installation, but this package will not change one.
+  $build = .\Install-KoreanRules.ps1 -Download
 
-Use an approved secure local directory and your organization's script-signing
-policy. No execution-policy bypass or policy changes are included.
-WinRM rollout requires existing administrative Kerberos access to the normal
-Microsoft.PowerShell endpoint, NOT the constrained Exchange shell endpoint.
-It never enables remoting, changes TrustedHosts or persists credentials.
-No cloud/tenant connection, Exchange cmdlet module or third-party module is needed.
+Instead, use existing exact Microsoft media:
 
-1. BUILD THE PAYLOAD ON A MANAGEMENT WORKSTATION
+  $build = .\Install-KoreanRules.ps1 -SqlPackagePath 'C:\Temp\SQLEXPR_x64_ENU.exe'
 
-Open elevated Windows PowerShell and change to the extracted SOURCE kit:
+Or use both already-extracted rule files:
 
-  Set-Location 'C:\Temp\Exchange-KB5130098'
+  $build = .\Install-KoreanRules.ps1 -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules'
 
-Download the exact Microsoft SQL Express media, verify Microsoft Authenticode,
-version, byte count and SHA256, extract without installation, and package:
+OutputDirectory is optional. Its default is a UNIQUE child of
+C:\Temp\KoreanRules-Ready. An explicit directory must be new; existing output
+is not overwritten. WorkRoot defaults to C:\Temp\KoreanRules-Build, with a
+unique extraction subfolder. Allow several GB of space.
 
-  .\Build-KB5130098Package.ps1 -Download -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+A management workstation is recommended. An Exchange host is allowed with
+a disk/CPU warning, not an additional approval switch. That allowance does
+not change Microsoft's workstation recommendation.
+Media version, size, SHA256 and Microsoft Authenticode signature are checked
+before extraction. The installer extracts without installing SQL and verifies
+the exact two rule files. It neither copies them into Exchange nor restarts
+services. Failed extraction preserves diagnostics for review.
 
-The download is about 749 MB; allow several GB of free working space.
-Alternatively use an existing, exact copy of the Microsoft media:
+  $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, ExtractionArtifacts
 
-  .\Build-KB5130098Package.ps1 -SqlPackagePath 'C:\Temp\SQLEXPR_x64_ENU.exe' -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+Package is the generated ZIP; SHA256 is its hash; ExpandedPackage is the
+generated runtime folder; PayloadDirectory contains verified rules;
+ExtractionArtifacts identifies retained extraction artifacts.
 
-Or package the two files you have already extracted using the KB:
+IMPORTANT: the original source folder is NOT populated with payload.
+Use the generated runtime or explicitly pass the returned directory:
 
-  .\Build-KB5130098Package.ps1 -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules' -ManagementWorkstationConfirmed -OutputDirectory 'C:\Temp\KB5130098-Ready'
+  .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
 
-All input paths still undergo exact rule size/hash checks. Output must be a new
-directory. Existing output is never overwritten. Extraction uses a unique
-subfolder of C:\Temp\KB5130098-Build. A failed download/extraction stops the
-build and preserves logs. Delete that unique work folder after troubleshooting
-or successful packaging when it is no longer needed.
+Alternatively:
 
-The result is Exchange-KB5130098-1.2.1-deploy.zip plus a SHA256 sidecar. If code
-signing is required, sign the scripts/module BEFORE building; sign the builder
-too before execution as required by policy. The builder hashes the resulting
-files. Protect the package as administrative code.
-For repeated manual use, keep a stable working folder such as
-C:\Scripts\Exchange-KB5130098. Update verified contents in place while no run is
-active, preserving user edits and reports. Versions belong in metadata/archive
-names, not a new working directory for every release.
+  Set-Location -LiteralPath $build.ExpandedPackage
+  .\Get-KoreanRulesState.ps1
 
-2. INVENTORY BEFORE CHANGES
+Missing-payload errors name the expected directory and both files:
+  <entrypoint-folder>\payload\ko.token.rule.bin
+  <entrypoint-folder>\payload\ko.complex.rule.bin
 
-Copy/extract the deployment ZIP to an affected server's staging location.
-In Windows PowerShell, in the extracted package (approve UAC if prompted):
+Run Install with -Download or existing inputs, then select its PayloadDirectory;
+or use -PayloadDirectory for an existing verified pair on the caller.
+Detection needs no payload. Remote Apply validates caller-side payload before
+connecting, rather than assuming a source checkout contains the vendor files.
 
-  powershell.exe -NoProfile -File .\Invoke-KB5130098.ps1 -Mode Detect
+Required payload:
+  ko.token.rule.bin, 56132 bytes
+    8F2BD853593913EB8F73DCD4FCAC4216F216A0FF76A4569DF071BE3C36773010
+  ko.complex.rule.bin, 717792 bytes
+    0390D1E9A76EF33283025CF8F164430E311584B9535949C4EA1A74B6BB107B87
 
-Human output is the default: STATUS, ACTION TAKEN, and NEXT STEP. A no-argument
-run is Detect only: it never copies rules or restarts services and shows each
-observed value once. Only -Mode Apply uses BEFORE / CURRENT comparisons, including
-an explicitly labelled Apply -WhatIf preview. Those observations refer to this
-invocation, not earlier history. Rollback shows resulting STATUS and describes
-removals in ACTION TAKEN. Errors retain observed state and partial-operation receipts.
-Present values are green in human output. Green means a file exists, not that
-its contents are verified or the workload has recovered; stop warnings remain.
-Existing -AsJson status/exit meanings and operational checks remain; the remote
-JSON envelope additionally includes ReportData rows and ExportFiles paths.
+2. VERIFY AND STAGE
 
-RESULT OBJECTS AND DEFAULT EXPORTS
+Local build: Exchange-KoreanRules-2.0.0-deploy.zip
+Archive root: Exchange-KoreanRules
+Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
+Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
+It also contains KoreanRules.psm1, KoreanRules.psd1,
+private\Invoke-KoreanRulesOperation.ps1, docs, examples and payload.
+The private script is not a fourth operator command.
 
-After a normal script call in the same PowerShell session:
+Extract/copy the WHOLE code package, not just a .ps1 wrapper. Get, Set and
+the legacy Invoke-KB5130098.ps1 wrapper require the private folder and shared
+module. Missing components cause an explicit "package is incomplete" failure;
+restore the complete package, including private and the module, before retrying.
+Get needs no vendor payload but still requires the complete code package.
+
+Public source: downloads\Exchange-KoreanRules-2.0.0-source.zip
+Source also includes tests and legacy compatibility wrappers. No vendor rules,
+SQL media or payload-bearing deployment ZIP is published in this repository.
+Review licensing before redistribution of your generated runtime.
+
+Verify the ZIP hash and sidecar against the approved build record before
+extracting to a NEW directory; README.md has the complete checksum example.
+A checksum is not signing or authentication of an untrusted download. Sign
+scripts/module before building when policy requires; rebuilding changes hashes.
+
+Retain an established stable folder, such as C:\Scripts\Exchange-KB5130098.
+Update reviewed contents only while no run is active; preserve user edits and
+reports. The new archive name does not move stable lab/operator directories,
+the repository directory Exchange-KB5130098, existing reports or receipts.
+
+3. DETECT FIRST
+
+These are alternative inventory examples:
+
+  .\Get-KoreanRulesState.ps1
+  .\Get-KoreanRulesState.ps1 -ComputerName EX01.contoso.com,EX02.contoso.com
+  .\Get-KoreanRulesState.ps1 -CsvPath 'C:\Temp\servers.csv'
+
+Get exposes no Mode selector and cannot Apply or Rollback. Remote Detect
+stages code and writes caller-side reports, but changes no Exchange rules or
+services. Remote WhatIf only validates roster/plan; it does not connect,
+stage code or inventory remote state.
+
+CSV accepts ComputerName, Fqdn or Name, in that order of precedence, selected
+once per file. An invalid/blank selected value never falls back to another
+column. Get-ExchangeServer exports need no calculated ComputerName property.
+The full roster is validated before any connection/report: malformed rows,
+duplicates, IPs, URLs, wildcards and invalid host labels stop the run.
+Quoted/multiline metadata and leading #TYPE export metadata are supported.
+CSV order is retained; PSComputerName is never a target selector. Enabled,
+approval/action and other columns do not filter targets or authorize changes.
+ComputerName and CsvPath are mutually exclusive. Review every target first.
+
+EligibleMissingBothRules means eligible/missing, NOT installed or recovered.
+NotApplicableStop means identity mismatch. RuleFilesPresentStop means one or
+both rules already exist; do not overwrite or reapply.
+Human colors are contextual: match green, mismatch red; Missing green only
+with matching identity, yellow for mismatch, neutral if unobserved. Present
+is green for presence only, not a recovery sign-off.
+
+4. PREVIEW AND APPLY
+
+From the verified runtime, or add your caller-side -PayloadDirectory:
+
+  .\Set-KoreanRulesState.ps1 -WhatIf
+
+Only after real pilot/maintenance approval:
+
+  .\Set-KoreanRulesState.ps1 -RestartSearch -MaintenanceWindowApproved
+
+Set defaults to Apply. Without RestartSearch it only stages the rules,
+returns 10 and requires a separately controlled manual restart/recovery.
+MaintenanceWindowApproved alone does not request restart.
+WhatIf is file-free: no Exchange writes, operation receipts or report exports;
+remote previews also avoid connections/staging. Local preflight can still
+fail on an ineligible or already-staged installation.
+
+Standard confirmation remains opt-in as in 1.2.3. At ConfirmPreference High
+no Confirm false is required. Use -Confirm to request a prompt; inherited
+stricter preferences remain effective. Confirm false does not remove UAC,
+restart selection, maintenance approval, rollback approval or recovery gates.
+Report persistence adds no separate confirmation prompt.
+
+Apply rechecks identity, uses no-overwrite creation, verifies destination
+hashes/sizes and inherited read access, and writes incremental protected
+receipts. It does not loosen directory ACLs or override custom permissions.
+RestartSearch gracefully restarts ONLY HostControllerService and observes
+the exact ContentEngine process/PID for a default 30-second stability window.
+Dependencies, timeouts, permission failures or instability stop the run.
+No force-kill, automatic rollback or blanket caller restart is performed.
+
+5. REPORTS AND HUMAN OUTPUT
+
+1-3 targets retain detailed state/action/next-step blocks for each server.
+Only Apply and its previews show Before/Current; Detect/rollback show Status.
+4+ targets automatically omit these blocks, per-target progress and roster
+dumps. The final human summary contains aggregated Status + Count and report
+paths, NOT a table enumerating every server.
+ERRORS NAME THE FAILED TARGET. REQUIRED RECOVERY PROMPTS STILL APPEAR PER SERVER.
+Neither is suppressed by compact mode.
+This threshold changes display only, not $report, CSV, JSON/JSONL, or explicit
+AsJson/PassThru streams; all target data remains available.
+
+Inspect the full per-target rows explicitly when needed:
 
   $report
   $report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule
-  $report | Where-Object Status -eq 'FailedStop'
   $reportFiles
 
-$report contains one flat, typed object per target, not a JSON string or formatted
-screen output. It is refreshed at session scope for each invocation. For explicit
-assignment or use inside a function, use:
-
-  $report = .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com -PassThru
-
--AsJson and -PassThru are alternatives. An external powershell.exe process cannot
-set a variable in an unrelated parent shell; read the exports or capture its JSON.
-The script's own UAC relaunch returns the data to the original invoking session.
-
-Local and remote runs save these files in a unique caller-side report directory:
-  rollout.json    Full nested detail; rewritten checkpoints during remote rollout.
-  results.csv     Default one-row-per-target summary, suitable for spreadsheets.
-  results.jsonl   Final one-object-per-line JSON events with RunId/TimestampUtc.
-
-CSV is convenient for Excel. JSON preserves structure and types for automation.
-For Splunk monitoring use the finalized results.jsonl, not the rewritten checkpoint
-or both formats together. Review docs\Reporting-and-Splunk.md with the customer's
-Splunk administrator; the script does not send to or configure Splunk.
-
--NoCsv omits CSV only. -ReportDirectory optionally overrides the shared
-C:\Temp\KB5130098-Reports default for local or remote runs. -WhatIf retains objects
-in memory but writes no persistent report exports. No report-directory prompt
-is required. Write failures are explicit errors, not silent fallbacks.
-
-Final JSONL is written once per run, not updated for every checkpoint. A gracefully
-stopped fleet retains FailedStop/NotRun rows; a hard termination may leave only
-the detailed checkpoint. CSV neutralizes formula-leading text, while JSON and
-objects retain the original values. Review hostnames/paths/errors before sharing.
-
-For the original JSON interface, start in an elevated shell and opt in explicitly:
-
-  powershell.exe -NoProfile -NonInteractive -File .\Invoke-KB5130098.ps1 -Mode Detect -AsJson
-
-Or from the management workstation, inventory an explicit list:
-
-  .\Invoke-KB5130098.ps1 -ComputerName EX02.contoso.com
-
-ReportDirectory is optional. The shared default is C:\Temp\KB5130098-Reports on
-the calling computer, with a unique subfolder per run. JSON, CSV and JSON Lines
-paths are printed and retained in $reportFiles. Custom paths remain supported:
-
-  .\Invoke-KB5130098.ps1 -Mode Detect -ComputerName EX01.contoso.com,EX02.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports'
-
-Remote Detect writes only staged automation and reports, not the Exchange
-installation, rule files or service state. Errors stop the run. Nonapplicable
-builds/existing rules are reported and never silently treated as remediated.
-An invalid or unwritable report location stops before target connections; no
-silent fallback or lost reporting. Choose another approved ReportDirectory if
-the default is not usable. Operational confirmations and approvals are unchanged.
-
-CSV TARGETS FOR LARGER ENVIRONMENTS
-
-Use a reviewed comma-separated file with a ComputerName header, for example:
-
-  ComputerName,Site
-  EX01.contoso.com,SiteA
-  EX02.contoso.com,SiteB
-
-  .\Invoke-KB5130098.ps1 -Mode Detect -CsvPath 'C:\Temp\servers.csv' -Confirm:$false
-
-ComputerName and CsvPath are mutually exclusive. ReportDirectory uses the same
-optional default for CSV input. All records are validated before any connection or report:
-blank target cells, duplicate names (ignoring case), invalid DNS/NetBIOS names,
-IPs/wildcards/URLs, duplicate/empty headers, malformed quotes and inconsistent
-field counts stop the run. Input order is preserved; whitespace around names is
-trimmed. Blank physical lines are ignored. UTF-8 CSV, standard quoting and
-multiline metadata are supported. Only ComputerName selects a target: extra
-columns, including Enabled, do not filter servers or grant approval.
-
-The bundled examples\servers.csv uses fictional names and must be edited.
-Parsing is tested with 2,500 targets; this is not a live fleet-scale claim.
-Use -AsJson for machine-readable inventory or file-only staging, with the usual
--Confirm:$false and native exit-code forwarding where appropriate.
-
-EligibleMissingBothRules means exactly:
-  ExSetup.exe numeric file version: 15.2.2562.49 (15.02.2562.049 in the KB)
-  korwbrkr.dll version: 16.0.5194.1000; 326544 bytes; pinned SHA256 matches
-  Neither ko.token.rule.bin nor ko.complex.rule.bin exists in Native
-
-Eligibility is not proof that the server has experienced a deadlock.
-RuleFilesPresentStop means either rule exists. Even if both hashes match,
-the KB says stop and contact Microsoft Support before changing the installation.
-A repeated Apply intentionally refuses to overwrite or restart. It does not
-silently return "success/already fixed". NotApplicableStop means build/DLL
-criteria differ. Missing files, registry, access or hash errors are failures.
-
-3. PILOT AND ROLL OUT ONE SERVER AT A TIME
-
-Use your normal Exchange/DAG maintenance and health runbook first. This tool
-does not move active databases, drain transport, suspend activation, put a
-server into maintenance mode or restart IIS/Store/Transport. Confirm the
-affected-server scope and maintenance window before approving a change.
-
-Local read-only preflight:
-
-  .\Invoke-KB5130098.ps1 -Mode Apply -WhatIf
-
-Apply AND gracefully restart Search in the approved maintenance window:
-
-  .\Invoke-KB5130098.ps1 -Mode Apply -RestartSearch -MaintenanceWindowApproved
-
-Only HostControllerService is stopped/started. No Force or process termination
-is used. Running dependent services cause refusal. A stop/start timeout,
-missing ContentEngineNode1, process exit/restart, or hash/permission error
-stops the procedure. Do not force-terminate Exchange processes; contact Support.
-
-The tool verifies the exact ContentEngineNode1 command-line noderoot and
-executable path, then observes the SAME PID for 30 seconds by default. This is
-only a startup observation; it cannot prove long-term stability or recovery.
-
-If the process is stable but the calling workload remains blocked, stop rollout
-and preserve its diagnostics. Adding rules and restarting ContentEngine does
-not necessarily recover a caller's existing connection, wait, or queued work.
-A separately approved, evidence-led recovery may involve Mailbox Assistants for
-background indexing or Mailbox Transport Delivery for delivery/on-delivery
-indexing. Such a restart affects that workload and is NOT performed automatically
-by this kit. Revalidate the original workload after any approved recovery; do not
-restart unrelated services, mass-retry mailboxes, or rerun Apply to bypass the
-existing-rule stop. Monitor new Korean initialization failures and CTS submission
-timeouts as well as delivery/search. A successful Test-Mailflow is insufficient.
-Attribute a remaining error to the originating PID and CTS caller, not just its
-event provider name. For example, MSExchangeFastSearch event 1006 can be emitted
-by a Transport or EWS process; restarting MSExchangeFastSearch on that evidence
-alone can miss the actual caller. Recover only the specifically identified
-workload under its own maintenance/runbook gates, then repeat the postchecks.
-
-After the first server is confirmed recovered, an interactive serial fleet run:
-
-  .\Invoke-KB5130098.ps1 -Mode Apply -ComputerName EX02.contoso.com,EX03.contoso.com -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
-
-Or use the approved CSV roster:
-
-  .\Invoke-KB5130098.ps1 -Mode Apply -CsvPath 'C:\Temp\approved-servers.csv' -ReportDirectory 'C:\Temp\KB5130098-Reports' -RestartSearch -MaintenanceWindowApproved
-
-The fleet runner processes exactly one server at a time, including its restart.
-It stops for a manual workload-recovery attestation after EVERY server. It
-cannot continue until the operator types RECOVERED followed by that target's
-exact name. A failed or unavailable check means stop, not attestation.
-There is no unattended/parallel restart switch, even with -Confirm:$false.
-Fleet -WhatIf lists intent only and makes no remote connection; use Detect for
-actual eligibility checks.
-
-Without -RestartSearch, primary remote Apply stages files only and returns 10.
-It does not request recovery attestation or imply recovery. Restarted remote
-Apply requires a local interactive console and refuses -AsJson or unattended
-operation before the first connection; read rollout.json for structured results.
-A JSON WhatIf plan is allowed because it does not connect or restart anything.
-Any failure stops subsequent targets; unvisited roster entries remain NotRun.
-
-Invoke-KB5130098Fleet.ps1 is now only a compatibility wrapper. Its Apply still
-includes a restart, preserving the legacy maintenance/recovery gates. New callers
-should use the primary entry point. Rollback remains local and receipt-bound.
-
-Required recovery evidence:
-  - In OWA, use a mailbox whose ACTIVE database is on the changed server.
-  - Verify delivery AND server-side search of new ordinary messages.
-  - Verify delivery AND server-side search of new Korean-language messages.
-  - Verify the ORIGINAL affected workload, including Outlook connectivity or
-    delivery delays where applicable, has recovered.
-  - Monitor old indexing backlog separately; new-message success does not
-    establish that all older items have been processed.
-  - A service/process being Running alone is not sufficient evidence.
-
-4. CONFIGMGR / OTHER APPROVED DEPLOYMENT AGENTS
-
-Distribute the generated deployment ZIP, not the SQL package. Run elevated
-64-bit Windows PowerShell on individually approved, inventoried targets.
-The unattended staging command below ADDS FILES but NEVER restarts services:
-
-  powershell.exe -NoProfile -NonInteractive -Command "& '.\Invoke-KB5130098.ps1' -Mode Apply -Confirm:$false -AsJson; exit $LASTEXITCODE"
-
-Use that command line in your deployment-agent configuration. When invoking
-from an existing PowerShell session, call the script directly with
--Mode Apply -Confirm:$false -AsJson instead. Windows PowerShell 5.1 -File cannot pass
-an explicit false value to a switch, which is why the agent example uses -Command.
-The final exit forwards the script's custom code to the deployment agent; without
-it, Windows PowerShell can turn codes 10 and 20 into process exit 1. This example
-is a literal deployment-agent/cmd.exe command line. If constructing it inside
-PowerShell, use a single-quoted argument or escape $LASTEXITCODE so the parent
-does not expand it before the child runs.
-
-Custom exit codes for the LOCAL entry point:
-  0  Detection eligible, WhatIf/no change, or requested operation completed.
-     Read the human action/current-state summary or -AsJson Status:
-     0 does NOT mean workload recovery is proven.
-  1  Error/verification failure. Stop and retain logs; do not blindly retry.
-  10 Two files staged/removed; Search restart is still required.
-     This is NOT a request to reboot Windows. Map to a custom non-reboot status.
-  20 NotApplicableStop or RuleFilesPresentStop; review before further action.
-     For remote Detect, at least one target has a stopped eligibility result.
-
-Detection exit 0 means ELIGIBLE/MISSING, not compliance/remediated. Do not use
-the Detect command as a ConfigMgr "installed" detection rule. Author deployment
-compliance separately against your successful receipt, exact destination
-identities and completed recovery evidence. Do not configure automatic retry
-on existing-rule results. Detection does not inspect the state of prior receipts.
-
-After unattended file staging, re-running Apply is intentionally blocked by
-the KB's existing-file rule. Verify receipt, both destination identities and
-inherited permissions, then follow the KB's manual restart/recovery procedure
-in the maintenance window on that same server. Do not run the fleet Apply
-command against already-staged machines. Prefer the interactive Apply/restart
-path when coordinating the whole workflow.
-
-LOGS AND FAILURE HANDLING
-
-Each modifying operation creates a protected, unique receipt.json and
-events.jsonl under %ProgramData%\Exchange-KB5130098. Only Administrators and
-SYSTEM receive access to that operation directory. The human summary or -AsJson
-result identifies the exact receipt path. It records original absence, successfully copied/removed
-files and lifecycle state. Code-only fleet staging is retained under
-C:\ProgramData\Exchange-KB5130098-Staging\<unique ID>; the report records it.
-Keep remote receipts and local rollout.json as your change evidence.
-
-No automatic deletion/rollback is attempted after a partial failure. A partial
-file, one copied rule, a logging error or a stopped service can require manual
-recovery. Stop, preserve logs and contact Microsoft Support. The unchanged
-source files remain available. The DLL and preexisting files are never touched.
-
-Normal inherited read permissions are checked for both created files. The tool
-does not grant permissive ACEs, change the Native directory ACL, or override a
-customized DACL. Its inheritance check is not a complete effective-access audit;
-validate access for your actual service identities and workload during the pilot.
-
-ROLLBACK (SUPPORT-APPROVED ONLY)
-
-The KB does not prescribe rollback. Removing these files can reintroduce the
-original issue. This optional custom action requires explicit Microsoft Support
-approval, a maintenance window and a receipt from a completed Apply on the same
-computer/path/build. It refuses changed files, changed builds or partial/failed
-deployments and never removes arbitrary paths from a receipt.
-
-  .\Invoke-KB5130098.ps1 -Mode Rollback -ReceiptPath 'C:\ProgramData\Exchange-KB5130098\<operation-id>\receipt.json' -MicrosoftSupportApprovedRollback -MaintenanceWindowApproved -RestartSearch
-
-Only the exact two files added by a recorded Apply are backed up into the new
-operation directory and removed. No SU uninstall or DLL replacement occurs.
-Service restart and workload recovery must still be controlled. Retain all
-receipts. If a future Microsoft fix changes file identity/build, this rollback
-will refuse it; follow the later Microsoft guidance instead.
-
-DEVELOPMENT / RELEASE LIMITS
-
-The source tests use fixtures/mocks with the existing Pester runner and native
-Windows PowerShell 5.1 child processes. Native tests exercise the real entry-point
-scripts against isolated module fixtures and use nonconnecting fleet WhatIf.
-They do not install Exchange/SQL, download executables or change real services.
-This package must still be piloted on an affected installation with the exact
-Microsoft payload and actual workload before a production rollout.
-
-1.2.0 CHANGES
-
-- Keep actual typed per-target results in session-level $report, with paths in
-  $reportFiles, and print a terminal summary. -PassThru supports object pipelines.
-- Export CSV by default alongside detailed JSON and final JSON Lines. -NoCsv
-  disables only CSV; previews remain in-memory with no persistent output files.
-- Return local UAC report data through a private reserved result file, removed
-  after use, without executable content or credentials.
-- Preserve report state for failures/unvisited targets and expose export errors.
-- Include a Splunk ingestion guide; no live customer connection/configuration
-  is attempted and integration must be validated in the customer's environment.
-
-1.2.1 CHANGES
-
-- Color "No - stop" red and a confirmed pinned identity match green.
-- Color Missing rules green only when the pinned identity matches; use yellow
-  for Missing on an explicitly ineligible installation and neutral when unknown.
-- Retain green Present styling. Console colors do not change machine results,
-  status decisions, exit codes, operation scope or recovery gates.
-
-1.1.2 CHANGES (PREVIOUS RELEASE)
-
-- Default remote reports to C:\Temp\KB5130098-Reports on the calling computer.
-- Primary direct/CSV and legacy entry points no longer prompt for an omitted
-  ReportDirectory. Valid explicitly supplied paths remain unchanged.
-- Unique per-run report folders, existing path protections, and explicit write
-  errors are retained. No target selection or operation approval is inferred.
-- Regression tests run minimal native commands without a report argument and
-  exercise default/custom report output, CSV, legacy WhatIf and write failures.
-
-1.1.1 CHANGES (PREVIOUS RELEASE)
-
-- Single STATUS column for Detect/default and other non-Apply operations.
-- BEFORE / CURRENT only for Apply, including previews labelled as no changes.
-- Present file-state values use green console text locally and remotely.
-- No change to machine JSON, reports, exit codes or modifying operations.
-
-1.1.0 CHANGES (PREVIOUS RELEASE)
-
-- Primary CLI accepts either -ComputerName or -CsvPath with -ReportDirectory.
-- The full input roster is validated before connections; ordering is preserved.
-- Remote execution shares one module orchestrator and the same local engine.
-- Remote Apply does not restart unless -RestartSearch is explicit; restarted
-  rollout remains serial and requires interactive workload attestation.
-- Existing fleet entry point is a thin wrapper preserving legacy Apply/restart.
-- Reports include original/current state and NotRun records after an early stop.
-- The deployment ZIP includes examples\servers.csv; no credentials or target
-  discovery are implied by importing a file.
-
-1.0.2 CHANGES (PREVIOUS RELEASE)
-
-- Human BEFORE/CURRENT, ACTION TAKEN and NEXT STEP output is now the local CLI
-  default. No-argument execution remains Detect only, never an implicit Apply.
-- -AsJson preserves the machine result shape and exit codes. Update automation
-  explicitly; start it already elevated so it never depends on a UAC prompt.
-- Local interactive human runs can relaunch through standard Windows UAC into
-  64-bit Windows PowerShell 5.1. The child shows the result and waits for Enter;
-  the parent waits and returns the child's exact exit code. JSON/pipeline,
-  remoting, noninteractive and -NoAutoElevate invocations never prompt for UAC.
-- Arguments are serialized as data, including explicit false switches, quotes,
-  trailing separators and the working directory. No execution-policy changes,
-  credential files, extra Exchange approvals or recursive elevation are added.
-- Failure summaries show observed partial file state and the operation receipt
-  when available. No automatic rollback, overwrite or retry is introduced.
-- UAC protocol tests use mocked launch/context boundaries and a real native
-  child fixture; they do not click a consent prompt or execute Exchange Apply.
-
-1.0.1 CHANGES (PREVIOUS RELEASE)
-
-- Resolve omitted payload/package defaults inside the script body so native
-  powershell.exe -File works; explicitly supplied paths remain unchanged.
-- Forward custom exit codes in the unattended deployment-agent example.
-- Cover real child-process invocation, error/JSON output, explicit overrides,
-  custom exit codes, the README command, and nonconnecting fleet WhatIf.
-- Describe separately approved caller recovery without broadening the kit's
-  automatic service changes or treating process stability as workload success.
+Use $report | Format-List * to inspect every retained field. Compact mode
+does not automatically dump the per-target rows; these commands request them.
+
+For explicit pipeline capture:
+  $report = .\Get-KoreanRulesState.ps1 -CsvPath 'C:\Temp\servers.csv' -PassThru
+
+Both state commands support AsJson, PassThru, NoCsv and ReportDirectory.
+AsJson text and PassThru typed objects are alternatives, not a combination.
+Direct invocation retains report variables in the current shell; an external
+process cannot set them in its parent. Each invocation refreshes the variables.
+
+Default: C:\Temp\KB5130098-Reports\<unique-run-id> ON THE CALLER
+  rollout.json   Detailed checkpoint, rewritten during remote progress
+  results.csv    Final flat rows; CSV formula-text protection is applied
+  results.jsonl  Final UTF-8 one-object-per-line events
+
+ReportDirectory overrides the root; NoCsv omits only CSV. Invalid paths and
+export failures are explicit errors, not silent fallback or discarded data.
+WhatIf creates no exports. Use final JSONL, not checkpoint rewrites, for
+Splunk. Do not ingest both CSV and JSONL as duplicate events. See the reporting
+guide for customer-admin configuration; no live Splunk ingestion is claimed.
+
+Operation evidence is separate and unchanged:
+  %ProgramData%\Exchange-KB5130098\<operation-id>\receipt.json
+  %ProgramData%\Exchange-KB5130098\<operation-id>\events.jsonl
+Only Administrators and SYSTEM have access. Retain the actual returned paths.
+Remote code staging retains its existing Exchange-KB5130098-Staging path.
+Partial failures do not trigger cleanup or automatic rollback. Preserve
+diagnostics; a partial copy or stopped service needs reviewed manual recovery.
+
+6. WORKLOAD RECOVERY AND SERIAL EXPANSION
+
+RestartedWorkloadValidationRequired is NOT proof of recovery.
+Use a test mailbox whose active database is on the changed server. Check
+ordinary/Korean delivery, preserved bodies, server-side subject/body search,
+nonexistent-term negative controls, OWA and the actual Outlook/delivery
+symptoms. Review new CTS/FAST/Korean errors, queues and database health.
+Observe new-message indexing and historical backlog separately.
+
+If recovery fails, stop rollout, preserve evidence and do NOT reapply.
+Correlate the event's process ID with caller/service and CTS feeder/session
+identities. MSExchangeFastSearch event 1006 does not identify the originating
+service by its provider name alone. Any targeted caller recovery requires
+separate approval/runbook; the tool does not restart Transport for you.
+
+After a successful pilot, in a local interactive console:
+
+  .\Set-KoreanRulesState.ps1 -CsvPath 'C:\Temp\approved-servers.csv' -RestartSearch -MaintenanceWindowApproved
+
+The serial rollout waits after each restarted target for actual recovery
+checks and the exact response RECOVERED <exact-target-name>. Any other
+response stops it. This gate is retained for 4+ targets and is not waived
+by compact output or Confirm false.
+Restarted remote Apply refuses AsJson, noninteractive/remoting hosts or
+unavailable input before contacting targets. JSON WhatIf is allowed.
+Errors stop later targets; they remain NotRun in reports. Duplicate-machine
+aliases are refused before a second Apply. File-only staging does not attest
+recovery. Do not run Apply again on already-staged machines; verify receipt,
+hashes and permissions, then follow the approved manual restart/recovery.
+
+EXIT CODES AND UNATTENDED CALLERS
+
+  0  Eligible detection, preview/no change or requested operation complete.
+     Inspect status; this is not compliance or a recovery sign-off.
+  1  Error/verification failure; stop and preserve diagnostics.
+  10 Files staged/removed; Search restart required, NOT a Windows reboot.
+  20 Not applicable or rules already present; review before further action.
+
+Remote Detect 20 means at least one target needs review. Do not use Detect
+exit 0 as an installed-state rule or configure automatic Apply retry.
+An approved elevated deployment agent may stage without restart. Literal
+cmd.exe/agent command (explicitly preserves custom exit codes):
+
+  powershell.exe -NoProfile -NonInteractive -Command "& '.\Set-KoreanRulesState.ps1' -AsJson -NoAutoElevate; exit $LASTEXITCODE"
+
+From PowerShell, invoke the script directly and read $LASTEXITCODE. An outer
+PowerShell double-quoted string can expand variables in the cmd example.
+
+ROLLBACK: EXCEPTIONAL, LOCAL AND SUPPORT-APPROVED
+
+The source article does not prescribe rollback; removal can reintroduce the
+problem. Require actual Microsoft Support approval, a maintenance window and
+the original completed Apply receipt for the same computer/install/build.
+Changed files/builds and partial/failed deployments are refused.
+
+  .\Set-KoreanRulesState.ps1 -Rollback -ReceiptPath 'C:\ProgramData\Exchange-KB5130098\<operation-id>\receipt.json' -MicrosoftSupportApprovedRollback -MaintenanceWindowApproved -RestartSearch
+
+Use the real completed receipt, not the placeholder. Only the exact two owned,
+unchanged files are backed up and removed. No arbitrary file deletion, remote
+rollback, DLL replacement or SU uninstall occurs. Retain evidence and repeat
+workload checks. Follow later Microsoft guidance for changed future builds.
+
+COMPATIBILITY AND HISTORICAL MATERIAL
+
+Source retains Invoke-KB5130098.ps1, Invoke-KB5130098Fleet.ps1 and
+Build-KB5130098Package.ps1 as compatibility wrappers. Old fleet Apply STILL
+IMPLIES RESTART and retains maintenance/recovery gates. Prefer the new three
+commands. Internal KB function/error keys and the mutex remain compatible.
+
+The 1.2.1 media is HISTORICAL, not current instructions:
+  docs\Exchange-KB5130098-1.2.1-Walkthrough.mp4
+  docs\Exchange-KB5130098-1.2.1-Narration.m4a
+  docs\Exchange-KB5130098-1.2.1-Transcript.txt
+  docs\Exchange-KB5130098-1.2.1-Captions.vtt
+  docs\Exchange-KB5130098-1.2.1-Captions.srt
+It shows old names/detailed output, not the new commands or 4+ compact behavior.
+Use README.md and docs\Reporting-and-Splunk.md instead. Earlier workstation,
+CSV-column and default-confirmation instructions are superseded too.
+Historical 1.0.1 media and 1.0.1/1.2.3 source downloads remain linked in README.md.
+
+For the bounded 2.0.0 worktree test result, read docs\Lab-Validation.md. That
+result does not imply an independent source-archive pass or new lab rollout.
+The historical pilot proved tested EWS new-message results, not OWA/Outlook
+recovery, full backlog, sustained production load or live rollback.

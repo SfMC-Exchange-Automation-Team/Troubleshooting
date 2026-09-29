@@ -1,0 +1,67 @@
+EXCHANGE KOREAN RULES 2.0.0 - START HERE
+
+Keep this complete folder together, including KoreanRules.psm1,
+KoreanRules.psd1 and the private subfolder.
+
+CHECK A SERVER
+  Open PowerShell in this folder and run:
+    .\Get-KoreanRulesState.ps1
+
+  For an approved remote target or reviewed CSV:
+    .\Get-KoreanRulesState.ps1 -ComputerName EX02.contoso.com
+    .\Get-KoreanRulesState.ps1 -CsvPath 'C:\Temp\servers.csv'
+
+PREPARE MISSING INSTALLATION FILES
+  Get does not need payload files. Set does.
+  If payload\ko.token.rule.bin or payload\ko.complex.rule.bin is missing:
+    $build = .\Install-KoreanRules.ps1 -Download
+    $build | Select-Object ExpandedPackage, PayloadDirectory
+
+  Download is an explicit approximately 749 MB Microsoft media download.
+  Install prepares verified files; it does not install SQL or modify Exchange.
+  It does not populate this source folder's payload directory. Use the returned
+  PayloadDirectory, or the generated runtime under ExpandedPackage.
+
+PREVIEW REMEDIATION
+  With a verified payload beside the scripts:
+    .\Set-KoreanRulesState.ps1 -WhatIf
+
+  Or, using the preparation result:
+    .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
+
+  Set without WhatIf is modifying. Never overwrite existing rules or reapply
+  blindly. Restarts require explicit RestartSearch and MaintenanceWindowApproved.
+  Existing-rule stop results are not permission to rerun Apply.
+
+WHERE THE FILES ARE
+  Browser download: your browser's Downloads folder, commonly
+    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.0.0-source.zip
+  Downloading does not extract or deploy the kit. Use Show in folder in the
+  browser's Downloads page, then extract the entire Exchange-KoreanRules folder.
+
+  Prepared runtime default:
+    C:\Temp\KoreanRules-Ready\<unique-id>\Exchange-KoreanRules
+  Exact paths are returned by Install, not inferred from the current directory.
+
+  Existing manual working folders are not automatically moved or renamed.
+  If already using C:\Scripts\Exchange-KB5130098, keep using that stable folder.
+  KoreanRules.psd1 is the current version metadata. Older KB-named files and
+  ZIPs may remain for compatibility/history; use the three KoreanRules commands.
+
+DOCUMENTATION
+  README.md                         Full guide and browse/download links
+  README.txt                        Packaged operating instructions
+  docs\Reporting-and-Splunk.md       Report formats and collection guidance
+  docs\Lab-Validation.md             Verified results and limitations
+
+  On GitHub, check the branch selector and the guide's version. A topic-branch
+  push does not update the default main page until its pull request is merged.
+
+RESULTS
+  $report contains typed results; $reportFiles contains export paths.
+  Reports default to C:\Temp\KB5130098-Reports on the calling computer.
+  One to three targets have detailed output. Four or more use Status + Count
+  totals; complete rows remain available in $report and the exported files.
+
+This is custom workaround automation, not a Microsoft-signed hotfix.
+Read the full guide before approving any change.

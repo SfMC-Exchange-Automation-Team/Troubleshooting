@@ -1,9 +1,9 @@
 BeforeDiscovery {
-    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KB5130098.psm1') -Force
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'KoreanRules.psm1') -Force
 }
 
 Describe 'Typed result rows and portable default exports' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         BeforeEach {
             $script:context = New-KBReportContext -ReportDirectory (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
             $script:state = [pscustomobject]@{
@@ -168,7 +168,7 @@ Describe 'Typed result rows and portable default exports' {
 }
 
 Describe 'Protected elevation report handoff' {
-    InModuleScope KB5130098 {
+    InModuleScope KoreanRules {
         It 'restricts its temporary directory and prevents replacing the reserved file' {
             $relay = New-KBReportRelay
             try {
