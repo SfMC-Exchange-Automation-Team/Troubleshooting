@@ -78,6 +78,7 @@ Describe 'Console status columns and contextual colors' {
                 [string]$Object -match 'Exchange build: found 15.2.2562.46; required 15.2.2562.49' -and $ForegroundColor -eq 'Yellow'
             }
             Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Red' }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { [string]$Object -match 'Microsoft Support' }
         }
 
         It 'shows existing-rule Apply as a yellow skip, not a red failure or recovery claim' {
@@ -89,6 +90,18 @@ Describe 'Console status columns and contextual colors' {
                 [string]$Object -like '*Both rule files are already present*Presence alone does not verify*'
             }
             Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Red' }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { [string]$Object -match 'Microsoft Support' }
+        }
+
+        It 'gives ordinary preflight errors an operator action rather than blanket escalation' {
+            Write-KBConsoleResult -Mode Apply -ErrorMessage 'Payload is missing.'
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { [string]$Object -match 'Microsoft Support' }
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { [string]$Object -like '*Correct the reported input*' }
+        }
+
+        It 'retains qualified recovery escalation for an incomplete modifying operation' {
+            Write-KBConsoleResult -Mode Apply -ErrorMessage 'Partial copy failed.' -Result ([pscustomobject]@{Status='FailedStopAndContactSupport';ReceiptPath='C:\Fixture\receipt.json'})
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { [string]$Object -like '*involve Microsoft Support if recovery is unclear*' }
         }
 
         It 'includes actual and required DLL version size and SHA256 mismatches' {

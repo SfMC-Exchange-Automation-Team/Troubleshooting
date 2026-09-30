@@ -1,8 +1,9 @@
-EXCHANGE KOREAN RULES 2.0.1 - START HERE
+EXCHANGE KOREAN RULES 2.1.0 - START HERE
 
 Set now skips existing-rule or wrong-build/DLL targets with a yellow explanation
 and continues inspecting the list. True failures still stop the modifying run.
-The 2.0.0 video predates this correction; use the current written guide.
+The retained 2.0.0 video predates these skips and 2.1.0 installer/input and
+skip guidance; use the current written guide. Media has not been regenerated.
 
 Keep this complete folder together, including KoreanRules.psm1,
 KoreanRules.psd1 and the private subfolder.
@@ -12,34 +13,72 @@ CHECK A SERVER
     .\Get-KoreanRulesState.ps1
 
   For an approved remote target or reviewed CSV:
+    .\Get-KoreanRulesState.ps1 EX01,EX02
     .\Get-KoreanRulesState.ps1 -ComputerName EX02.contoso.com
     .\Get-KoreanRulesState.ps1 -CsvPath 'C:\Temp\servers.csv'
+  Get/Set accept server names first. CSV always needs -CsvPath; a positional
+  filename is not guessed to be CSV. Other paths/switches remain named.
 
 PREPARE MISSING INSTALLATION FILES
   Get does not need payload files. Set does.
-  If payload\ko.token.rule.bin or payload\ko.complex.rule.bin is missing:
+  No arguments shows usage/examples and exits 0: no prompt, download,
+  elevation or file writes:
+    .\Install-KoreanRules.ps1
+
+  If payload\ko.token.rule.bin or payload\ko.complex.rule.bin is missing,
+  choose ONE source in elevated Windows PowerShell:
     $build = .\Install-KoreanRules.ps1 -Download
+    # OR an existing EXE, or folder directly containing the EXE/rule BINs:
+    $build = .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
+    $build = .\Install-KoreanRules.ps1 'C:\Temp\VerifiedKoreanRules'
     $build | Select-Object ExpandedPackage, PayloadDirectory
+
+  First argument is INPUT (SqlPackagePath, alias Path), not a destination.
+  Optional second argument is a NEW output directory:
+    $build = .\Install-KoreanRules.ps1 '.\Media\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
+  To select a download destination:
+    $build = .\Install-KoreanRules.ps1 -Download -OutputDirectory 'C:\Temp\PreparedDownload'
+  Omit output for a unique child of C:\Temp\KoreanRules-Ready.
+
+  Folders are not searched recursively. Select the folder directly containing
+  SQLEXPR_x64_ENU.exe or ko.token.rule.bin/ko.complex.rule.bin. EXE plus either
+  BIN is ambiguous: select the exact EXE or use -RuleSourceDirectory.
+  A partial rule pair lists the missing file; no input error autodownloads.
+  Quote paths with spaces once. Paired double/single quotes inside a pasted
+  path string are accepted; paths/relative paths are literal, never commands.
 
   Download is an explicit approximately 749 MB Microsoft media download.
   Install prepares verified files; it does not install SQL or modify Exchange.
+  Invalid existing inputs are rejected before work/output creation or execution.
+  Media mismatch shows found/required bytes, SHA256 and version. Obtain a fresh
+  complete Microsoft copy; smaller files can be incomplete downloads. Do not
+  bypass hashes or the required signature, or escalate routine input errors.
+  Downloads use SQLEXPR_x64_ENU.partial.exe until identity/signature pass.
+  Failures retain available diagnostics, report once and exit 1 by default;
+  use -ErrorAction Stop for a catchable automation exception.
   It does not populate this source folder's payload directory. Use the returned
   PayloadDirectory, or the generated runtime under ExpandedPackage.
 
 PREVIEW REMEDIATION
   With a verified payload beside the scripts:
     .\Set-KoreanRulesState.ps1 -WhatIf
+    # OR an explicit target:
+    .\Set-KoreanRulesState.ps1 EX01 -WhatIf
 
   Or, using the preparation result:
     .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
 
   Set without WhatIf is modifying. Never overwrite existing rules or reapply
   blindly. Restarts require explicit RestartSearch and MaintenanceWindowApproved.
-  Existing-rule stop results are not permission to rerun Apply.
+  Expected skips: leave unchanged; review actual build, prior receipt or partial
+  pair, not routine Support escalation. Partial modifying failures, abandoned
+  operations, unstable service/ContentEngine or exceptional rollback still
+  warrant Support. Rollback retains its Support-approval requirement.
 
 WHERE THE FILES ARE
   Browser download: your browser's Downloads folder, commonly
-    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.0.1-source.zip
+    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.1.0-source.zip
+  This source download contains no vendor binaries.
   Downloading does not extract or deploy the kit. Use Show in folder in the
   browser's Downloads page, then extract the entire Exchange-KoreanRules folder.
 

@@ -2,7 +2,7 @@
 
 This guide applies to `Get-KoreanRulesState.ps1` (Detect only) and
 `Set-KoreanRulesState.ps1` (Apply by default; `-Rollback` for local, receipt-bound
-rollback). See the [2.0.0 operator guide](../README.md) for prerequisites and
+rollback). See the [2.1.0 operator guide](../README.md) for prerequisites and
 approval/recovery gates. `Install-KoreanRules.ps1` prepares the verified payload
 and runtime; its build-result object is not a server-state report.
 
@@ -36,7 +36,7 @@ no persistent reports.
 ## Run once, then work with the objects
 
 ```powershell
-.\Get-KoreanRulesState.ps1 -ComputerName EX02.contoso.com
+.\Get-KoreanRulesState.ps1 EX02.contoso.com
 
 $report
 $report | Format-Table ComputerName, Mode, Status, TokenRule, ComplexRule
@@ -48,6 +48,10 @@ The command prints human-readable results and a summary of `$report`. The
 variable contains objects, not that formatted display or a JSON string.
 The session-level variables are refreshed for each invocation so an earlier run
 is not mistaken for the current result.
+Get/Set and legacy Invoke wrappers accept `ComputerName` at position 0; named
+`-ComputerName` still works. CSV always requires `-CsvPath`, never a guessed
+positional filename. Report/payload paths and switches remain named. For example,
+`.\Set-KoreanRulesState.ps1 EX01 -WhatIf` is a preview, not a modifying run.
 
 ### Small runs stay detailed; larger runs stay compact
 
@@ -138,6 +142,15 @@ changes, and `ApplicabilityReason` explains existing/partial rules or found vers
 required identity. RestartRequested is intent, not evidence of a performed restart;
 skipped targets have RestartCompleted=false and no recovery attestation.
 Actual operational failures still halt Set and leave subsequent targets NotRun.
+
+These expected skips are review results, not automatic Support tickets or
+retry triggers. Leave the target unchanged: use `ApplicabilityReason` to review
+its actual/required build, or check the prior receipt and investigate a partial
+rule pair without overwriting/reapplying. True partial modifying failures,
+abandoned operations, unstable service/ContentEngine and exceptional rollback
+still warrant Support involvement; rollback remains Support-approved.
+Installer input/download errors have their own corrective guidance and are not
+server-state reports or proof of an Exchange failure.
 
 For an interrupted serial rollout, the final exports include the observed failed
 target and the untouched targets as `NotRun`. A hard process termination may leave
@@ -244,6 +257,8 @@ Start with one known test run and a small approved index. Check:
 4. Fields are not duplicated or multivalued because two extraction models ran.
 5. New ingestion has no repeated `(RunId, ComputerName)` pairs.
 6. `NotRun` targets are not counted as successfully checked or remediated.
+7. Expected `NotApplicableStop` / `RuleFilesPresentStop` skips are reviewed, not
+   automatically classified as `FailedStop`, escalated or retried.
 
 The Splunk metadata `host` normally identifies the collector/calling computer.
 Use the exported **ComputerName** field for the Exchange target.

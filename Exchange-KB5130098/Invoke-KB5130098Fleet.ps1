@@ -10,9 +10,9 @@ Reports default to C:\Temp\KB5130098-Reports on the calling computer.
 Standard PowerShell confirmation is opt-in with -Confirm at the default
 ConfirmPreference; maintenance approval and recovery attestation still apply.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', PositionalBinding=$false)]
 param(
-    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string[]]$ComputerName,
+    [Parameter(Mandatory, Position=0)][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [ValidateSet('Detect', 'Apply')][string]$Mode = 'Detect',
     [string]$PackageDirectory,
     [ValidateNotNullOrEmpty()][string]$ReportDirectory,

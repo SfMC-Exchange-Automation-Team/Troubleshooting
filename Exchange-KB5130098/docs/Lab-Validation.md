@@ -7,13 +7,17 @@
 - **2.0.0 source-archive verification/runtime smoke check:** September 29, 2026.
 - **2.0.0 lab working-folder staging/read-only check:** September 29, 2026.
 - **2.0.0 walkthrough/narration validation:** September 29, 2026.
-- **Current operator interface:** 2.0.1; see the [written guide](../README.md).
+- **2.1.0 final offline worktree validation:** September 30, 2026; **321 of 321 tests passed**.
+- **2.1.0 independent source-archive validation:** September 30, 2026; **321 of 321 tests passed**.
+- **2.1.0 stable-folder/native lab verification:** September 30, 2026; **7 cases passed**.
+- **Current operator interface:** 2.1.0; see the [written guide](../README.md).
 
-This separates current offline worktree and independent source-archive results,
+This separates release-specific offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
-No new 2.0.0 live Exchange payload build, Apply, service restart or customer
-rollout is claimed. Copying the tool into a lab working folder and running
-read-only detection, described below, is not remediation.
+The 2.1.0 live checks include packaging already-verified rules and read-only
+inspection, not SQL download/extraction, Exchange Apply, service restart or
+customer rollout. Updating a stable working folder and checking inputs/state,
+described below, is not remediation.
 Private hostnames, identities, operation IDs, raw logs, credential helpers,
 provisioning and session scaffolding are not published. Operator examples use
 fictional names.
@@ -48,6 +52,86 @@ The repository folder, `C:\Temp\KB5130098-Reports`, receipts beneath
 existing names. The archive-root change to `Exchange-KoreanRules` is not evidence
 that any lab folder was moved. The in-place tool update below retained the
 existing unversioned working folder.
+
+## 2.1.0 input contract and evidence boundary
+
+This release documents installer/input and routine-skip guidance changes, not
+a new Exchange remediation or workload-recovery result:
+
+- Install without arguments prints usage/examples and exits `0` with no prompt,
+  download, elevation or file writes. Preparation still needs elevation.
+- Position 0 is an existing EXE/source folder (`SqlPackagePath`, alias `Path`);
+  position 1 is an optional **new** output directory, defaulting to a unique
+  child of `C:\Temp\KoreanRules-Ready`. The compatibility builder shares this
+  contract and propagates the installer exit.
+- Folder selection is nonrecursive. An expected EXE plus either rule BIN is
+  ambiguous; select the exact EXE or `-RuleSourceDirectory`. A partial rules
+  folder reports the missing filename. Paired pasted quotes are stripped;
+  paths remain literal, without command evaluation.
+- Download remains explicit. Invalid existing inputs are rejected before
+  work/output creation or execution. Bytes, version, SHA256 and Microsoft
+  signature remain required; partial downloads are not renamed to the canonical
+  EXE until identity and signature pass. Failures retain available diagnostics,
+  report once and exit `1` by default; `-ErrorAction Stop` is catchable.
+- Get/Set and legacy Invoke accept position-0 `ComputerName`; CSV still needs
+  `-CsvPath`. Other paths and switches remain named.
+- Expected skips retain `ApplicabilityReason`, including found/required values,
+  and the yellow continue-to-next-target behavior from 2.0.1. Leave unchanged
+  and review actual build, prior receipt or partial pair instead of escalating
+  routinely. Partial modifying failures, abandoned operations, unstable
+  service/ContentEngine and exceptional rollback still warrant Support.
+
+A smaller-than-required EXE with an invalid signature is consistent with
+incomplete or corrupt media, not proof that a download was interrupted or of
+the underlying cause. Obtain a fresh complete Microsoft copy, not relaxed
+verification. This is input guidance, not a live extraction result.
+
+The final 2.1.0 worktree suite passed **321 of 321 tests** on September 30, 2026.
+The independent archive and limited native lab results are scoped separately
+below. Historical results belong to their named releases, not automatically to
+2.1.0. Public distribution remains source-only, without vendor binaries. The
+retained 2.0.0 media predates these installer/input and skip-guidance changes;
+use the current written guide rather than treating the recording as current
+validation.
+
+## 2.1.0 independent archive and native lab verification
+
+On September 30, 2026, the final
+[`Exchange-KoreanRules-2.1.0-source.zip`](../downloads/Exchange-KoreanRules-2.1.0-source.zip)
+independently passed **321 of 321 tests**. All **22 manifest-covered files**
+were verified across **23 archive entries**. The source archive contains
+**no vendor binaries**.
+
+Archive SHA256:
+`57BD79F7B609BFCBB5CF12E224D0B24DFA8FC41454D2F5AE09CB51CB1F6F24D9`
+
+The lab tool was updated to 2.1.0 in its existing stable working folder. Native
+PowerShell verification then passed these **seven cases**:
+
+1. Bare Install displayed help without prompting.
+2. An empty source folder produced one concise corrective diagnostic.
+3. A real **9,018,790-byte** EXE supplied with embedded pasted quotes resolved
+   as a path and was rejected by identity verification.
+4. A real **584,994,603-byte** EXE selected through its containing folder was
+   rejected by identity verification.
+5. A positional verified-BIN source plus a new positional output directory
+   actually built the runtime package; the generated deployment ZIP hash was
+   verified.
+6. Local Get inspected the existing-rule state without routine Support
+   boilerplate.
+7. Positional remote Get with `-WhatIf` planned the target without contacting it.
+
+The two rejected EXEs were below the required **748,772,024 bytes** and had
+invalid signatures. Those observations are consistent with incomplete or
+corrupt media, not proof of an interrupted download or its underlying cause.
+The original files were preserved; verification requirements were not relaxed.
+
+No SQL download or extraction, Set Apply, or service restart was performed.
+Installed Exchange hashes/ACLs, services and NodeRunner identities remained
+unchanged. The test-owned build directory was cleaned up. These checks establish
+input handling, packaging from already-verified rules and bounded inspection;
+they do not establish new workload recovery, a modifying rollout or live SQL
+extraction.
 
 ## 2.0.1 expected skips, identity explanations and missing media
 
@@ -186,11 +270,10 @@ old suite count for current-release validation.
 | Native Exchange CSV | `ComputerName` > `Fqdn` > `Name`, optional `#TYPE`, no row fallback and no `PSComputerName` selection. |
 | Confirmation | Default High preference, explicit Confirm/Confirm false, inherited stricter policy and file-free previews; operation-specific gates were retained. |
 
-Historical package/manifest checks verified the artifacts of those releases.
-They are not verification of the differently named 2.0.0 archives. The current
-worktree and earlier 2.0.0 source archive have separately scoped results above;
-neither inherits historical test totals or earlier archive hashes. Final archive
-status is tracked separately. Current source retains the tests and legacy
+Historical package/manifest checks verified the artifacts of those releases,
+not a later release's archives. The 2.0.0 and 2.0.1 worktree/source-archive results
+above are separately scoped; 2.1.0 inherits neither those test totals nor archive
+hashes. Final archive status is tracked separately. Current source retains the tests and legacy
 compatibility wrappers.
 
 ## Later read-only lab observations

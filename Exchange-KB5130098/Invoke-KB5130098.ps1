@@ -3,10 +3,10 @@
 .SYNOPSIS
 Compatibility entry point. Use Get-KoreanRulesState or Set-KoreanRulesState.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local', PositionalBinding=$false)]
 param(
     [ValidateSet('Detect','Apply','Rollback')][string]$Mode='Detect',
-    [Parameter(Mandatory, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
+    [Parameter(Mandatory, Position=0, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName='RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
     [ValidateNotNullOrEmpty()][string]$ReportDirectory,
     [string]$PayloadDirectory,

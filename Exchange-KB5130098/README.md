@@ -1,20 +1,28 @@
 # Exchange Korean Rules: operator guide
 
-**Version 2.0.1 · Exchange Server administrators and change owners**
+**Version 2.1.0 · Exchange Server administrators and change owners**
 
 This is custom PowerShell automation of the workaround in the
 [Microsoft support article](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
 That article is source guidance, not the tool's identity. Re-read it before use.
 This tool is not a Microsoft-signed hotfix, security update, or permanent product fix.
 
-[Source and tests](downloads/Exchange-KoreanRules-2.0.1-source.zip) ·
-[Source SHA256](downloads/Exchange-KoreanRules-2.0.1-source.zip.sha256) ·
+[Source and tests](downloads/Exchange-KoreanRules-2.1.0-source.zip) ·
+[Source SHA256](downloads/Exchange-KoreanRules-2.1.0-source.zip.sha256) ·
 [Watch/download the 2.0.0 walkthrough](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) ·
 [Audio narration](docs/Exchange-KoreanRules-2.0.0-Narration.m4a) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
 
 [Start-here checklist](00-START-HERE.txt)
+
+> **2.1.0 installer/input update:** Install with no arguments shows examples and
+> exits successfully without prompting, downloading, elevating or writing files.
+> Supply an existing EXE/source folder first and an optional **new output folder**
+> second; downloads still require `-Download`. Get/Set accept server names first;
+> CSV input still requires `-CsvPath`. Expected skips and input errors call for
+> reviewing the target or correcting the input, not routine Support escalation.
+> Exact hashes, signatures and change/recovery gates remain required.
 
 > **2.0.1 correction:** Set now reports existing rules and an incompatible build/DLL
 > as **yellow skips**, not fatal deployment errors, and continues to inspect the
@@ -27,9 +35,10 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 ## Current 2.0.0 walkthrough
 
-The recording predates 2.0.1's yellow eligibility skips and continued inspection;
-use the correction above for those behaviors. It has not been regenerated for
-this patch. Media and source archives are independently versioned.
+The recording predates the yellow eligibility skips/continued inspection and
+2.1.0's installer/input and skip guidance. Use this written guide for those
+changes; the media has not been regenerated. Media and source archives are
+independently versioned.
 
 **8 minutes 57 seconds · 1080p · natural-sounding synthetic narration · visible captions · 16 embedded chapters**
 
@@ -52,7 +61,7 @@ Companions: [audio-only M4A](docs/Exchange-KoreanRules-2.0.0-Narration.m4a),
 [SRT](docs/Exchange-KoreanRules-2.0.0-Captions.srt).
 The MP4 has burned-in captions and chapter markers. If GitHub shows a file page
 instead of a player, select **Download raw file**. Media companions are separate
-from the source ZIP; the source code release and its checksum are unchanged.
+from the source ZIP; use the current source release and its own checksum above.
 
 | Start | Chapter |
 |---|---|
@@ -125,7 +134,8 @@ Explicit switches and inherited WhatIf/confirmation preferences survive that bou
 
 For local `-AsJson`, pipelines, remoting and unattended operation, start already elevated.
 On Set, `-NoAutoElevate` disables local relaunch, not the administrator requirement.
-The installer also requires elevation. No execution-policy bypass is supplied.
+Actual installer preparation also requires elevation; its no-argument usage
+display does not. No execution-policy bypass is supplied.
 Keep administrative code readable by the launching account but writable only by administrators.
 
 Remote state commands use existing administrative **Kerberos/WinRM** access to a 64-bit
@@ -153,9 +163,12 @@ Do not relax the manifest to accept a future build; obtain current Microsoft gui
 ## 3. Prepare the payload and runtime
 
 Start in the checked-out or extracted source folder containing `Install-KoreanRules.ps1`.
-Choose **one** input: explicit download, an existing exact SQL package, or extracted rules.
+No arguments displays usage/examples and exits `0`: no prompt, download, elevation
+or file writes. To prepare files, use elevated PowerShell and choose **one** input:
+explicit download, an existing exact SQL package, or extracted rules.
 
 ```powershell
+.\Install-KoreanRules.ps1
 # Explicit consent to download approximately 749 MB of Microsoft media:
 $build = .\Install-KoreanRules.ps1 -Download
 $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, ExtractionArtifacts
@@ -164,12 +177,40 @@ $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, Extra
 Alternatively, use **one** of these instead of the download command:
 
 ```powershell
-$build = .\Install-KoreanRules.ps1 -SqlPackagePath 'C:\Temp\SQLEXPR_x64_ENU.exe'
-# OR, if you already have both exact rule files:
+$build = .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
+# OR a folder directly containing the EXE or the extracted rule BIN files:
+$build = .\Install-KoreanRules.ps1 'C:\Temp\VerifiedKoreanRules'
+# OR explicitly choose rules (including when a folder also contains the EXE):
 $build = .\Install-KoreanRules.ps1 -RuleSourceDirectory 'C:\Temp\VerifiedKoreanRules'
+# Optional second argument: a NEW output directory, not another source:
+$build = .\Install-KoreanRules.ps1 '.\Microsoft Media\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
+# For a download destination, name the output parameter:
+$build = .\Install-KoreanRules.ps1 -Download -OutputDirectory 'C:\Temp\PreparedDownload'
 ```
 
-`-OutputDirectory` is optional: omission creates a **unique child of
+The first argument is `-SqlPackagePath` (alias `-Path`), an **input**, not a
+download destination. Named forms remain valid. A source folder is inspected
+**only at its top level**, for `SQLEXPR_x64_ENU.exe` or `ko.token.rule.bin` /
+`ko.complex.rule.bin`; subfolders are not searched. If none are found, select the
+actual child folder/full EXE path or explicitly use `-Download`. A folder with
+the expected EXE and **either** rule BIN is ambiguous: choose the exact EXE or
+use `-RuleSourceDirectory`. A folder with only one rule is treated as rules input,
+then rejected with the missing filename; it does not fall back to downloading.
+
+Quote a path containing spaces once when typing it. A pasted string that still
+contains a paired outer double or single quote is also accepted, for example:
+
+```powershell
+$copiedPath = '"C:\Temp\Microsoft Media\SQLEXPR_x64_ENU.exe"'
+$build = .\Install-KoreanRules.ps1 -Path $copiedPath
+```
+
+Only matching outer quotes are stripped. Relative paths resolve from the current
+PowerShell location; paths are treated literally, without wildcard expansion or
+evaluation as commands. Paste a **path**, not a command line; unmatched quotes
+are input errors.
+
+`-OutputDirectory` (position 1) is optional: omission creates a **unique child of
 `C:\Temp\KoreanRules-Ready`**, not a reused output directory. An explicit output directory
 must be new; existing output is not overwritten. `-WorkRoot` defaults to
 `C:\Temp\KoreanRules-Build`, with unique extraction work beneath it. Allow several GB of space.
@@ -179,6 +220,25 @@ signature before extract-only execution, then verifies both rule files. It does 
 SQL product installation or modify Exchange. A management workstation is recommended.
 An Exchange host is permitted **with a disk/CPU warning**, not an extra approval switch;
 that allowance does not change Microsoft's workstation recommendation.
+
+**Input/verification failures:** invalid existing sources are rejected before
+creating work/output directories or executing media. The required Microsoft EXE
+is **748,772,024 bytes**, version **17.0.1000.7**, SHA256
+`74AA90C11202A5524E769B9BC22531BAEF22D91E9B2D2E8C3CB99E89A65C5297`.
+An identity mismatch reports actual versus required bytes/hash/version. Obtain a
+fresh, complete copy from the approved Microsoft source; a smaller file is
+consistent with an incomplete download, not proof of its cause. A matching name
+or version alone is insufficient. Never weaken hashes or bypass the required
+Microsoft signature. For a complete matching file whose signature still fails,
+check certificate trust, system time and network access.
+
+Explicit downloads land as `SQLEXPR_x64_ENU.partial.exe` and are renamed to
+`SQLEXPR_x64_ENU.exe` only after identity **and** signature checks pass. Failures
+retain available download/extraction diagnostics; a `.partial.exe` is not verified
+media. By default Install reports the failure once, concisely on stderr, and
+exits `1`; automation can supply `-ErrorAction Stop` for a catchable PowerShell
+exception. Correct input/download issues rather than treating them as an Exchange
+failure or a default Support escalation. Install never modifies Exchange.
 
 | Build-result property | Meaning |
 |---|---|
@@ -212,7 +272,7 @@ The verified rules are:
 
 ## 4. Verify and stage the runtime
 
-The locally built archive is **`Exchange-KoreanRules-2.0.1-deploy.zip`**, rooted at
+The locally built archive is **`Exchange-KoreanRules-2.1.0-deploy.zip`**, rooted at
 `Exchange-KoreanRules`. Its **exactly three root `.ps1` entry points** are:
 
 ```text
@@ -244,7 +304,7 @@ authentication or code signing. Signing/rebuilding changes the archive hash.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KoreanRules-2.0.1-deploy.zip'
+$zip = 'C:\Temp\Exchange-KoreanRules-2.1.0-deploy.zip'
 $record = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 if ($record -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
     throw 'Malformed checksum record; obtain the approved build record.'
@@ -268,6 +328,7 @@ Archive names changed; existing operator/lab folders and saved state have **not*
 
 ```powershell
 .\Get-KoreanRulesState.ps1
+.\Get-KoreanRulesState.ps1 EX01,EX02
 .\Get-KoreanRulesState.ps1 -ComputerName EX01.contoso.com,EX02.contoso.com
 .\Get-KoreanRulesState.ps1 -CsvPath 'C:\Temp\servers.csv'
 $report
@@ -275,7 +336,11 @@ $reportFiles
 ```
 
 These are separate inventory examples. No `-Mode` is required or exposed by Get; it is Detect only.
-It never adds Exchange rules or restarts services. Real remote Detect stages code and creates
+Get, Set and the legacy Invoke wrappers accept `-ComputerName` at position 0.
+For example, `.\Set-KoreanRulesState.ps1 EX01 -WhatIf` previews an explicit target.
+CSV **always** requires `-CsvPath`; a positional filename is not guessed to be CSV.
+Other paths and switches remain named; no other positional guessing is performed.
+Get never adds Exchange rules or restarts services. Real remote Detect stages code and creates
 caller-side reports. Remote `-WhatIf` validates the roster/plan without connecting or
 creating files; it is **not** an inventory of remote state.
 
@@ -299,8 +364,8 @@ authorization. `-ComputerName` and `-CsvPath` are mutually exclusive.
 | Detect status | Meaning |
 |---|---|
 | `EligibleMissingBothRules` | Exact identity and neither rule present; eligible for preflight, not recovery |
-| `NotApplicableStop` | Identity mismatch; stop rather than weakening checks |
-| `RuleFilesPresentStop` | One or both files exist; no overwrite, repair-by-Apply or automatic retry |
+| `NotApplicableStop` | Leave unchanged; review actual versus required build/DLL without weakening checks |
+| `RuleFilesPresentStop` | Leave unchanged; review prior receipt or partial pair, not repair-by-Apply |
 
 Read status/actions, not color alone: an inapplicable identity is yellow; match is green; Missing is
 green only with a match, yellow for an explicit mismatch, neutral when unobserved.
@@ -312,6 +377,11 @@ DLL version, byte count and SHA256 differences are listed when present.
 `RuleFilesPresentStop` distinguishes both files already present from a partial
 pair; it does not verify that a previous installation/restart completed.
 These same explanations appear in `ApplicabilityReason` in the typed report/exports.
+Expected skips do not require a Support escalation. Review the actual build for
+an inapplicable target, or the prior receipt, hashes and restart/recovery record
+for existing rules. Investigate a partial pair without overwriting or blindly
+reapplying. A true partial modifying failure, abandoned operation, unstable
+service/ContentEngine or exceptional rollback still warrants Support involvement.
 
 ## 6. Preview, then change one approved pilot
 
@@ -472,6 +542,10 @@ The source distribution retains `Invoke-KB5130098.ps1`, `Invoke-KB5130098Fleet.p
 `Build-KB5130098Package.ps1` as compatibility wrappers. The **old fleet Apply still implies
 restart** and requires its maintenance/recovery gates. Prefer the three new commands;
 legacy internal `KB` function/error keys and the operation mutex remain for compatibility.
+The compatibility builder accepts the same source-first/output-second arguments,
+optional default output and explicit `-Download`, and propagates the installer's
+exit code. Legacy Invoke wrappers also accept positional `ComputerName`; CSV
+remains explicit `-CsvPath`.
 
 The [1.2.1 video](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
 [poster](docs/Exchange-KB5130098-1.2.1-Poster.png),
@@ -490,7 +564,7 @@ The [1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
 Source tests use isolated fixtures/native Windows PowerShell processes; they do not prove
 production recovery. The recorded pilot established tested **EWS new-message** results, not
 OWA/Outlook recovery, historical backlog completion, sustained load or live rollback.
-Read [the sanitized evidence and current offline result](docs/Lab-Validation.md). Worktree
+Read [the sanitized evidence and release-specific validation limits](docs/Lab-Validation.md). Worktree
 tests do not imply an independent source-archive pass or a new live rollout.
 Recheck the [source article](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098)
 and [Exchange build references](https://learn.microsoft.com/en-us/exchange/new-features/build-numbers-and-release-dates)

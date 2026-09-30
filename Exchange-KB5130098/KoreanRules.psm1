@@ -252,7 +252,7 @@ function Get-KBApplicabilityReason {
         if ($present.Count -eq 2) {
             return 'Both rule files are already present. Existing files must not be overwritten. Presence alone does not verify their identity, a prior restart or workload recovery.'
         }
-        return 'A rule file is already present; this is a partial existing rule set. Review the existing files and prior receipt with Support; do not overwrite or reapply blindly.'
+        return 'A rule file is already present; this is a partial existing rule set. Compare the files with the prior operation receipt and approved payload; do not overwrite or reapply blindly.'
     }
     if ($status -eq 'EligibleMissingBothRules') { return 'Required Exchange/DLL identity matches and both rule files are absent.' }
     'Applicability was not established; inspect the recorded status and error.'
@@ -371,11 +371,17 @@ function Write-KBConsoleResult {
     Write-Host ''
     Write-Host 'NEXT STEP' -ForegroundColor Cyan
     if ($ErrorMessage) {
-        Write-Host '  Stop, retain diagnostics, and investigate with Microsoft Support. Do not overwrite, force-stop, or retry blindly.'
+        if ($null -ne $Result -and (Get-KBReportValue $Result 'ReceiptPath')) {
+            Write-Host '  A modifying operation may be incomplete. Preserve its receipt and logs, inspect the current state, and involve Microsoft Support if recovery is unclear. Do not overwrite, force-stop, or retry blindly.'
+        } else {
+            Write-Host '  Correct the reported input, file, permission or connectivity problem, then run Get-KoreanRulesState before retrying a change. No successful completion is being claimed.'
+        }
     } elseif ($Result.Status -eq 'EligibleMissingBothRules') {
         Write-Host '  Eligible for staging, but NOT applied. Start with: .\Set-KoreanRulesState.ps1 -WhatIf'
-    } elseif ($Result.Status -in 'NotApplicableStop', 'RuleFilesPresentStop') {
-        Write-Host '  Stop and reassess with Microsoft Support. Do not relax identity checks or rerun Apply over existing files.'
+    } elseif ($Result.Status -eq 'NotApplicableStop') {
+        Write-Host '  This workaround is not needed for the observed identity. Leave this server unchanged; use guidance for its actual build. Do not relax the identity checks.'
+    } elseif ($Result.Status -eq 'RuleFilesPresentStop') {
+        Write-Host '  No additional rule copy is needed when both files are already present. Review any prior receipt and recovery checks; investigate a partial pair rather than reapplying. Do not rerun Apply over existing files.'
     } elseif ($Result.Status -eq 'NoChanges') {
         Write-Host '  Nothing was applied. Review the plan; perform the intended operation only with the required approvals.'
     } elseif ($Result.Status -in 'FilesStagedRestartRequired', 'RolledBackRestartRequired') {
@@ -439,12 +445,57 @@ function Get-KBIdentity {
 function Assert-KBIdentity {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][System.Collections.IDictionary]$Expected)
     $actual = Get-KBIdentity -Path $Path -ReadVersion:($Expected.Contains('Version'))
-    if ($actual.Bytes -ne $Expected.Bytes -or $actual.SHA256 -ne $Expected.SHA256) {
-        throw "Size or SHA256 mismatch: $Path. Stop and contact Microsoft Support."
+    if ($actual.Bytes -ne $Expected.Bytes -or $actual.SHA256 -ne $Expected.SHA256 -or
+        ($Expected.Contains('Version') -and $actual.Version -ne $Expected.Version)) {
+        $details = @("FILE IDENTITY MISMATCH: $Path",
+            "Bytes: found $($actual.Bytes); required $($Expected.Bytes).",
+            "SHA256: found $($actual.SHA256); required $($Expected.SHA256).")
+        if ($Expected.Contains('Version')) { $details += "Version: found $($actual.Version); required $($Expected.Version)." }
+        $details += 'This file was not accepted. For source media, obtain a fresh complete copy from the approved Microsoft source; a smaller file can be an interrupted download. A matching filename or version alone is insufficient. Do not bypass verification or replace installed Exchange files based on this message.'
+        throw ($details -join [Environment]::NewLine)
     }
-    if ($Expected.Contains('Version') -and $actual.Version -ne $Expected.Version) {
-        throw "Version mismatch: $Path. Expected $($Expected.Version), found $($actual.Version)."
+}
+
+function ConvertTo-KBInputPath {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+    $value = $Path.Trim()
+    if ($value.Length -ge 2 -and (
+        ($value[0] -eq '"' -and $value[$value.Length-1] -eq '"') -or
+        ($value[0] -eq "'" -and $value[$value.Length-1] -eq "'"))) {
+        $value = $value.Substring(1,$value.Length-2).Trim()
     }
+    if ([string]::IsNullOrWhiteSpace($value)) { throw 'The supplied path is empty. Specify an existing media file or source folder.' }
+    if ($value.Contains('"') -or $value.StartsWith("'") -or $value.EndsWith("'")) {
+        throw 'The path contains unmatched or embedded quote characters. Quote the entire path once; do not include a command or parameter name in the path.'
+    }
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($value)
+}
+
+function Resolve-KBPreparationInput {
+    param([Parameter(Mandatory)][string]$Path, [switch]$RulesOnly)
+    $full = ConvertTo-KBInputPath $Path
+    if (-not (Test-Path -LiteralPath $full -ErrorAction Stop)) {
+        throw "REQUIRED MICROSOFT MEDIA MISSING`nSource path not found on this computer: $full`nUse .\Install-KoreanRules.ps1 -Download, specify an existing EXE (or its folder), or use -RuleSourceDirectory for already-extracted BIN files. Nothing was downloaded or extracted."
+    }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Source must not be a reparse point: $full" }
+    if (-not $item.PSIsContainer) {
+        if ($RulesOnly) { throw "-RuleSourceDirectory needs a folder containing both rule BIN files, not a file: $full" }
+        if ($item.Extension -ine '.exe') { throw "Expected a SQL media .exe, not '$($item.Name)'. For extracted BIN files specify their folder with -RuleSourceDirectory." }
+        return [pscustomobject]@{Kind='Media';Path=$item.FullName}
+    }
+    $media = Join-Path $item.FullName $script:Spec.SqlPackage.Name
+    $hasMedia = Test-Path -LiteralPath $media -PathType Leaf
+    $ruleCount = @($script:Spec.Rules | Where-Object { Test-Path -LiteralPath (Join-Path $item.FullName $_.Name) -PathType Leaf }).Count
+    if ($RulesOnly) {
+        return [pscustomobject]@{Kind='Rules';Path=$item.FullName}
+    }
+    if ($hasMedia -and $ruleCount -gt 0) {
+        throw "AMBIGUOUS SOURCE FOLDER: $full`nIt contains both SQL media and rule files. Specify the full EXE path, or use -RuleSourceDirectory to choose the rules. No source was selected."
+    }
+    if ($hasMedia) { return [pscustomobject]@{Kind='Media';Path=$media} }
+    if ($ruleCount -gt 0) { return [pscustomobject]@{Kind='Rules';Path=$item.FullName} }
+    throw "NO INSTALLATION SOURCE IN FOLDER: $full`nExpected $($script:Spec.SqlPackage.Name), or both ko.token.rule.bin and ko.complex.rule.bin directly inside this folder. Subfolders are not searched automatically. Select the child folder/full EXE path, or use .\Install-KoreanRules.ps1 -Download. If this was intended as an output folder, specify -OutputDirectory together with -Download or an existing source."
 }
 
 function Assert-KBPayload {
@@ -527,7 +578,7 @@ function Assert-KBInheritedRead {
         ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ReadData)
     })
     if ($acl.AreAccessRulesProtected -or $explicit.Count -gt 0 -or $read.Count -eq 0) {
-        throw "Normal inherited read permissions could not be confirmed: $Path. Do not restart; contact Microsoft Support."
+        throw "Normal inherited read permissions could not be confirmed: $Path. Do not restart. Review the directory/file permissions and operation receipt with the Exchange administrator; do not grant broad permissions to force a pass."
     }
 }
 
@@ -602,7 +653,7 @@ function Restart-KBHostController {
         throw 'HostControllerService is not Running. Stop and investigate before restarting.'
     }
     if (@($service.DependentServices | Where-Object Status -ne 'Stopped').Count -gt 0) {
-        throw 'HostControllerService has running dependent services. No force stop is permitted; contact Microsoft Support.'
+        throw 'HostControllerService has running dependent services. No force stop is permitted. Review the dependency list and maintenance procedure before attempting a restart.'
     }
     # ServiceController.Stop is non-forcing; WaitForStatus puts a bound on the wait.
     $service.Stop()
@@ -680,7 +731,7 @@ function Invoke-KBLocal {
         }
         if ($Mode -eq 'Apply') {
             if (-not $detection.Eligible) {
-                throw "Applicability check stopped the operation: $($detection.Status). Do not overwrite rules; contact Microsoft Support."
+                throw "Applicability check stopped the operation with an unexpected state: $($detection.Status). Inspect Get-KoreanRulesState output; do not override the identity or existing-file checks."
             }
             Assert-KBPayload -Directory $PayloadDirectory
         } else {
@@ -696,7 +747,7 @@ function Invoke-KBLocal {
                 $receipt.Status -notin @('FilesStagedRestartRequired', 'RestartedWorkloadValidationRequired') -or
                 @($receipt.CreatedFiles | Where-Object { $_ -notin $script:Spec.Rules.Name }).Count -gt 0 -or
                 @($receipt.CreatedFiles | Select-Object -Unique).Count -ne 2) {
-                throw 'Receipt does not prove a completed, owned deployment on this unchanged installation. Contact Microsoft Support.'
+                throw 'Receipt does not prove a completed, owned deployment on this unchanged installation. Check that the correct completed receipt belongs to this server and unchanged build/files. Do not delete files manually; seek Support guidance if the deployment history is unclear.'
             }
             Assert-KBPayload -Directory $detection.NativePath -Installed
         }
@@ -1185,7 +1236,7 @@ function Invoke-KBFleet {
                 continue
             }
             if ($Mode -eq 'Apply') {
-                if (-not $record.Detection.Eligible) { throw "Server $server is not eligible: $($record.Detection.Status). Stop and contact Microsoft Support." }
+                if (-not $record.Detection.Eligible) { throw "Server $server returned unexpected applicability state: $($record.Detection.Status). Inspect the detection report; no identity checks were overridden." }
                 $remotePayload = Invoke-Command -Session $session -ArgumentList $stage.Path -ScriptBlock {
                     param($Stage)
                     (New-Item -Path (Join-Path $Stage 'payload') -ItemType Directory -ErrorAction Stop).FullName
@@ -1273,4 +1324,4 @@ function Invoke-KBFleet {
     }
 }
 
-Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet, New-KBReportContext, ConvertTo-KBReportRows, Save-KBReportExports, Write-KBReportSummary
+Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet, New-KBReportContext, ConvertTo-KBReportRows, Save-KBReportExports, Write-KBReportSummary, ConvertTo-KBInputPath, Resolve-KBPreparationInput

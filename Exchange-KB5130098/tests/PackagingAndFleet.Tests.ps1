@@ -26,7 +26,7 @@ Describe 'Guarded package builder' {
     }
 
     It 'creates a small ZIP with only the named payload and runtime files' {
-        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work
+        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work
         (Test-Path -LiteralPath $result.Package) | Should -BeTrue
         $result.SHA256 | Should -Be (Get-FileHash -LiteralPath $result.Package -Algorithm SHA256).Hash
         $expanded = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -56,12 +56,12 @@ Describe 'Guarded package builder' {
 
     It 'refuses an existing output directory' {
         $null = New-Item -Path $script:output -ItemType Directory
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
     }
 
     It 'explains missing Microsoft media before writing or executing anything' {
         $missing=Join-Path $TestDrive 'missing-SQLEXPR_x64_ENU.exe'
-        { & (Join-Path $script:packageRoot 'Install-KoreanRules.ps1') -SqlPackagePath $missing -OutputDirectory $script:output -WorkRoot $script:work } |
+        { & (Join-Path $script:packageRoot 'Install-KoreanRules.ps1') -ErrorAction Stop -SqlPackagePath $missing -OutputDirectory $script:output -WorkRoot $script:work } |
             Should -Throw '*REQUIRED MICROSOFT MEDIA MISSING*Install-KoreanRules.ps1 -Download*-RuleSourceDirectory*'
         Should -Invoke Start-Process -Times 0 -Exactly
         Should -Invoke Invoke-WebRequest -Times 0 -Exactly
@@ -69,11 +69,31 @@ Describe 'Guarded package builder' {
         Test-Path -LiteralPath $script:output | Should -BeFalse
     }
 
+    It 'retains a failed download as partial and never executes or publishes it' -ForEach @(
+        @{Failure='Transfer'},@{Failure='Identity'}
+    ) {
+        if($Failure -eq 'Transfer'){
+            Mock Invoke-WebRequest {
+                'Interrupted fixture' | Set-Content -LiteralPath $OutFile
+                throw 'Injected transfer failure'
+            }
+        } else {
+            Mock Invoke-WebRequest { 'Short fixture' | Set-Content -LiteralPath $OutFile }
+            Mock Assert-KBIdentity {throw 'Injected identity mismatch'}
+        }
+        { & (Join-Path $script:packageRoot 'Install-KoreanRules.ps1') -Download -OutputDirectory $script:output -WorkRoot $script:work -ErrorAction Stop } |
+            Should -Throw '*Injected*'
+        @(Get-ChildItem -LiteralPath $script:work -Filter '*.partial.exe' -File -Recurse).Count | Should -Be 1
+        @(Get-ChildItem -LiteralPath $script:work -Filter 'SQLEXPR_x64_ENU.exe' -File -Recurse).Count | Should -Be 0
+        Should -Invoke Start-Process -Times 0 -Exactly
+        Test-Path -LiteralPath $script:output | Should -BeFalse
+    }
+
     It 'packages verified rules on Exchange without requiring workstation confirmation' -ForEach @(
         @{ LegacySwitch=$false }, @{ LegacySwitch=$true }
     ) {
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
-        $parameters = @{ RuleSourceDirectory=$script:rules; OutputDirectory=$script:output; WorkRoot=$script:work }
+        $parameters = @{ ErrorAction='Stop'; RuleSourceDirectory=$script:rules; OutputDirectory=$script:output; WorkRoot=$script:work }
         if ($LegacySwitch) { $parameters.ManagementWorkstationConfirmed=$true }
         $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
         Test-Path -LiteralPath $result.Package | Should -BeTrue
@@ -112,7 +132,7 @@ Describe 'Guarded package builder' {
             }
             [pscustomobject]@{ ExitCode=0 }
         }
-        $parameters = @{ OutputDirectory=$script:output; WorkRoot=$script:work }
+        $parameters = @{ ErrorAction='Stop'; OutputDirectory=$script:output; WorkRoot=$script:work }
         if ($SourceMode -eq 'Download') { $parameters.Download=$true }
         else { $parameters.SqlPackagePath=$media }
         $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
@@ -131,7 +151,7 @@ Describe 'Guarded package builder' {
         'Fixture only' | Set-Content -LiteralPath $media
         Mock Assert-KBIdentity { throw 'Size or SHA256 mismatch: fixture media' }
         Mock Get-AuthenticodeSignature { throw 'Signature lookup must not run after identity failure.' }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } |
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } |
             Should -Throw '*Size or SHA256 mismatch*'
         Should -Invoke Get-AuthenticodeSignature -Times 0 -Exactly
         Should -Invoke Start-Process -Times 0 -Exactly
@@ -143,7 +163,7 @@ Describe 'Guarded package builder' {
         'Fixture only' | Set-Content -LiteralPath $media
         Mock Assert-KBIdentity {}
         Mock Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } | Should -Throw '*valid Microsoft Authenticode*'
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } | Should -Throw '*valid Microsoft Authenticode*'
         Should -Invoke Start-Process -Times 0 -Exactly
     }
 
@@ -155,7 +175,7 @@ Describe 'Guarded package builder' {
             [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, C=US' } }
         }
         Mock Start-Process { [pscustomobject]@{ ExitCode = 42 } }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*extract-only failed*'
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*extract-only failed*'
         Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter { $ArgumentList -like '/q /x:*' }
     }
 
@@ -176,7 +196,7 @@ Describe 'Guarded package builder' {
             }
             [pscustomobject]@{ ExitCode = 3010 }
         }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*administrative extraction failed*'
+        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*administrative extraction failed*'
         Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter {
             $FilePath -like '*\msiexec.exe' -and $ArgumentList -like '/a *' -and $ArgumentList -like '* /qn /norestart /L*V *'
         }
