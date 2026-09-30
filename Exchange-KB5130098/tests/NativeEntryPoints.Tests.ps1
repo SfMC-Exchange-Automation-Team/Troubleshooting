@@ -299,7 +299,8 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
             $result.Output | Should -Not -Match '\bBEFORE\b|\bCURRENT\b'
             $result.Output | Should -Match '(?m)^ko\.token\.rule\.bin\s+Present\s*$'
             $result.Output | Should -Match 'Existing rules were not overwritten'
-            $result.Output | Should -Match 'Stop and reassess'
+            $result.Output | Should -Match 'No additional rule copy is needed'
+            $result.Output | Should -Not -Match 'contact Microsoft Support|reassess with Microsoft Support'
         }
 
         It 'reports a pinned-identity mismatch and returns 20' {
@@ -619,6 +620,29 @@ Describe 'Unified native local/remote/CSV dispatch' {
 }
 
 Describe 'Native Korean Rules operator entry points' {
+    It 'accepts positional computers for <Script> while keeping all flags named' -ForEach @(
+        @{Script='Get-KoreanRulesState.ps1';Mode='Detect'},
+        @{Script='Set-KoreanRulesState.ps1';Mode='Apply'},
+        @{Script='Invoke-KB5130098.ps1';Mode='Detect'}
+    ) {
+        $command='& ''.\{0}'' EX01,EX02 -AsJson; exit $LASTEXITCODE' -f $Script
+        $result=Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be $(if($Mode -eq 'Apply'){10}else{0})
+        $json=$result.Output | ConvertFrom-Json
+        $json.Mode | Should -Be $Mode
+        $json.ComputerName | Should -Be @('EX01','EX02')
+    }
+
+    It 'accepts one positional target in a real native no-contact preview' -ForEach @(
+        @{Script='Get-KoreanRulesState.ps1'},@{Script='Invoke-KB5130098Fleet.ps1'}
+    ) {
+        $path=Join-Path $script:packageRoot $Script
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" example.invalid -WhatIf' -f $path)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'example.invalid'
+    }
+
     It 'fails clearly when <Script> was copied without the shared runtime' -ForEach @(
         @{ Script='Get-KoreanRulesState.ps1' }, @{ Script='Set-KoreanRulesState.ps1' }, @{ Script='Invoke-KB5130098.ps1' }
     ) {
@@ -746,7 +770,7 @@ Describe 'Native builder without a workstation-confirmation requirement' {
         $ast = [Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $script:packageRoot 'KoreanRules.psm1'), [ref]$tokens, [ref]$errors)
         if ($errors.Count) { throw 'Production module does not parse.' }
-        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload')) {
+        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload','ConvertTo-KBInputPath','Resolve-KBPreparationInput')) {
             $definition = $ast.Find({
                 param($node)
                 $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -804,6 +828,72 @@ function Invoke-WebRequest { throw 'Native builder fixtures must never download 
         }
     }
 
+    It 'runs with no arguments without prompting downloading or requiring elevation' -ForEach @(
+        @{Script='Install-KoreanRules.ps1'},@{Script='Build-KB5130098Package.ps1'}
+    ) {
+        $path=Join-Path $script:packageRoot $Script
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}"' -f $path)
+        $result.ExitCode | Should -Be 0
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'No source selected'
+        $result.Output | Should -Match 'Optional second positional argument'
+        $result.Output | Should -Not -Match 'Supply values|Exchange installation detected'
+    }
+
+    It 'accepts positional rule-source and output folders including pasted quote characters' -ForEach @(
+        @{Quote='None'},@{Quote='Double'}
+    ) {
+        $output=Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + ' prepared')
+        $work=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $path=Join-Path $script:builderRoot 'Install-KoreanRules.ps1'
+        if($Quote -eq 'Double') {
+            $command='$source=[char]34+''{0}''+[char]34; & ''{1}'' $source ''{2}'' -WorkRoot ''{3}''; exit $LASTEXITCODE' -f $script:builderRules,$path,$output,$work
+        } else {
+            $command='& ''{0}'' ''{1}'' ''{2}'' -WorkRoot ''{3}''; exit $LASTEXITCODE' -f $path,$script:builderRules,$output,$work
+        }
+        $result=Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
+        $result.ExitCode | Should -Be 0 -Because $result.Error
+        $result.Error | Should -BeNullOrEmpty
+        $result.Output | Should -Match 'installation files prepared'
+        @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File).Count | Should -Be 1
+    }
+
+    It 'explains an empty input folder once without a PowerShell stack dump' {
+        $folder=Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + ' New folder')
+        $null=New-Item -Path $folder -ItemType Directory
+        $work=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $path=Join-Path $script:packageRoot 'Install-KoreanRules.ps1'
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" "{1}" -WorkRoot "{2}"' -f $path,$folder,$work)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'NO INSTALLATION SOURCE IN FOLDER'
+        $result.Error | Should -Match 'Subfolders are not searched'
+        $result.Error | Should -Match '-OutputDirectory'
+        $result.Error | Should -Not -Match 'CategoryInfo|FullyQualifiedErrorId|At .*line|Microsoft Support'
+        ([regex]::Matches($result.Error,'Korean Rules preparation did not complete')).Count | Should -Be 1
+        Test-Path -LiteralPath $work | Should -BeFalse
+    }
+
+    It 'refuses an incomplete EXE supplied by <InputKind> with actionable identities' -ForEach @(
+        @{InputKind='File'},@{InputKind='Folder'}
+    ) {
+        $folder=Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + ' media')
+        $null=New-Item -Path $folder -ItemType Directory
+        $exe=Join-Path $folder 'SQLEXPR_x64_ENU.exe'
+        'Incomplete fixture media' | Set-Content -LiteralPath $exe -Encoding ASCII
+        $inputPath=if($InputKind -eq 'File'){$exe}else{$folder}
+        $output=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $work=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $path=Join-Path $script:builderRoot 'Install-KoreanRules.ps1'
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" "{1}" "{2}" -WorkRoot "{3}"' -f $path,$inputPath,$output,$work)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'FILE IDENTITY MISMATCH'
+        $result.Error | Should -Match 'Bytes: found \d+; required 748772024'
+        $result.Error | Should -Match 'SHA256: found'
+        $result.Error | Should -Match 'fresh complete copy'
+        $result.Error | Should -Not -Match 'CategoryInfo|FullyQualifiedErrorId|Microsoft Support|must never launch'
+        Test-Path -LiteralPath $output | Should -BeFalse
+        Test-Path -LiteralPath $work | Should -BeFalse
+    }
 }
 
 Describe 'Native standard confirmation is opt-in without disabling preview' {

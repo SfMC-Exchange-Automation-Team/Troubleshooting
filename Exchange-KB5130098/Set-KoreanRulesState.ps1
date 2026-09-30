@@ -10,9 +10,9 @@ Rollback is local, receipt-bound and requires Microsoft Support approval.
 Lists of four or more targets use compact output without hiding errors or
 recovery prompts. Full results remain in $report and default exports.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local', PositionalBinding=$false)]
 param(
-    [Parameter(Mandatory, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
+    [Parameter(Mandatory, Position=0, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName='RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
     [ValidateNotNullOrEmpty()][string]$ReportDirectory,
     [string]$PayloadDirectory,

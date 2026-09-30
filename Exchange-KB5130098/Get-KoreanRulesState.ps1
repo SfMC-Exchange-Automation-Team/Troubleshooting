@@ -8,9 +8,9 @@ services. Lists of four or more targets use compact human output. Full results
 remain in $report and the default exports. WhatIf makes no remote connections
 and writes no exports. Standard confirmation is opt-in with -Confirm.
 #>
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium', DefaultParameterSetName='Local', PositionalBinding=$false)]
 param(
-    [Parameter(Mandatory, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
+    [Parameter(Mandatory, Position=0, ParameterSetName='RemoteNames')][ValidateNotNullOrEmpty()][string[]]$ComputerName,
     [Parameter(Mandatory, ParameterSetName='RemoteCsv')][ValidateNotNullOrEmpty()][string]$CsvPath,
     [ValidateNotNullOrEmpty()][string]$ReportDirectory,
     [Parameter(ParameterSetName='Local')][switch]$NoAutoElevate,
