@@ -117,7 +117,7 @@ function Invoke-KBLocal {
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $script:packageRoot 'KoreanRules.psm1'), [ref]$tokens, [ref]$errors)
     if ($errors.Count -ne 0) { throw 'Production module does not parse.' }
-    $supportNames = @('Write-KBConsoleResult','Get-KBReportValue','ConvertTo-KBReportRows',
+    $supportNames = @('Write-KBConsoleResult','Get-KBReportValue','Get-KBApplicabilityReason','ConvertTo-KBReportRows',
         'Write-KBFleetReport','Save-KBReportExports','Write-KBReportSummary')
     $support = foreach ($name in $supportNames) {
         $function = $ast.Find({
@@ -305,8 +305,8 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
         It 'reports a pinned-identity mismatch and returns 20' {
             $result = Invoke-NativeFixture -Arguments '-File ".\Invoke-KB5130098.ps1"' -Status NotApplicableStop -Human
             $result.ExitCode | Should -Be 20
-            $result.Output | Should -Match '(?m)^Pinned build/DLL match\s+No - stop\s*$'
-            $result.Output | Should -Match 'does not match the pinned requirements'
+            $result.Output | Should -Match '(?m)^Pinned build/DLL match\s+Not applicable\s*$'
+            $result.Output | Should -Match 'SKIPPED: Not applicable'
         }
 
         It 'shows partial failure, current files and receipt without implying a clean rollback' {
@@ -713,7 +713,9 @@ Describe 'Native Korean Rules operator entry points' {
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -PayloadDirectory "{1}" -ReportDirectory "{2}"' -f $path,$missing,$reports)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'installation payload is missing'
-        $result.Error | Should -Match 'ko\.token\.rule\.bin, ko\.complex\.rule\.bin'
+        $result.Error | Should -Match 'ko\.token\.rule\.bin'
+        $result.Error | Should -Match 'ko\.complex\.rule\.bin'
+        $result.Error | Should -Match 'REQUIRED INSTALLATION FILES MISSING'
         $result.Error | Should -Match 'Install-KoreanRules\.ps1 -Download'
         $result.Error | Should -Match 'returned PayloadDirectory'
         $result.Output | Should -Match 'Preflight stopped'

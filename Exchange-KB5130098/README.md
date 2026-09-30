@@ -1,14 +1,14 @@
 # Exchange Korean Rules: operator guide
 
-**Version 2.0.0 · Exchange Server administrators and change owners**
+**Version 2.0.1 · Exchange Server administrators and change owners**
 
 This is custom PowerShell automation of the workaround in the
 [Microsoft support article](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
 That article is source guidance, not the tool's identity. Re-read it before use.
 This tool is not a Microsoft-signed hotfix, security update, or permanent product fix.
 
-[Source and tests](downloads/Exchange-KoreanRules-2.0.0-source.zip) ·
-[Source SHA256](downloads/Exchange-KoreanRules-2.0.0-source.zip.sha256) ·
+[Source and tests](downloads/Exchange-KoreanRules-2.0.1-source.zip) ·
+[Source SHA256](downloads/Exchange-KoreanRules-2.0.1-source.zip.sha256) ·
 [Watch/download the 2.0.0 walkthrough](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) ·
 [Audio narration](docs/Exchange-KoreanRules-2.0.0-Narration.m4a) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
@@ -16,7 +16,20 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 [Start-here checklist](00-START-HERE.txt)
 
+> **2.0.1 correction:** Set now reports existing rules and an incompatible build/DLL
+> as **yellow skips**, not fatal deployment errors, and continues to inspect the
+> remaining targets. It never overwrites or restarts a skipped target. Actual
+> connection, copy, verification, restart and recovery-attestation failures still
+> stop a modifying rollout. The existing status names remain for compatibility.
+> `ApplicabilityReason` explains observed versus required identity in the console,
+> `$report`, CSV and JSON. Missing installation files now produce a multiline
+> preflight message with preparation commands and the expected caller-side path.
+
 ## Current 2.0.0 walkthrough
+
+The recording predates 2.0.1's yellow eligibility skips and continued inspection;
+use the correction above for those behaviors. It has not been regenerated for
+this patch. Media and source archives are independently versioned.
 
 **8 minutes 57 seconds · 1080p · natural-sounding synthetic narration · visible captions · 16 embedded chapters**
 
@@ -199,7 +212,7 @@ The verified rules are:
 
 ## 4. Verify and stage the runtime
 
-The locally built archive is **`Exchange-KoreanRules-2.0.0-deploy.zip`**, rooted at
+The locally built archive is **`Exchange-KoreanRules-2.0.1-deploy.zip`**, rooted at
 `Exchange-KoreanRules`. Its **exactly three root `.ps1` entry points** are:
 
 ```text
@@ -231,7 +244,7 @@ authentication or code signing. Signing/rebuilding changes the archive hash.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KoreanRules-2.0.0-deploy.zip'
+$zip = 'C:\Temp\Exchange-KoreanRules-2.0.1-deploy.zip'
 $record = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 if ($record -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
     throw 'Malformed checksum record; obtain the approved build record.'
@@ -289,9 +302,16 @@ authorization. `-ComputerName` and `-CsvPath` are mutually exclusive.
 | `NotApplicableStop` | Identity mismatch; stop rather than weakening checks |
 | `RuleFilesPresentStop` | One or both files exist; no overwrite, repair-by-Apply or automatic retry |
 
-Read status/actions, not color alone: pinned mismatch is red; match is green; Missing is
+Read status/actions, not color alone: an inapplicable identity is yellow; match is green; Missing is
 green only with a match, yellow for an explicit mismatch, neutral when unobserved.
 Present remains green for presence only, **not** verified remediation or workload recovery.
+
+The identity row now says **Not applicable**, followed by the exact differences,
+for example `Exchange build: found 15.2.2562.46; required 15.2.2562.49.`
+DLL version, byte count and SHA256 differences are listed when present.
+`RuleFilesPresentStop` distinguishes both files already present from a partial
+pair; it does not verify that a previous installation/restart completed.
+These same explanations appear in `ApplicabilityReason` in the typed report/exports.
 
 ## 6. Preview, then change one approved pilot
 
@@ -306,7 +326,8 @@ Run from the verified runtime, or add `-PayloadDirectory` as described above:
 **Set defaults to Apply.** Without `-RestartSearch`, it only stages verified files and
 returns exit `10`; maintenance approval alone does not select restart.
 Local preview checks applicability/payload but creates no operation/report files, copies no
-rules and restarts no service. Ineligible/existing-rule states can still stop a preview.
+rules and restarts no service. Local ineligible/existing-rule states return a
+review-required skip (exit 20), not an Apply or recovery claim.
 Remote preview additionally avoids connections and code staging: **WhatIf is file-free**.
 
 Standard PowerShell confirmation remains **opt-in**, as in 1.2.3: at
@@ -390,7 +411,11 @@ restart, finish the workload checks and type `RECOVERED <exact-target-name>` onl
 Any other response stops rollout. This prompt remains at **every fleet size**, including 4+.
 Restarted remote Apply refuses `-AsJson`, noninteractive/remoting hosts or unavailable input
 before contact; a JSON WhatIf plan is allowed. Use the human flow and saved structured reports.
-Errors stop later targets, which remain `NotRun`; aliases resolving to the same machine are
+In Set's serial list, expected `RuleFilesPresentStop` and `NotApplicableStop` results
+are recorded without errors; the tool skips the change and continues to the next
+target. No payload copy, local Apply, restart or recovery prompt is performed on
+a target skipped at detection. A genuine error stops later targets, which remain
+`NotRun`; aliases resolving to the same machine are
 refused before another Apply. File-only staging has no recovery attestation and proves no recovery.
 After staging, verify the receipt, hashes and permissions and follow the approved **manual**
 restart/recovery procedure. Do not send already-staged hosts back through Apply.
@@ -404,8 +429,13 @@ restart/recovery procedure. Do not send already-staged hosts back through Apply.
 | `10` | Files staged/removed, Search restart still required; **not a Windows reboot request** |
 | `20` | Not applicable or rules already present; review before further action |
 
-Detect exit `0` means **eligible/missing**, not installed/compliant. Remote Detect `20` means
-at least one target needs eligibility review. Do not configure automatic Apply retries.
+Detect exit `0` means **eligible/missing**, not installed/compliant. Exit `20` means
+at least one observed target needs eligibility review, including Set runs containing
+only skipped targets. A mixed file-only Set run that actually stages any rules
+returns `10` (restart pending), even if other targets were skipped; inspect every
+row. A restarted run with skips returns `20`. Actual failures remain exit `1`.
+No skipped-only run returns `10` or claims files were staged.
+Do not configure automatic Apply retries.
 An approved elevated deployment agent may run Set without restart; recovery remains manual.
 This is a literal **deployment-agent/cmd.exe** command, with explicit custom-exit forwarding:
 

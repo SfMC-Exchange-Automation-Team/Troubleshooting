@@ -1,4 +1,9 @@
-Exchange Korean Rules | 2.0.0
+Exchange Korean Rules | 2.0.1
+
+2.0.1: Existing rules and incompatible identities are yellow skips, not fatal
+Apply errors. Fleet Set records them and continues to inspect the remaining
+targets without overwriting or restarting a skipped target. Genuine failures
+and failed recovery attestations still stop the modifying rollout.
 Operator quick reference
 
 PURPOSE AND SUPPORT BOUNDARY
@@ -120,7 +125,7 @@ Required payload:
 
 2. VERIFY AND STAGE
 
-Local build: Exchange-KoreanRules-2.0.0-deploy.zip
+Local build: Exchange-KoreanRules-2.0.1-deploy.zip
 Archive root: Exchange-KoreanRules
 Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
 Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
@@ -134,7 +139,7 @@ module. Missing components cause an explicit "package is incomplete" failure;
 restore the complete package, including private and the module, before retrying.
 Get needs no vendor payload but still requires the complete code package.
 
-Public source: downloads\Exchange-KoreanRules-2.0.0-source.zip
+Public source: downloads\Exchange-KoreanRules-2.0.1-source.zip
 Source also includes tests and legacy compatibility wrappers. No vendor rules,
 SQL media or payload-bearing deployment ZIP is published in this repository.
 Review licensing before redistribution of your generated runtime.
@@ -175,9 +180,20 @@ ComputerName and CsvPath are mutually exclusive. Review every target first.
 EligibleMissingBothRules means eligible/missing, NOT installed or recovered.
 NotApplicableStop means identity mismatch. RuleFilesPresentStop means one or
 both rules already exist; do not overwrite or reapply.
-Human colors are contextual: match green, mismatch red; Missing green only
+Human colors are contextual: match green, not-applicable yellow; Missing green only
 with matching identity, yellow for mismatch, neutral if unobserved. Present
 is green for presence only, not a recovery sign-off.
+
+The identity row says Not applicable and lists found versus required Exchange
+build, DLL version, byte count and/or SHA256 for each mismatch. The same reason
+is recorded in ApplicabilityReason in the objects, CSV and JSON.
+Existing files are distinguished as both-present versus a partial pair.
+Presence is not verification of a prior installation, restart or recovery.
+
+Missing payload is a caller-side preflight failure with a multiline heading,
+expected folder and filenames, followed by exact Install and PayloadDirectory
+commands. Get does not require payload; Set does. Missing -SqlPackagePath media
+gets separate guidance to Download, select the real EXE, or use extracted rules.
 
 4. PREVIEW AND APPLY
 
@@ -283,7 +299,9 @@ response stops it. This gate is retained for 4+ targets and is not waived
 by compact output or Confirm false.
 Restarted remote Apply refuses AsJson, noninteractive/remoting hosts or
 unavailable input before contacting targets. JSON WhatIf is allowed.
-Errors stop later targets; they remain NotRun in reports. Duplicate-machine
+Expected existing-rule/wrong-identity states skip that target's changes and
+continue the list. No Apply, payload transfer, restart or attestation runs for
+targets skipped at detection. Actual errors stop later targets; they remain NotRun in reports. Duplicate-machine
 aliases are refused before a second Apply. File-only staging does not attest
 recovery. Do not run Apply again on already-staged machines; verify receipt,
 hashes and permissions, then follow the approved manual restart/recovery.
@@ -296,7 +314,10 @@ EXIT CODES AND UNATTENDED CALLERS
   10 Files staged/removed; Search restart required, NOT a Windows reboot.
   20 Not applicable or rules already present; review before further action.
 
-Remote Detect 20 means at least one target needs review. Do not use Detect
+Exit 20 means at least one target needs review, including Set with only skips.
+A mixed file-only Set that really stages files returns10 even with skips;
+a restarted mixed run with skips returns20. Skipped-only runs never claim
+restart pending. Inspect all report rows. Do not use Detect
 exit 0 as an installed-state rule or configure automatic Apply retry.
 An approved elevated deployment agent may stage without restart. Literal
 cmd.exe/agent command (explicitly preserves custom exit codes):

@@ -59,6 +59,16 @@ Describe 'Guarded package builder' {
         { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
     }
 
+    It 'explains missing Microsoft media before writing or executing anything' {
+        $missing=Join-Path $TestDrive 'missing-SQLEXPR_x64_ENU.exe'
+        { & (Join-Path $script:packageRoot 'Install-KoreanRules.ps1') -SqlPackagePath $missing -OutputDirectory $script:output -WorkRoot $script:work } |
+            Should -Throw '*REQUIRED MICROSOFT MEDIA MISSING*Install-KoreanRules.ps1 -Download*-RuleSourceDirectory*'
+        Should -Invoke Start-Process -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Test-Path -LiteralPath $script:work | Should -BeFalse
+        Test-Path -LiteralPath $script:output | Should -BeFalse
+    }
+
     It 'packages verified rules on Exchange without requiring workstation confirmation' -ForEach @(
         @{ LegacySwitch=$false }, @{ LegacySwitch=$true }
     ) {
@@ -248,11 +258,93 @@ Describe 'Serial fleet rollout with mocked remoting' {
         [IO.File]::ReadAllLines((Join-Path $exportRoot 'results.jsonl')).Count | Should -Be 2
     }
 
-    It 'stops rollout immediately on a nonapplicable installation' {
+    It 'contacts every target and skips nonapplicable installations without changes or attestation' {
         $global:KB5130098TestContext.Eligible = $false
-        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*not eligible*'
-        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com'
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Connect EX02.example.com'
+        $result.ExitCode | Should -Be 20
+        @($result.Results | Where-Object Status -eq 'NotApplicableStop').Count | Should -Be 2
         Should -Invoke Read-Host -ModuleName KoreanRules -Times 0 -Exactly
+    }
+
+    It 'continues from existing rules to a wrong-build target for <Input> with Restart <Restart>' -ForEach @(
+        @{Input='Names';Restart=$false}, @{Input='Names';Restart=$true},
+        @{Input='Csv';Restart=$false}, @{Input='Csv';Restart=$true}
+    ) {
+        Mock Invoke-Command {
+            $existing = $global:KB5130098TestContext.Target -eq 'EX02'
+            [pscustomobject]@{
+                Eligible=$false;Status=$(if($existing){'RuleFilesPresentStop'}else{'NotApplicableStop'})
+                ExchangeVersion=$(if($existing){'15.2.2562.49'}else{'15.2.2562.46'})
+                DllVersion='16.0.5194.1000';ExistingRules=$(if($existing){@('ko.token.rule.bin','ko.complex.rule.bin')}else{@()})
+            }
+        } -ParameterFilter { $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Detect') }
+        $parameters=@{Mode='Apply';PackageDirectory=$script:packageRoot;ReportDirectory=$script:reports;RestartSearch=$Restart;MaintenanceWindowApproved=$Restart}
+        if($Input -eq 'Csv') {
+            $csv=Join-Path $TestDrive 'skips.csv'
+            "Name`r`nEX02`r`nEX03" | Set-Content -LiteralPath $csv
+            $parameters.CsvPath=$csv
+        } else { $parameters.ComputerName=@('EX02','EX03') }
+        $result=Invoke-KBFleet @parameters
+        $result.Servers | Should -Be 2
+        $result.ExitCode | Should -Be 20
+        $result.Results.Status | Should -Be @('RuleFilesPresentStop','NotApplicableStop')
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX02|Connect EX03'
+        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Copy-Item -Times 0 -Exactly -ParameterFilter { $LiteralPath -like '*.bin' }
+        $rows=@(Import-Csv -LiteralPath $result.ExportFiles.Csv)
+        $rows[0].ActionTaken | Should -Match 'Skipped existing rules'
+        $rows[1].ApplicabilityReason | Should -Match 'found 15.2.2562.46; required 15.2.2562.49'
+        $rows[0].Error | Should -BeNullOrEmpty
+        $rows[1].RestartCompleted | Should -Be 'False'
+        [IO.File]::ReadAllLines($result.ExportFiles.JsonLines).Count | Should -Be 2
+    }
+
+    It 'applies only eligible targets in a mixed list and reports a pending restart over skipped results' {
+        Mock Invoke-Command {
+            if($global:KB5130098TestContext.Target -eq 'EX02') {
+                [pscustomobject]@{Eligible=$true;Status='EligibleMissingBothRules'}
+            } else {
+                [pscustomobject]@{Eligible=$false;Status='RuleFilesPresentStop';ExistingRules=@('ko.token.rule.bin','ko.complex.rule.bin')}
+            }
+        } -ParameterFilter { $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Detect') }
+        $result=Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02,EX03 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01|Connect EX02|Apply EX02|Connect EX03'
+        $result.ExitCode | Should -Be 10
+        $result.Results.Status | Should -Be @('RuleFilesPresentStop','FilesStagedRestartRequired','RuleFilesPresentStop')
+    }
+
+    It 'still stops later targets on an actual modifying failure after an expected skip' {
+        Mock Invoke-Command { [pscustomobject]@{Eligible=$false;Status='RuleFilesPresentStop';ExistingRules=@('ko.token.rule.bin','ko.complex.rule.bin')} } -ParameterFilter {
+            $global:KB5130098TestContext.Target -eq 'EX01' -and $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Detect')
+        }
+        Mock Invoke-Command { throw 'Injected apply failure' } -ParameterFilter { $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Apply') }
+        { Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02,EX03 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports } | Should -Throw '*Injected apply failure*'
+        ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01|Connect EX02'
+        $file=Get-ChildItem -LiteralPath $script:reports -Filter results.csv -Recurse -File
+        $rows=@(Import-Csv -LiteralPath $file.FullName)
+        $rows.Status | Should -Be @('RuleFilesPresentStop','FailedStop','NotRun')
+    }
+
+    It 'keeps compact skip messages yellow without discarding any target' {
+        Mock Write-Host {}
+        Mock Invoke-Command { [pscustomobject]@{Eligible=$false;Status='RuleFilesPresentStop';ExistingRules=@('ko.token.rule.bin','ko.complex.rule.bin')} } -ParameterFilter {
+            $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Detect')
+        }
+        $result=Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02,EX03,EX04 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports
+        $result.ReportData.Count | Should -Be 4
+        Should -Invoke Write-Host -Times 4 -Exactly -ParameterFilter { [string]$Object -like 'SKIPPED EX*' -and $ForegroundColor -eq 'Yellow' }
+        Should -Invoke Write-KBConsoleResult -Times 0 -Exactly
+    }
+
+    It 'treats an eligibility change during local recheck as a skip without restart attestation' {
+        Mock Invoke-Command { [pscustomobject]@{Status='RuleFilesPresentStop';Eligible=$false;ExistingRules=@('ko.token.rule.bin','ko.complex.rule.bin')} } -ParameterFilter {
+            $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Apply')
+        }
+        $result=Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved
+        $result.Results.Status | Should -Be @('RuleFilesPresentStop','RuleFilesPresentStop')
+        $result.ExitCode | Should -Be 20
+        Should -Invoke Read-Host -Times 0 -Exactly
     }
 
     It 'Detect needs no Confirm false and never applies or requests a recovery attestation' {

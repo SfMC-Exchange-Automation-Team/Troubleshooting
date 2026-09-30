@@ -32,6 +32,9 @@ $spec = Get-KBSpecification
 if (-not $PSBoundParameters.ContainsKey('OutputDirectory')) {
     $OutputDirectory = Join-Path 'C:\Temp\KoreanRules-Ready' ([guid]::NewGuid().ToString('N'))
 }
+if ($PSCmdlet.ParameterSetName -eq 'ExistingMedia' -and -not (Test-Path -LiteralPath $SqlPackagePath -PathType Leaf -ErrorAction Stop)) {
+    throw "REQUIRED MICROSOFT MEDIA MISSING`nThe SQL media file was not found on this computer: '$SqlPackagePath'.`nUse .\Install-KoreanRules.ps1 -Download to explicitly download the verified Microsoft package, or supply -SqlPackagePath pointing to the existing SQLEXPR_x64_ENU.exe. If you already have both verified BIN files, use -RuleSourceDirectory instead.`nThe source ZIP contains no media or rule binaries. No extraction or Exchange changes were performed."
+}
 $output = Assert-KBLocalWritePath $OutputDirectory
 $work = Assert-KBLocalWritePath $WorkRoot
 if (Test-Path -LiteralPath $output) { throw "Output directory already exists; use a new directory: $output" }
