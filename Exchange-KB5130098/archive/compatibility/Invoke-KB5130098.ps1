@@ -23,7 +23,11 @@ param(
     [ValidateRange(15,300)][int]$StabilitySeconds=30
 )
 $ErrorActionPreference = 'Stop'
-$operation = Join-Path $PSScriptRoot 'private\Invoke-KoreanRulesOperation.ps1'
+$packageRoot = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'KoreanRules.psm1') -PathType Leaf)) {
+    $packageRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+}
+$operation = Join-Path $packageRoot 'private\Invoke-KoreanRulesOperation.ps1'
 if (-not (Test-Path -LiteralPath $operation -PathType Leaf)) {
     throw 'Korean Rules package is incomplete. Extract the complete source or deployment package, including its private folder and module; do not copy only the entry-point scripts.'
 }

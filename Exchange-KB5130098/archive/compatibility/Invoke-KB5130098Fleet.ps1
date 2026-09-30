@@ -22,10 +22,14 @@ param(
     [ValidateRange(15, 300)][int]$StabilitySeconds = 30
 )
 $ErrorActionPreference = 'Stop'
+$packageRoot = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'KoreanRules.psm1') -PathType Leaf)) {
+    $packageRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+}
 Set-Variable -Name report -Scope Global -Value @() -ErrorAction Stop -WhatIf:$false -Confirm:$false
 Set-Variable -Name reportFiles -Scope Global -Value $null -ErrorAction Stop -WhatIf:$false -Confirm:$false
-if (-not $PSBoundParameters.ContainsKey('PackageDirectory')) { $PackageDirectory=$PSScriptRoot }
-Import-Module (Join-Path $PSScriptRoot 'KoreanRules.psm1') -Force
+if (-not $PSBoundParameters.ContainsKey('PackageDirectory')) { $PackageDirectory=$packageRoot }
+Import-Module (Join-Path $packageRoot 'KoreanRules.psm1') -Force
 $parameters = @{
     ComputerName=$ComputerName; Mode=$Mode; PackageDirectory=$PackageDirectory
     RestartSearch=($Mode -eq 'Apply')

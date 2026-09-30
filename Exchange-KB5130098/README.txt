@@ -416,8 +416,11 @@ workload checks. Follow later Microsoft guidance for changed future builds.
 
 COMPATIBILITY AND HISTORICAL MATERIAL
 
-Source retains Invoke-KB5130098.ps1, Invoke-KB5130098Fleet.ps1 and
-Build-KB5130098Package.ps1 as compatibility wrappers. Old fleet Apply STILL
+In the repository, archive\compatibility retains Invoke-KB5130098.ps1,
+Invoke-KB5130098Fleet.ps1, Build-KB5130098Package.ps1 and KB5130098.psm1.
+The already-published 2.1.0 source ZIP is unchanged and retains its original
+internal wrapper layout. See archive\README.md in the repository for the index.
+Old fleet Apply STILL
 IMPLIES RESTART and retains maintenance/recovery gates. Prefer the new three
 commands. Internal KB function/error keys and the mutex remain compatible.
 Build-KB5130098Package accepts the same source-first/output-second arguments,
@@ -431,15 +434,18 @@ guide for those changes; media has not been regenerated:
   docs\Exchange-KoreanRules-2.0.0-Walkthrough.mp4
 
 The 1.2.1 media is HISTORICAL, not current instructions:
-  docs\Exchange-KB5130098-1.2.1-Walkthrough.mp4
-  docs\Exchange-KB5130098-1.2.1-Narration.m4a
-  docs\Exchange-KB5130098-1.2.1-Transcript.txt
-  docs\Exchange-KB5130098-1.2.1-Captions.vtt
-  docs\Exchange-KB5130098-1.2.1-Captions.srt
+  archive\media\1.2.1\Exchange-KB5130098-1.2.1-Walkthrough.mp4
+  archive\media\1.2.1\Exchange-KB5130098-1.2.1-Narration.m4a
+  archive\media\1.2.1\Exchange-KB5130098-1.2.1-Transcript.txt
+  archive\media\1.2.1\Exchange-KB5130098-1.2.1-Captions.vtt
+  archive\media\1.2.1\Exchange-KB5130098-1.2.1-Captions.srt
 It shows old names/detailed output, not the new commands or 4+ compact behavior.
 Use README.md and docs\Reporting-and-Splunk.md instead. Earlier workstation,
 CSV-column and default-confirmation instructions are superseded too.
 Historical 1.0.1 media and 1.0.1/1.2.3 source downloads remain linked in README.md.
+The active downloads folder contains only the latest source ZIP and checksum.
+Older downloads and recordings are preserved under archive; existing operator
+folders and previously downloaded packages have not been moved or removed.
 
 For release-specific recorded results and limits, read docs\Lab-Validation.md.
 Historical results do not establish a 2.1.0 test/archive pass or new lab rollout.

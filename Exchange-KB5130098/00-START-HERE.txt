@@ -92,6 +92,7 @@ WHERE THE FILES ARE
   ZIPs may remain for compatibility/history; use the three KoreanRules commands.
 
 DOCUMENTATION
+  archive\README.md                  Older releases/media and compatibility
   README.md                         Full guide and browse/download links
   README.txt                        Packaged operating instructions
   docs\Reporting-and-Splunk.md       Report formats and collection guidance
