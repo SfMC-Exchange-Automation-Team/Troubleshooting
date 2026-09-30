@@ -226,6 +226,38 @@ function Invoke-KBAutoElevation {
     } finally { Remove-KBReportRelay -Relay $relay }
 }
 
+function Get-KBApplicabilityReason {
+    param($State)
+    if ($null -eq $State) { return 'State was not observed.' }
+    $status = [string](Get-KBReportValue $State 'Status')
+    if ($status -eq 'NotApplicableStop') {
+        $differences = @(
+            foreach ($check in @(
+                @{Name='Exchange build';Property='ExchangeVersion';Expected=$script:Spec.ExchangeVersion},
+                @{Name='Korean DLL version';Property='DllVersion';Expected=$script:Spec.Dll.Version},
+                @{Name='Korean DLL size (bytes)';Property='DllBytes';Expected=$script:Spec.Dll.Bytes},
+                @{Name='Korean DLL SHA256';Property='DllSHA256';Expected=$script:Spec.Dll.SHA256}
+            )) {
+                $actual = Get-KBReportValue $State $check.Property
+                if ($null -ne $actual -and [string]$actual -ne [string]$check.Expected) {
+                    '{0}: found {1}; required {2}.' -f $check.Name,$actual,$check.Expected
+                }
+            }
+        )
+        if ($differences.Count) { return $differences -join ' ' }
+        return 'The installation does not match the required Exchange/DLL identity; inspect the detailed detection report.'
+    }
+    if ($status -eq 'RuleFilesPresentStop') {
+        $present = @(Get-KBReportValue $State 'ExistingRules')
+        if ($present.Count -eq 2) {
+            return 'Both rule files are already present. Existing files must not be overwritten. Presence alone does not verify their identity, a prior restart or workload recovery.'
+        }
+        return 'A rule file is already present; this is a partial existing rule set. Review the existing files and prior receipt with Support; do not overwrite or reapply blindly.'
+    }
+    if ($status -eq 'EligibleMissingBothRules') { return 'Required Exchange/DLL identity matches and both rule files are absent.' }
+    'Applicability was not established; inspect the recorded status and error.'
+}
+
 function Write-KBConsoleResult {
     param(
         [Parameter(Mandatory)][string]$Mode,
@@ -246,7 +278,7 @@ function Write-KBConsoleResult {
             return 'Missing'
         }
         if ($Property -eq 'IdentityMatch') {
-            if ($State.Status -eq 'NotApplicableStop') { return 'No - stop' }
+            if ($State.Status -eq 'NotApplicableStop') { return 'Not applicable' }
             if ($State.Status -in @('EligibleMissingBothRules', 'RuleFilesPresentStop')) { return 'Yes' }
             return 'Not observed'
         }
@@ -259,10 +291,10 @@ function Write-KBConsoleResult {
         switch ($Value) {
             'Present' { $color = 'Green' }
             'Yes' { $color = 'Green' }
-            'No - stop' { $color = 'Red' }
+            'Not applicable' { $color = 'Yellow' }
             'Missing' {
                 if ($IdentityMatch -eq 'Yes') { $color = 'Green' }
-                elseif ($IdentityMatch -eq 'No - stop') { $color = 'Yellow' }
+                elseif ($IdentityMatch -eq 'Not applicable') { $color = 'Yellow' }
             }
         }
         if ($color) {
@@ -300,6 +332,9 @@ function Write-KBConsoleResult {
         $afterValue = & $readState $After $row.Property $row.Rule
         & $writeState -Value $afterValue -IdentityMatch $afterIdentity
     }
+    if ($null -ne $After -and $After.Status -in @('NotApplicableStop','RuleFilesPresentStop')) {
+        Write-Host ('  ' + (Get-KBApplicabilityReason -State $After)) -ForegroundColor Yellow
+    }
     Write-Host ''
     Write-Host 'ACTION TAKEN' -ForegroundColor Cyan
     if ($ErrorMessage) {
@@ -308,8 +343,8 @@ function Write-KBConsoleResult {
     } else {
         switch ($Result.Status) {
             'EligibleMissingBothRules' { Write-Host '  Checked eligibility only. No files copied or removed. No services restarted.' }
-            'NotApplicableStop' { Write-Host '  Checked eligibility only. This installation does not match the pinned requirements; no changes made.' -ForegroundColor Yellow }
-            'RuleFilesPresentStop' { Write-Host '  Checked eligibility only. Existing rules were not overwritten and no service was restarted.' -ForegroundColor Yellow }
+            'NotApplicableStop' { Write-Host '  SKIPPED: Not applicable to the observed Exchange/DLL identity. No changes made.' -ForegroundColor Yellow }
+            'RuleFilesPresentStop' { Write-Host '  SKIPPED: Rule files already present. Existing rules were not overwritten and no service was restarted.' -ForegroundColor Yellow }
             'NoChanges' {
                 if ($Preview) { Write-Host '  Preview only. No files copied or removed. No services restarted.' }
                 else { Write-Host '  The change was not approved. No files copied or removed. No services restarted.' }
@@ -421,7 +456,28 @@ function Assert-KBPayload {
         if ($Installed) {
             throw "Installed Korean Rules files are missing from '$Directory': $($missing -join ', '). Stop and retain the operation receipt; do not overwrite files or blindly reapply."
         }
-        throw "Korean Rules installation payload is missing from '$Directory'. Missing file(s): $($missing -join ', '). Detection does not require these files, but Apply cannot proceed. The source download does not include the Microsoft rule files. Prepare them with '.\Install-KoreanRules.ps1 -Download' (or -SqlPackagePath / -RuleSourceDirectory), then pass the returned PayloadDirectory to Set-KoreanRulesState with -PayloadDirectory, or run from the generated ExpandedPackage. If verified files already exist on this calling computer, use -PayloadDirectory to select their folder."
+        $missingLines = ($missing | ForEach-Object { '  - ' + $_ }) -join [Environment]::NewLine
+        throw @"
+REQUIRED INSTALLATION FILES MISSING
+Korean Rules installation payload is missing from '$Directory'.
+Expected folder on the calling computer: $Directory
+Missing file(s):
+$missingLines
+
+The source ZIP contains scripts, NOT the Microsoft rule files. Downloading or
+extracting that ZIP does not prepare the payload. No Apply can proceed.
+Detection does not require the payload; use Get-KoreanRulesState to inventory targets.
+
+Prepare the files in elevated PowerShell:
+  `$build = .\Install-KoreanRules.ps1 -Download
+  .\Set-KoreanRulesState.ps1 -PayloadDirectory `$build.PayloadDirectory -WhatIf
+
+Or supply existing Microsoft media/rules using -SqlPackagePath / -RuleSourceDirectory.
+Install returns the actual PayloadDirectory and ExpandedPackage; it does NOT
+populate the original source folder. Use the returned PayloadDirectory, run from
+the generated ExpandedPackage, or select verified files already on this calling
+computer with -PayloadDirectory. Do not copy SQL's DLL into Exchange.
+"@
     }
     foreach ($rule in $script:Spec.Rules) {
         Assert-KBIdentity -Path (Join-Path $Directory $rule.Name) -Expected $rule
@@ -444,7 +500,7 @@ function Get-KBDetection {
     } elseif ($present.Count -gt 0) {
         $status = 'RuleFilesPresentStop'
     }
-    [pscustomobject]@{
+    $result = [pscustomobject]@{
         ComputerName = $env:COMPUTERNAME
         Status = $status
         Eligible = ($status -eq 'EligibleMissingBothRules')
@@ -457,6 +513,8 @@ function Get-KBDetection {
         ExistingRules = $present
         Note = 'File eligibility only; not proof of a deadlock or workload recovery. Existing rules must not be overwritten.'
     }
+    $result | Add-Member -NotePropertyName ApplicabilityReason -NotePropertyValue (Get-KBApplicabilityReason $result)
+    $result
 }
 
 function Assert-KBInheritedRead {
@@ -612,6 +670,9 @@ function Invoke-KBLocal {
         }
         if (-not $locked) { throw 'Another Korean Rules operation is running on this server.' }
         $detection = Get-KBDetection
+        if ($Mode -eq 'Apply' -and $detection.Status -in @('RuleFilesPresentStop','NotApplicableStop')) {
+            return $detection
+        }
         $null = Assert-KBLocalWritePath $detection.NativePath
         $service = Get-Service -Name HostControllerService -ErrorAction Stop
         if ($service.Status -ne 'Running') {
@@ -864,6 +925,8 @@ function ConvertTo-KBReportRows {
                 if ($status -eq 'NotRun') { 'Not contacted' }
                 elseif ($status -eq 'NoChanges') { 'No changes; preview or declined operation' }
                 elseif ($status -eq 'FailedStop') { 'Stopped; inspect error and any receipt' }
+                elseif ($status -eq 'RuleFilesPresentStop' -and $mode -eq 'Apply') { 'Skipped existing rules; no files copied or services restarted' }
+                elseif ($status -eq 'NotApplicableStop' -and $mode -eq 'Apply') { 'Skipped incompatible Exchange/DLL identity; no changes' }
                 elseif ($mode -eq 'Detect') { 'Detection only; no Exchange changes' }
                 else { 'No completed modifying operation recorded' }
             }
@@ -883,6 +946,7 @@ function ConvertTo-KBReportRows {
             Mode = $mode
             Status = $status
             ActionTaken = $action
+            ApplicabilityReason = Get-KBApplicabilityReason -State $current
             ExchangeVersion = Get-KBReportValue $current 'ExchangeVersion'
             DllVersion = Get-KBReportValue $current 'DllVersion'
             DllSHA256 = Get-KBReportValue $current 'DllSHA256'
@@ -1108,6 +1172,18 @@ function Invoke-KBFleet {
                 Invoke-KBLocal -Mode Detect
             }
             $record.Status = $record.Detection.Status
+            if ($Mode -eq 'Apply' -and $record.Detection.Status -in @('NotApplicableStop','RuleFilesPresentStop')) {
+                $record.Current = $record.Detection
+                if (-not $Quiet) {
+                    if ($compact) {
+                        Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Current)) -ForegroundColor Yellow
+                    } else {
+                        Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $record.Current `
+                            -Before $record.Detection -After $record.Current
+                    }
+                }
+                continue
+            }
             if ($Mode -eq 'Apply') {
                 if (-not $record.Detection.Eligible) { throw "Server $server is not eligible: $($record.Detection.Status). Stop and contact Microsoft Support." }
                 $remotePayload = Invoke-Command -Session $session -ArgumentList $stage.Path -ScriptBlock {
@@ -1126,7 +1202,7 @@ function Invoke-KBFleet {
                         -RestartSearch:$Restart -MaintenanceWindowApproved:$Approved -TimeoutSeconds $Timeout -StabilitySeconds $Stability -Confirm:$false
                 }
                 $expectedStatus = if ($RestartSearch) { 'RestartedWorkloadValidationRequired' } else { 'FilesStagedRestartRequired' }
-                if ($record.Result.Status -ne $expectedStatus) { throw 'Unexpected deployment result. Do not proceed to another server.' }
+                if ($record.Result.Status -notin @($expectedStatus,'RuleFilesPresentStop','NotApplicableStop')) { throw 'Unexpected deployment result. Do not proceed to another server.' }
                 $record.Status = $record.Result.Status
             }
             $record.Current = Invoke-Command -Session $session -ScriptBlock { Invoke-KBLocal -Mode Detect }
@@ -1135,8 +1211,10 @@ function Invoke-KBFleet {
                 $display = if ($Mode -eq 'Detect') { $record.Current } else { $record.Result }
                 Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $display `
                     -Before $record.Detection -After $record.Current -StabilitySeconds $StabilitySeconds
+            } elseif (-not $Quiet -and $Mode -eq 'Apply' -and $record.Status -in @('NotApplicableStop','RuleFilesPresentStop')) {
+                Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Result)) -ForegroundColor Yellow
             }
-            if ($RestartSearch) {
+            if ($RestartSearch -and $record.Result.Status -eq 'RestartedWorkloadValidationRequired') {
                 $record.Status = 'AwaitingWorkloadValidation'
                 Write-KBFleetReport -Path $summaryFile -Records @($results.ToArray())
                 Write-Host "STOP: Validate $server before proceeding." -ForegroundColor Yellow
@@ -1182,8 +1260,8 @@ function Invoke-KBFleet {
     }
     $exitCode = 0
     $status = 'Completed'
-    if ($Mode -eq 'Apply' -and -not $RestartSearch) { $exitCode=10; $status='FilesStagedRestartRequired' }
-    elseif (@($results | Where-Object { $_.Current.Status -in 'NotApplicableStop', 'RuleFilesPresentStop' }).Count -gt 0 -and $Mode -eq 'Detect') {
+    if ($Mode -eq 'Apply' -and @($results | Where-Object { $_.Status -eq 'FilesStagedRestartRequired' }).Count -gt 0) { $exitCode=10; $status='FilesStagedRestartRequired' }
+    elseif (@($results | Where-Object { $_.Status -in 'NotApplicableStop', 'RuleFilesPresentStop' }).Count -gt 0) {
         $exitCode=20; $status='ReviewRequired'
     }
     $rows = @(ConvertTo-KBReportRows -Records @($results.ToArray()) -RunId $context.RunId -DetailReportPath $summaryFile)

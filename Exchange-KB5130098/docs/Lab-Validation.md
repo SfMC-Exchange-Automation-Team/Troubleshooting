@@ -7,7 +7,7 @@
 - **2.0.0 source-archive verification/runtime smoke check:** September 29, 2026.
 - **2.0.0 lab working-folder staging/read-only check:** September 29, 2026.
 - **2.0.0 walkthrough/narration validation:** September 29, 2026.
-- **Current operator interface:** 2.0.0; see the [written guide](../README.md).
+- **Current operator interface:** 2.0.1; see the [written guide](../README.md).
 
 This separates current offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
@@ -48,6 +48,41 @@ The repository folder, `C:\Temp\KB5130098-Reports`, receipts beneath
 existing names. The archive-root change to `Exchange-KoreanRules` is not evidence
 that any lab folder was moved. The in-place tool update below retained the
 existing unversioned working folder.
+
+## 2.0.1 expected skips, identity explanations and missing media
+
+Saved lab reports established why a later target was unvisited: an Apply roster
+hit an existing-rule target first, converted its `RuleFilesPresentStop` detection
+to `FailedStop`, and left the following older-build server `NotRun`. A separate
+Detect had already reached that server successfully. This was a fail-fast
+classification problem, not evidence of a connection failure.
+
+The corrected full suite passed **292 tests** from both the worktree and the
+source archive. Tests cover names/CSV, skip-only and mixed lists, the recheck
+race, explicit restart intent without restart/attestation on a skip, true-failure
+halting, compact yellow skip output, detailed identity mismatches, and separate
+missing BIN-payload versus missing SQL-media guidance. All 21 archive manifest
+files were verified; no vendor binaries are included in the source ZIP.
+
+The stable lab kit was updated in place with hash checks, protected backup and
+preservation of existing payload, reports and receipts. Live three-target CSV
+Detect observed two existing-rule installations and one incompatible build/DLL.
+The shared Set orchestrator was then exercised against the original two-target
+sequence: existing rules first, incompatible identity second. Both were contacted,
+recorded as skipped, and exported with exit20/ReviewRequired instead of failure
+or NotRun. Real host color metadata showed yellow skip/reason text, with no red
+expected-state messages.
+
+This Set-path test had an additional test-only guard that would refuse any remote
+Apply invocation if a target unexpectedly became eligible. It was not triggered:
+neither target reached Apply, restart, or recovery attestation. Before/after
+installed Exchange hashes/ACLs, monitored service/PIDs and NodeRunner identities
+were unchanged across all three servers. The test-owned scheduled task and
+remote code staging were removed; operational reports were retained.
+
+This is skip/inventory validation, not a new modifying deployment or workload
+recovery certification. The 2.0.0 video predates this patch; the current written
+guide documents the corrected yellow eligibility and continued-inspection behavior.
 
 ## 2.0.0 worktree validation
 

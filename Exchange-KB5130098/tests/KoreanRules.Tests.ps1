@@ -33,7 +33,9 @@ Describe 'Actionable installation-payload preflight' {
             try { Assert-KBPayload -Directory $script:missingPayload } catch { $failure=$_ }
             $failure | Should -Not -BeNullOrEmpty
             $failure.Exception.Message | Should -Match ([regex]::Escape($script:missingPayload))
-            $failure.Exception.Message | Should -Match 'ko\.token\.rule\.bin, ko\.complex\.rule\.bin'
+            $failure.Exception.Message | Should -Match 'ko\.token\.rule\.bin'
+            $failure.Exception.Message | Should -Match 'ko\.complex\.rule\.bin'
+            $failure.Exception.Message | Should -Match 'REQUIRED INSTALLATION FILES MISSING'
             $failure.Exception.Message | Should -Match 'Install-KoreanRules\.ps1 -Download'
             $failure.Exception.Message | Should -Match '-SqlPackagePath / -RuleSourceDirectory'
             $failure.Exception.Message | Should -Match 'returned PayloadDirectory'
@@ -46,7 +48,7 @@ Describe 'Actionable installation-payload preflight' {
             $null = New-Item -Path $script:missingPayload -ItemType Directory
             'Fixture only' | Set-Content -LiteralPath (Join-Path $script:missingPayload 'ko.token.rule.bin')
             { Assert-KBPayload -Directory $script:missingPayload } |
-                Should -Throw '*Missing file(s): ko.complex.rule.bin.*'
+                Should -Throw '*Missing file(s):*ko.complex.rule.bin*'
             Should -Invoke Assert-KBIdentity -Times 0 -Exactly
         }
 

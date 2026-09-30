@@ -78,7 +78,12 @@ Describe 'Local deployment with isolated filesystem fixtures' {
                 [pscustomobject]@{ Version = '15.2.2562.46'; Bytes = 1; SHA256 = 'fixture' }
             } -ParameterFilter { $Path -like '*\ExSetup.exe' }
             (Invoke-KBLocal -Mode Detect).Status | Should -Be 'NotApplicableStop'
-            { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false } | Should -Throw '*Applicability*'
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state
+            $result.Status | Should -Be 'NotApplicableStop'
+            $result.ApplicabilityReason | Should -Match 'Exchange build: found 15.2.2562.46; required 15.2.2562.49'
+            Should -Invoke Copy-KBRuleNew -Times 0 -Exactly
+            Should -Invoke Restart-KBHostController -Times 0 -Exactly
+            Test-Path -LiteralPath $script:state | Should -BeFalse
         }
 
         It 'rejects a different installed DLL hash' {
@@ -99,7 +104,11 @@ Describe 'Local deployment with isolated filesystem fixtures' {
             $existing = Join-Path $script:native 'ko.token.rule.bin'
             'PREEXISTING' | Set-Content -LiteralPath $existing
             (Invoke-KBLocal -Mode Detect).Status | Should -Be 'RuleFilesPresentStop'
-            { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false } | Should -Throw '*Applicability*'
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state
+            $result.Status | Should -Be 'RuleFilesPresentStop'
+            $result.ApplicabilityReason | Should -Match 'partial existing rule set'
+            Should -Invoke Copy-KBRuleNew -Times 0 -Exactly
+            Should -Invoke Restart-KBHostController -Times 0 -Exactly
             (Get-Content -LiteralPath $existing).Trim() | Should -Be 'PREEXISTING'
         }
 
@@ -155,7 +164,9 @@ Describe 'Local deployment with isolated filesystem fixtures' {
 
         It 'repeated Apply stops instead of overwriting or restarting' {
             $null = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false
-            { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved -Confirm:$false } | Should -Throw '*RuleFilesPresentStop*'
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved
+            $result.Status | Should -Be 'RuleFilesPresentStop'
+            $result.ApplicabilityReason | Should -Match 'Both rule files are already present'
             Should -Invoke Restart-KBHostController -Times 0 -Exactly
         }
 

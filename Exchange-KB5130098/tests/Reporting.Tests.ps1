@@ -95,6 +95,7 @@ Describe 'Typed result rows and portable default exports' {
             }
             $row = ConvertTo-KBReportRows -Records @($script:record) -RunId $script:context.RunId
             $row.RestartCompleted | Should -BeTrue
+            $row.ApplicabilityReason | Should -Not -Match 'No .*services restarted'
             $row.WorkloadValidationRequired | Should -BeTrue
             $row.RecoveryAttested | Should -BeFalse
             $row.ReceiptPath | Should -Be 'C:\Fixture\receipt.json'

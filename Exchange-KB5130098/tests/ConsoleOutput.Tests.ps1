@@ -57,7 +57,7 @@ Describe 'Console status columns and contextual colors' {
             }
         }
 
-        It 'colors an identity stop red and missing rules yellow instead of green' {
+        It 'explains an inapplicable identity and colors it yellow without implying a failure' {
             $ineligible = [pscustomobject]@{
                 Status='NotApplicableStop'
                 ExchangeVersion='15.2.2562.46'
@@ -66,7 +66,7 @@ Describe 'Console status columns and contextual colors' {
             }
             Write-KBConsoleResult -Mode Detect -Result $ineligible -Before $ineligible -After $ineligible
             Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
-                ([string]$Object).Trim() -eq 'No - stop' -and $ForegroundColor -eq 'Red'
+                ([string]$Object).Trim() -eq 'Not applicable' -and $ForegroundColor -eq 'Yellow'
             }
             Should -Invoke Write-Host -Times 2 -Exactly -ParameterFilter {
                 ([string]$Object).Trim() -eq 'Missing' -and $ForegroundColor -eq 'Yellow'
@@ -74,6 +74,30 @@ Describe 'Console status columns and contextual colors' {
             Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter {
                 ([string]$Object).Trim() -eq 'Missing' -and $ForegroundColor -eq 'Green'
             }
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                [string]$Object -match 'Exchange build: found 15.2.2562.46; required 15.2.2562.49' -and $ForegroundColor -eq 'Yellow'
+            }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Red' }
+        }
+
+        It 'shows existing-rule Apply as a yellow skip, not a red failure or recovery claim' {
+            Write-KBConsoleResult -Mode Apply -Before $script:afterState -After $script:afterState -Result $script:afterState
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                [string]$Object -like '*SKIPPED: Rule files already present*' -and $ForegroundColor -eq 'Yellow'
+            }
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                [string]$Object -like '*Both rule files are already present*Presence alone does not verify*'
+            }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Red' }
+        }
+
+        It 'includes actual and required DLL version size and SHA256 mismatches' {
+            $state = [pscustomobject]@{Status='NotApplicableStop';ExchangeVersion='15.2.2562.49';DllVersion='16.0.0.0';DllBytes=99;DllSHA256='WRONG';ExistingRules=@()}
+            $reason = Get-KBApplicabilityReason $state
+            $reason | Should -Match 'Korean DLL version: found 16.0.0.0; required 16.0.5194.1000'
+            $reason | Should -Match 'size \(bytes\): found 99; required 326544'
+            $reason | Should -Match ('SHA256: found WRONG; required ' + $script:Spec.Dll.SHA256)
+            $reason | Should -Not -Match 'Exchange build:'
         }
 
         It 'colors Present in both Apply columns while keeping the existing-file stop warning' {

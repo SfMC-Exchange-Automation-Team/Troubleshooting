@@ -131,6 +131,14 @@ The report distinguishes `FailedStop`, `NotRun`, `NoChanges`,
 file's presence into a recovery claim. These machine status/error keys remain
 compatible with the legacy wrappers; the new tool name does not rename them.
 
+From 2.0.1, Set records `RuleFilesPresentStop` and `NotApplicableStop` as expected
+skips and continues to later targets, rather than changing those observations to
+`FailedStop`. Their Error stays empty. `ActionTaken` explicitly says skipped/no
+changes, and `ApplicabilityReason` explains existing/partial rules or found versus
+required identity. RestartRequested is intent, not evidence of a performed restart;
+skipped targets have RestartCompleted=false and no recovery attestation.
+Actual operational failures still halt Set and leave subsequent targets NotRun.
+
 For an interrupted serial rollout, the final exports include the observed failed
 target and the untouched targets as `NotRun`. A hard process termination may leave
 only the detailed checkpoint, not finalized CSV/JSONL; do not treat that as a
