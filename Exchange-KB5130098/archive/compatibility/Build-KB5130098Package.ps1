@@ -13,5 +13,9 @@ param(
     [string]$WorkRoot
 )
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'Install-KoreanRules.ps1') @PSBoundParameters
+$packageRoot = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'KoreanRules.psm1') -PathType Leaf)) {
+    $packageRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+}
+& (Join-Path $packageRoot 'Install-KoreanRules.ps1') @PSBoundParameters
 exit $LASTEXITCODE

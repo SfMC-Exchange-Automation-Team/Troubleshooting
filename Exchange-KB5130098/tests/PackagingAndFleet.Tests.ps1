@@ -4,6 +4,7 @@ BeforeDiscovery {
 
 BeforeAll {
     $script:packageRoot = Split-Path $PSScriptRoot -Parent
+    $script:legacyRoot = Join-Path $script:packageRoot 'archive\compatibility'
 }
 
 Describe 'Guarded package builder' {
@@ -26,7 +27,7 @@ Describe 'Guarded package builder' {
     }
 
     It 'creates a small ZIP with only the named payload and runtime files' {
-        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work
+        $result = & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work
         (Test-Path -LiteralPath $result.Package) | Should -BeTrue
         $result.SHA256 | Should -Be (Get-FileHash -LiteralPath $result.Package -Algorithm SHA256).Hash
         $expanded = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -56,7 +57,7 @@ Describe 'Guarded package builder' {
 
     It 'refuses an existing output directory' {
         $null = New-Item -Path $script:output -ItemType Directory
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
+        { & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*already exists*'
     }
 
     It 'explains missing Microsoft media before writing or executing anything' {
@@ -95,7 +96,7 @@ Describe 'Guarded package builder' {
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
         $parameters = @{ ErrorAction='Stop'; RuleSourceDirectory=$script:rules; OutputDirectory=$script:output; WorkRoot=$script:work }
         if ($LegacySwitch) { $parameters.ManagementWorkstationConfirmed=$true }
-        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
+        $result = & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') @parameters
         Test-Path -LiteralPath $result.Package | Should -BeTrue
         Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -like '*Exchange installation detected*' }
         Should -Invoke Assert-KBAdministrator -Times 1 -Exactly
@@ -135,7 +136,7 @@ Describe 'Guarded package builder' {
         $parameters = @{ ErrorAction='Stop'; OutputDirectory=$script:output; WorkRoot=$script:work }
         if ($SourceMode -eq 'Download') { $parameters.Download=$true }
         else { $parameters.SqlPackagePath=$media }
-        $result = & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') @parameters
+        $result = & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') @parameters
         Test-Path -LiteralPath $result.Package | Should -BeTrue
         Should -Invoke Write-Warning -Times 1 -Exactly
         Should -Invoke Assert-KBIdentity -Times 1 -Exactly
@@ -151,7 +152,7 @@ Describe 'Guarded package builder' {
         'Fixture only' | Set-Content -LiteralPath $media
         Mock Assert-KBIdentity { throw 'Size or SHA256 mismatch: fixture media' }
         Mock Get-AuthenticodeSignature { throw 'Signature lookup must not run after identity failure.' }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } |
+        { & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } |
             Should -Throw '*Size or SHA256 mismatch*'
         Should -Invoke Get-AuthenticodeSignature -Times 0 -Exactly
         Should -Invoke Start-Process -Times 0 -Exactly
@@ -163,7 +164,7 @@ Describe 'Guarded package builder' {
         'Fixture only' | Set-Content -LiteralPath $media
         Mock Assert-KBIdentity {}
         Mock Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } | Should -Throw '*valid Microsoft Authenticode*'
+        { & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work } | Should -Throw '*valid Microsoft Authenticode*'
         Should -Invoke Start-Process -Times 0 -Exactly
     }
 
@@ -175,7 +176,7 @@ Describe 'Guarded package builder' {
             [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, C=US' } }
         }
         Mock Start-Process { [pscustomobject]@{ ExitCode = 42 } }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*extract-only failed*'
+        { & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*extract-only failed*'
         Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter { $ArgumentList -like '/q /x:*' }
     }
 
@@ -196,7 +197,7 @@ Describe 'Guarded package builder' {
             }
             [pscustomobject]@{ ExitCode = 3010 }
         }
-        { & (Join-Path $script:packageRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*administrative extraction failed*'
+        { & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') -ErrorAction Stop -SqlPackagePath $media -OutputDirectory $script:output -WorkRoot $script:work -ManagementWorkstationConfirmed } | Should -Throw '*administrative extraction failed*'
         Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter {
             $FilePath -like '*\msiexec.exe' -and $ArgumentList -like '/a *' -and $ArgumentList -like '* /qn /norestart /L*V *'
         }
@@ -597,14 +598,14 @@ Describe 'Legacy fleet entry-point compatibility' {
     }
 
     It 'retains the legacy explicit maintenance and implicit restart contract for Apply' {
-        $result = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply `
+        $result = & (Join-Path $script:legacyRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply `
             -ComputerName EX01.example.com -ReportDirectory 'C:\Fixture' -MaintenanceWindowApproved -Confirm:$false
         $result.Servers | Should -Be 1
         Should -Invoke Invoke-KBFleet -Times 1 -Exactly -ParameterFilter { $RestartSearch -and $MaintenanceWindowApproved -and $Mode -eq 'Apply' }
     }
 
     It 'does not request a restart for legacy Detect' {
-        $null = & (Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1') `
+        $null = & (Join-Path $script:legacyRoot 'Invoke-KB5130098Fleet.ps1') `
             -ComputerName EX01.example.com -ReportDirectory 'C:\Fixture' -Confirm:$false
         Should -Invoke Invoke-KBFleet -Times 1 -Exactly -ParameterFilter { -not $RestartSearch -and $Mode -eq 'Detect' }
     }

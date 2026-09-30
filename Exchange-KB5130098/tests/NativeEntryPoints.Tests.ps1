@@ -1,10 +1,16 @@
 BeforeAll {
     $script:packageRoot = Split-Path $PSScriptRoot -Parent
+    function Get-TestPackageFile([string]$Name) {
+        if ($Name -in @('Build-KB5130098Package.ps1','Invoke-KB5130098.ps1','Invoke-KB5130098Fleet.ps1','KB5130098.psm1')) {
+            return Join-Path (Join-Path $script:packageRoot 'archive\compatibility') $Name
+        }
+        Join-Path $script:packageRoot $Name
+    }
     $script:nativePowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script:fixtureRoot = Join-Path $TestDrive 'Native entry point fixture'
     $null = New-Item -Path $script:fixtureRoot -ItemType Directory
     foreach ($name in @('Invoke-KB5130098.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:fixtureRoot
+        Copy-Item -LiteralPath (Get-TestPackageFile $name) -Destination $script:fixtureRoot
     }
     $null = New-Item -Path (Join-Path $script:fixtureRoot 'private') -ItemType Directory
     Copy-Item -LiteralPath (Join-Path $script:packageRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $script:fixtureRoot 'private')
@@ -340,7 +346,7 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
 
     It 'resolves fleet package defaults under -File WhatIf without connecting or writing reports' {
         $report = Join-Path $TestDrive 'No fleet report should be created'
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098Fleet.ps1'
         $result = Invoke-NativeFixture -Arguments (
             '-File "{0}" -Mode Detect -ComputerName example.invalid -ReportDirectory "{1}" -WhatIf' -f $path, $report)
         $result.ExitCode | Should -Be 0
@@ -453,7 +459,7 @@ Describe 'Native Windows PowerShell 5.1 entry points' {
     It 'does not discard an explicitly supplied invalid fleet package path' {
         $report = Join-Path $TestDrive 'No invalid fleet report'
         $missing = Join-Path $TestDrive 'Nonexistent package'
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098Fleet.ps1'
         $result = Invoke-NativeFixture -Arguments (
             '-File "{0}" -ComputerName example.invalid -PackageDirectory "{1}" -ReportDirectory "{2}" -WhatIf' -f $path, $missing, $report)
         $result.ExitCode | Should -Be 1
@@ -499,7 +505,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
     }
 
     It 'runs the real primary remote preview without specifying a report directory' {
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -WhatIf -AsJson' -f $path)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -515,7 +521,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
     ) {
         $csv = Join-Path $TestDrive 'defaults.csv'
         "$Header`r`nEX01.example.com" | Set-Content -LiteralPath $csv -Encoding UTF8
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -529,7 +535,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
             '"EX02","EX02.example.com","management.example.com","Mailbox"',
             '"EX01","EX01.example.com","management.example.com","Mailbox"' |
             Set-Content -LiteralPath $csv -Encoding UTF8
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098.ps1'
         $report = Join-Path $TestDrive 'No inventory-preview reports'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "{2}" -WhatIf -AsJson' -f $path,$csv,$report)
         $result.ExitCode | Should -Be 0
@@ -542,7 +548,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
     }
 
     It 'runs the actual legacy wrapper preview without a report-directory prompt' {
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098Fleet.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098Fleet.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -ComputerName example.invalid -WhatIf' -f $path)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -593,7 +599,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
         $csv = Join-Path $TestDrive 'real targets.csv'
         "ComputerName,Site`r`nEX02.example.com,B`r`nEX01.example.com,A" | Set-Content -LiteralPath $csv -Encoding UTF8
         $report = Join-Path $TestDrive 'No remote report'
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory "{2}" -Mode Detect -WhatIf -AsJson' -f $path,$csv,$report)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -611,7 +617,7 @@ Describe 'Unified native local/remote/CSV dispatch' {
     ) {
         $csv = Join-Path $TestDrive 'invalid targets.csv'
         "$Header`r`nEX01.example.com`r`nEX*" | Set-Content -LiteralPath $csv -Encoding UTF8
-        $path = Join-Path $script:packageRoot 'Invoke-KB5130098.ps1'
+        $path = Get-TestPackageFile 'Invoke-KB5130098.ps1'
         $result = Invoke-NativeFixture -Arguments ('-File "{0}" -CsvPath "{1}" -ReportDirectory C:\Reports -WhatIf -AsJson' -f $path,$csv)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'CSV record 3'
@@ -636,7 +642,7 @@ Describe 'Native Korean Rules operator entry points' {
     It 'accepts one positional target in a real native no-contact preview' -ForEach @(
         @{Script='Get-KoreanRulesState.ps1'},@{Script='Invoke-KB5130098Fleet.ps1'}
     ) {
-        $path=Join-Path $script:packageRoot $Script
+        $path=Get-TestPackageFile $Script
         $result=Invoke-NativeFixture -Arguments ('-File "{0}" example.invalid -WhatIf' -f $path)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -649,7 +655,7 @@ Describe 'Native Korean Rules operator entry points' {
         $partial = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $null = New-Item -Path $partial -ItemType Directory
         $path = Join-Path $partial $Script
-        Copy-Item -LiteralPath (Join-Path $script:packageRoot $Script) -Destination $path
+        Copy-Item -LiteralPath (Get-TestPackageFile $Script) -Destination $path
         $result = Invoke-NativeFixture -Arguments ('-File "{0}"' -f $path)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'package is incomplete'
@@ -754,7 +760,7 @@ Describe 'Native builder without a workstation-confirmation requirement' {
         $script:builderRules = Join-Path $script:builderRoot 'rules'
         $null = New-Item -Path $script:builderRules -ItemType Directory -Force
         foreach ($name in @('Build-KB5130098Package.ps1','Install-KoreanRules.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1','KoreanRules.psd1','README.txt')) {
-            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:builderRoot
+            Copy-Item -LiteralPath (Get-TestPackageFile $name) -Destination $script:builderRoot
         }
         foreach ($directory in @('examples','docs','private')) {
             $null = New-Item -Path (Join-Path $script:builderRoot $directory) -ItemType Directory
@@ -831,7 +837,7 @@ function Invoke-WebRequest { throw 'Native builder fixtures must never download 
     It 'runs with no arguments without prompting downloading or requiring elevation' -ForEach @(
         @{Script='Install-KoreanRules.ps1'},@{Script='Build-KB5130098Package.ps1'}
     ) {
-        $path=Join-Path $script:packageRoot $Script
+        $path=Get-TestPackageFile $Script
         $result=Invoke-NativeFixture -Arguments ('-File "{0}"' -f $path)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -901,7 +907,7 @@ Describe 'Native standard confirmation is opt-in without disabling preview' {
         $script:confirmationRoot = Join-Path $TestDrive 'Native confirmation fixture'
         $null = New-Item -Path $script:confirmationRoot -ItemType Directory
         foreach ($name in @('Invoke-KB5130098.ps1','Invoke-KB5130098Fleet.ps1','KoreanRules.psd1')) {
-            Copy-Item -LiteralPath (Join-Path $script:packageRoot $name) -Destination $script:confirmationRoot
+            Copy-Item -LiteralPath (Get-TestPackageFile $name) -Destination $script:confirmationRoot
         }
         $null = New-Item -Path (Join-Path $script:confirmationRoot 'private') -ItemType Directory
         Copy-Item -LiteralPath (Join-Path $script:packageRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $script:confirmationRoot 'private')

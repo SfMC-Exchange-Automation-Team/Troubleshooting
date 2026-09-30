@@ -1,5 +1,24 @@
 # Exchange Korean Rules: validation and operational limits
 
+## Repository archive cleanup
+
+Superseded material is indexed in the [archive](../archive/README.md).
+The cleanup moved **22 historical download/checksum files** and **11 older media
+files** without changing any of their SHA256 identities. Four forwarding
+compatibility entry points moved to `archive\compatibility`; their relative-root
+resolution was updated so they remain usable from that location.
+
+The active root now has exactly the three recommended operator scripts, active
+downloads contains only the latest 2.1.0 ZIP and sidecar, and active docs retains
+the latest available 2.0.0 video and current written guidance.
+The **326-test repository suite passed**, including native compatibility
+execution, current runtime packaging and five layout/checksum regressions.
+Local Markdown links were checked after the moves.
+
+This is repository housekeeping, not a new code/payload release or lab deployment.
+Published ZIPs were not rebuilt; the 2.1.0 source ZIP keeps its existing internal
+layout and checksum. No files were removed from an operator or lab working folder.
+
 - **Original workload pilot:** September 25, 2026.
 - **Historical console/reporting verification:** through September 28, 2026.
 - **Historical builder/CSV/confirmation verification:** September 29, 2026.
@@ -196,7 +215,7 @@ or additional workload evidence beyond the historical pilot below.
 ## 2.0.0 archive and generated-runtime checks
 
 After the incomplete-package guards were added,
-[`Exchange-KoreanRules-2.0.0-source.zip`](../downloads/Exchange-KoreanRules-2.0.0-source.zip)
+[`Exchange-KoreanRules-2.0.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.0.0-source.zip)
 independently passed **281 of 281 tests** when tested from the final archive.
 All **21 manifest-covered files** were hash-verified, and the source archive
 contains **no vendor binaries**. No payload-bearing deployment archive is
@@ -385,7 +404,7 @@ was changed as part of this video refresh.
 
 ## Historical media and external integration limits
 
-The [1.2.1 walkthrough](Exchange-KB5130098-1.2.1-Walkthrough.mp4) is historical
+The [1.2.1 walkthrough](../archive/media/1.2.1/Exchange-KB5130098-1.2.1-Walkthrough.mp4) is historical
 illustrative material with synthetic narration, captions and recorded-result
 summaries. It is not a recording of a fresh deployment or a 2.0.0 demonstration.
 It shows old names and detailed output, not the three-command interface or 4+
@@ -394,7 +413,7 @@ instructions are also superseded. Use the [current written guide](../README.md)
 and [reporting contract](Reporting-and-Splunk.md). A separate current
 [2.0.0 walkthrough](Exchange-KoreanRules-2.0.0-Walkthrough.mp4) now covers the
 three-command interface and its operating boundaries.
-The [1.0.1 recording](Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
+The [1.0.1 recording](../archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
 Historical media decoding, caption/transcript and illustrative-command checks
 were documentation checks, not additional Exchange or Splunk validation.

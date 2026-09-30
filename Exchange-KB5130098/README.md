@@ -16,6 +16,12 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 [Start-here checklist](00-START-HERE.txt)
 
+**Current files only:** the root contains the three recommended scripts;
+[`downloads`](downloads) contains only the latest source kit and checksum.
+Superseded versions, old recordings and compatibility entry points are preserved
+in the [legacy archive](archive/README.md), not mixed into the active folders.
+The latest available 2.0.0 video remains below with the current-release caveats.
+
 > **2.1.0 installer/input update:** Install with no arguments shows examples and
 > exits successfully without prompting, downloading, elevating or writing files.
 > Supply an existing EXE/source folder first and an optional **new output folder**
@@ -290,7 +296,9 @@ Exchange-KoreanRules\
 
 Supporting readmes/checksums are omitted from this layout. The private script is not an
 operator entry point. SQL media, SQL runtime libraries and a replacement DLL are not deployed.
-The source ZIP also contains tests and legacy compatibility wrappers.
+The published source ZIP also contains tests and legacy compatibility wrappers.
+Its already-released bytes and internal layout are unchanged; the repository's
+archived-wrapper layout is described in the [archive index](archive/README.md).
 
 **Extract/copy the whole code package, not just a `.ps1` wrapper.** Get, Set and the legacy
 `Invoke-KB5130098.ps1` wrapper require the `private` folder and shared module. Missing
@@ -538,8 +546,9 @@ revalidate the workload. Changed future identities require later Microsoft guida
 
 The repository directory remains **`Exchange-KB5130098`**. Existing report/receipt/staging
 paths and stable lab/operator folders remain unchanged; this release does not relocate them.
-The source distribution retains `Invoke-KB5130098.ps1`, `Invoke-KB5130098Fleet.ps1` and
-`Build-KB5130098Package.ps1` as compatibility wrappers. The **old fleet Apply still implies
+The repository retains `Invoke-KB5130098.ps1`, `Invoke-KB5130098Fleet.ps1`,
+`Build-KB5130098Package.ps1` and the old module import name under
+[`archive/compatibility`](archive/compatibility). The **old fleet Apply still implies
 restart** and requires its maintenance/recovery gates. Prefer the three new commands;
 legacy internal `KB` function/error keys and the operation mutex remain for compatibility.
 The compatibility builder accepts the same source-first/output-second arguments,
@@ -547,19 +556,19 @@ optional default output and explicit `-Download`, and propagates the installer's
 exit code. Legacy Invoke wrappers also accept positional `ComputerName`; CSV
 remains explicit `-CsvPath`.
 
-The [1.2.1 video](docs/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
-[poster](docs/Exchange-KB5130098-1.2.1-Poster.png),
-[narration](docs/Exchange-KB5130098-1.2.1-Narration.m4a),
-[transcript](docs/Exchange-KB5130098-1.2.1-Transcript.txt),
-[VTT](docs/Exchange-KB5130098-1.2.1-Captions.vtt) and
-[SRT](docs/Exchange-KB5130098-1.2.1-Captions.srt) are **historical, not 2.0.0 instructions**.
+The [1.2.1 video](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
+[poster](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Poster.png),
+[narration](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Narration.m4a),
+[transcript](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Transcript.txt),
+[VTT](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Captions.vtt) and
+[SRT](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Captions.srt) are **historical, not 2.0.0 instructions**.
 They show older command names and detailed output, not the new three-command interface or
 4+ compact behavior. Their workstation-only, ComputerName-only and default-confirmation
 instructions are superseded by this [current written guide](README.md) and the
 [current 2.0.0 video](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4).
-The [1.0.1 recording](docs/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
-[1.0.1 source](downloads/Exchange-KB5130098-1.0.1-source.zip) and
-[1.2.3 source](downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.
+The [1.0.1 recording](archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
+[1.0.1 source](archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
+[1.2.3 source](archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.
 
 Source tests use isolated fixtures/native Windows PowerShell processes; they do not prove
 production recovery. The recorded pilot established tested **EWS new-message** results, not
