@@ -1,0 +1,148 @@
+Exchange Korean Rules 2.1.0 - English narrated walkthrough
+Illustrative commands and abbreviated output; no new deployment was performed.
+Generic natural-sounding synthetic voice generated offline; not voice cloning.
+
+Three commands. Three clear responsibilities.
+
+This is Exchange Korean Rules, version two point one.
+The tool now separates three jobs: Install prepares verified installation files, Get inspects servers, and Set applies the workaround.
+Install does not install SQL Server or apply anything to Exchange.
+This is custom automation of published guidance, not a knowledge base article, signed hotfix, or permanent product fix.
+The examples are illustrative. Nothing in this video changes an Exchange server.
+
+Browse, download and stage are separate steps
+
+On GitHub, open the current guide on main and check the version.
+The active folders now keep the current scripts and latest source kit. Older releases and compatibility commands are in the archive.
+The source zip goes to your browser's download location. Use Show in folder, then extract the complete kit.
+Keep the shared module and private folder alongside the three scripts.
+Downloading does not stage files on Exchange. Update your existing working folder deliberately; you do not need a new versioned folder.
+
+Install starts with choices, not a path prompt
+
+Running Install with no arguments now shows examples and exits. It does not prompt, download, elevate, or write files.
+To prepare the files, use elevated sixty-four-bit Windows PowerShell five point one and deliberately choose a source.
+Download explicitly fetches about seven hundred forty-nine megabytes of Microsoft media.
+The output directory is optional and defaults to a unique location. A management workstation is recommended; an Exchange host warns about resource use rather than blocking.
+Install only prepares files. It does not install SQL or apply the workaround.
+
+Source first; optional new output folder second
+
+The first positional argument is an existing executable or source folder. The optional second argument is a new output directory.
+A folder must directly contain the expected executable or the rule files. The tool does not recursively search subfolders.
+If media and rules coexist, specify the exact executable or use Rule Source Directory.
+Paths with spaces and matching pasted quotation marks are accepted literally, without evaluating expressions.
+For a download destination, use Download with Output Directory. A bare folder is never treated as download consent.
+
+Incomplete media: diagnose it, do not bypass it
+
+A matching filename or displayed version is not enough. Size, hash, and Microsoft signature must pass.
+An identity error now shows what was found and what is required. A much smaller file is consistent with an incomplete or corrupt copy.
+Obtain a fresh complete copy rather than bypassing verification or opening a routine Support case.
+Downloads keep a partial filename until identity and signature checks pass.
+Failures show one concise message and exit one. Automation can request a catchable error with Error Action Stop.
+
+Use the payload that Install actually returned
+
+A successful build does not populate the source folder's payload directory.
+Use the returned Payload Directory with Set, or change to the returned Expanded Package folder.
+If installation files are missing, the error now names the expected folder and files and explains how to prepare or select them.
+Remote Apply validates the payload on the calling computer before connecting to a target.
+Get does not need those installation files, and an incomplete package fails explicitly.
+
+Get is inspection only
+
+Get checks the exact Exchange build, Korean WordBreaker identity, and rule-file state.
+It has no Apply mode and never adds Exchange rules or restarts services.
+A local interactive run can request normal Windows UAC elevation.
+Automation and remote sessions still need the required rights; those protections have not been removed.
+The result shows one observed Status column. Eligibility is only a prerequisite. It does not diagnose the problem or prove recovery.
+
+Yellow skips explain why and continue the list
+
+Expected existing-rule and incompatible-identity results are now yellow skips, not fatal errors.
+Set leaves that server unchanged and continues inspecting the remaining list.
+An incompatible result explains the found and required build, DLL version, size, or hash. The same explanation is in Applicability Reason.
+Existing files are never overwritten. A partial pair needs investigation, and presence alone does not prove recovery.
+Routine skips give practical next steps, not blanket Support instructions. Genuine operation or recovery failures still stop Set.
+
+Use native Exchange columns in your CSV
+
+Get and Set accept computer names as the first positional argument. For a CSV, explicitly use CSV Path; the script does not guess from a positional filename.
+Native Name and FQDN properties now work without renaming a column.
+The importer chooses Computer Name first, otherwise FQDN, then Name, once for the whole file.
+A blank or invalid selected value stops the run instead of falling back to another column.
+The entire roster is validated before contact. Remote Get uses existing Kerberos access and writes code staging and reports, not Exchange rule files.
+
+Four or more targets: totals, not screenfuls
+
+One to three computers retain the detailed per-server display.
+At four or more, the tool suppresses those blocks and progress dumps, then shows totals by status and the report paths.
+This is a display change only. No target data is discarded.
+Errors still identify the failed server, and restarted rollouts still require recovery input after every server.
+Explicit JSON and Pass Through output remain complete, regardless of list size.
+
+Inspect every result through $report
+
+Dollar report contains typed PowerShell rows for every target.
+Format or filter it when you want details that compact output deliberately hides.
+Dollar report Files holds the output paths. Pass Through supports explicit pipeline assignment.
+Normal runs retain the objects in your existing session, including after the script's own UAC handoff.
+An unrelated external PowerShell process cannot populate its parent's variables. Use its exports or explicit JSON instead.
+
+Default CSV, detailed JSON and final events
+
+Normal runs export all three formats to a unique folder on the caller, using the existing report root for compatibility.
+CSV is convenient for spreadsheets. JSON keeps structured detail.
+For Splunk file monitoring, use the finalized JSON Lines file, not the rewritten rollout checkpoint.
+Do not combine search-time and indexed JSON extraction for the same source type.
+The customer's Splunk administrator must validate event count, timestamps, and duplicates. No live customer integration is claimed.
+
+Set changes state; WhatIf previews it
+
+Set defaults to Apply. Start with What If on a still-eligible installation.
+Local preview validates applicability and payload without changing files, restarting services, or exporting reports.
+At the default PowerShell preference, a normal Set run no longer needs Confirm false.
+Add Confirm to request a prompt; stricter caller preferences are still honored.
+That does not remove UAC consent, maintenance approval, or the recovery gate.
+Remote What If only plans the roster. It does not inspect remote state.
+
+Apply once to one approved pilot
+
+After the actual health checks and approved window, apply to one pilot.
+Restart Search must be requested explicitly. Without it, Set only stages files and returns exit ten.
+The approved restart affects Host Controller and its content-processing work, not an automatic restart of Transport or Store.
+Do not promise zero delivery impact or a fixed outage duration.
+The tool checks the exact Content Engine process for a bounded stability period. That is not workload validation.
+
+Verify delivery, search and the original workload
+
+Use a mailbox whose active database is on the changed server.
+Verify new ordinary and Korean messages deliver and become searchable, with unique terms and a negative control.
+Check the original affected workload, fresh errors, and queues. Assess historical backlog separately.
+If checks fail, stop and preserve evidence. Stale callers may need investigation.
+An event provider name alone does not identify the service. If a caller needs recovery, follow a separately approved procedure.
+
+Expand serially, even with compact output
+
+After the pilot passes, use Set with a reviewed list and the explicit restart options.
+A restarted remote rollout is serial and requires an interactive console.
+Validate each server, then enter the exact requested recovered statement before the next one.
+Compact output does not hide or skip that gate. Errors stop the run and unvisited targets remain Not Run.
+The old Fleet wrapper remains compatible, but its Apply still implies a restart. Use the new commands for new procedures.
+
+Exit codes and receipts explain what happened
+
+Zero can mean eligible detection, a preview, or a completed operation. It is not proof of recovery.
+One is an error. Ten means Search restart is still required, not a Windows reboot.
+Twenty means an identity or existing-rule skip needs review. A skipped-only run never claims restart pending. If a mixed file-only run actually stages rules, it returns ten.
+Preserve reports and the protected operation receipts. Partial failures are not automatically rolled back.
+Support escalation remains appropriate for uncertain partial operations or unstable restarted processes. Rollback still requires the owned receipt, unchanged identities, and actual Microsoft Support approval.
+
+Use the current guide and complete package
+
+The two point one source release passed three hundred twenty-one tests. The later repository archive cleanup passed three hundred twenty-six.
+Native lab checks exercised the installer input cases and confirmed that skipped targets no longer prevent later servers from being inspected.
+That is not a new workload-recovery pilot. Earlier EWS results did not certify Outlook, web access, historical backlog, or production load.
+Start with the current guide on main and the complete package.
+Prepare verified files, inspect, preview, pilot carefully, and expand only after the workload evidence passes.

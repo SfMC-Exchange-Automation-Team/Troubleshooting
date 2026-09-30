@@ -9,8 +9,7 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 [Source and tests](downloads/Exchange-KoreanRules-2.1.0-source.zip) ·
 [Source SHA256](downloads/Exchange-KoreanRules-2.1.0-source.zip.sha256) ·
-[Watch/download the 2.0.0 walkthrough](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) ·
-[Audio narration](docs/Exchange-KoreanRules-2.0.0-Narration.m4a) ·
+[English / Hindi walkthroughs](docs/Walkthroughs.md) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
 
@@ -20,7 +19,7 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 [`downloads`](downloads) contains only the latest source kit and checksum.
 Superseded versions, old recordings and compatibility entry points are preserved
 in the [legacy archive](archive/README.md), not mixed into the active folders.
-The latest available 2.0.0 video remains below with the current-release caveats.
+The current 2.1.0 walkthrough is available in English and Hindi below.
 
 > **2.1.0 installer/input update:** Install with no arguments shows examples and
 > exits successfully without prompting, downloading, elevating or writing files.
@@ -39,54 +38,37 @@ The latest available 2.0.0 video remains below with the current-release caveats.
 > `$report`, CSV and JSON. Missing installation files now produce a multiline
 > preflight message with preparation commands and the expected caller-side path.
 
-## Current 2.0.0 walkthrough
+## Current 2.1.0 walkthroughs
 
-The recording predates the yellow eligibility skips/continued inspection and
-2.1.0's installer/input and skip guidance. Use this written guide for those
-changes; the media has not been regenerated. Media and source archives are
-independently versioned.
+**1080p · regenerated offline narration · visible captions · 18 chapters per language**
 
-**8 minutes 57 seconds · 1080p · natural-sounding synthetic narration · visible captions · 16 embedded chapters**
+**English: 11:06 · Hindi: 13:38**
 
-[![Preview of the current Korean Rules walkthrough](docs/Exchange-KoreanRules-2.0.0-Poster.png)](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
+| Language | Video | Audio-only | Transcript |
+|---|---|---|---|
+| English | [Watch/download](docs/en/Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4) | [M4A](docs/en/Exchange-KoreanRules-2.1.0-English-Narration.m4a) | [Text](docs/en/Exchange-KoreanRules-2.1.0-English-Transcript.txt) |
+| Hindi / हिंदी | [देखें / डाउनलोड करें](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4) | [M4A](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Narration.m4a) | [हिंदी पाठ](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Transcript.txt) |
 
-This rebuilt walkthrough uses **Install / Get / Set**, not the old combined command.
-It covers finding and extracting the kit, the returned payload path, missing-file
-guidance, native Exchange CSV columns, the exact **three-versus-four-target** output
-boundary, optional standard confirmation, reports, and controlled recovery checks.
-Install is preparation only; Set is modifying unless `-WhatIf` is supplied.
+[![English walkthrough preview](docs/en/Exchange-KoreanRules-2.1.0-English-Poster.png)](docs/en/Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4)
 
-Commands and abbreviated output are illustrative. No new Apply or workload pilot
-was performed for the recording. Narration uses a generic neural voice generated
-locally, not voice cloning; no script text or audio was sent to an online speech
-service. Recorded test and lab observations retain their documented limits.
+Both versions cover **Install / Get / Set**, no-argument installer guidance,
+positional source/output and server arguments, quoted paths and folder selection,
+incomplete-media diagnostics, yellow eligibility skips that continue the list,
+four-plus-target compact output, reports and recovery boundaries.
+Hindi narration and captions use Devanagari; the on-screen PowerShell commands,
+parameter names and technical example cards stay in English so they match the tool.
+**The script interface and its own error messages are not translated.**
 
-Companions: [audio-only M4A](docs/Exchange-KoreanRules-2.0.0-Narration.m4a),
-[transcript](docs/Exchange-KoreanRules-2.0.0-Transcript.txt),
-[WebVTT](docs/Exchange-KoreanRules-2.0.0-Captions.vtt), and
-[SRT](docs/Exchange-KoreanRules-2.0.0-Captions.srt).
-The MP4 has burned-in captions and chapter markers. If GitHub shows a file page
-instead of a player, select **Download raw file**. Media companions are separate
-from the source ZIP; use the current source release and its own checksum above.
+Commands and abbreviated output are illustrative, not a fresh deployment recording.
+Both voices are generic neural voices synthesized locally, not voice clones.
+No narration text or audio was sent to an online speech service. Install prepares
+files only; Set modifies eligible servers unless `-WhatIf` is supplied.
 
-| Start | Chapter |
-|---|---|
-| 00:00 | Three commands and their responsibilities |
-| 00:32 | Browse, download and stage |
-| 01:03 | Prepare verified files with Install |
-| 01:40 | Use the returned payload path |
-| 02:12 | Inspect with Get |
-| 02:46 | Color meanings and stop conditions |
-| 03:13 | Native Exchange CSV columns |
-| 03:49 | Four-plus-target compact output |
-| 04:20 | Inspect every row through `$report` |
-| 04:53 | Exports and Splunk collection |
-| 05:29 | Set, WhatIf and optional confirmation |
-| 06:04 | One approved pilot and explicit restart |
-| 06:38 | Workload recovery validation |
-| 07:13 | Serial rollout and recovery attestation |
-| 07:47 | Exit codes, failures and receipts |
-| 08:22 | Evidence and handoff |
+See the [language downloads, captions and chapter index](docs/Walkthroughs.md).
+If GitHub shows a file page instead of a player, select **Download raw file**.
+The media is separate from the immutable source ZIP, whose checksum is unchanged.
+The superseded [2.0.0 recording](archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
+is preserved in the archive, not mixed into the active language folders.
 
 ## Find the files: browse, download, and run are different steps
 
@@ -565,7 +547,7 @@ The [1.2.1 video](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
 They show older command names and detailed output, not the new three-command interface or
 4+ compact behavior. Their workstation-only, ComputerName-only and default-confirmation
 instructions are superseded by this [current written guide](README.md) and the
-[current 2.0.0 video](docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4).
+[current English and Hindi walkthroughs](docs/Walkthroughs.md).
 The [1.0.1 recording](archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
 [1.0.1 source](archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
 [1.2.3 source](archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.
