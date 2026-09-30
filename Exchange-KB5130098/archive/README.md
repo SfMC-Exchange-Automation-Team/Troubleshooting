@@ -38,10 +38,11 @@ occupy their original locations inside that already-published ZIP.
 
 - [1.0.1 video and companions](media/1.0.1)
 - [1.2.1 video, audio and companions](media/1.2.1)
+- [2.0.0 video, audio and companions](media/2.0.0)
 
-The latest available [2.0.0 walkthrough](../docs/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
-remains in the active docs folder. Use its current-release caveats in the
-[written guide](../README.md); archiving does not make old operational advice current.
+The current [2.1.0 English and Hindi walkthroughs](../docs/Walkthroughs.md)
+remain in the active language folders. Use the [written guide](../README.md)
+for current operating instructions; archiving does not make old advice current.
 
 ## Compatibility entry points
 

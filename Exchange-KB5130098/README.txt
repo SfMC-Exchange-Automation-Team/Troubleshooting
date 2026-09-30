@@ -428,10 +428,15 @@ optional default output and explicit Download; it propagates the installer
 exit code. Legacy Invoke wrappers accept positional ComputerName; CSV remains
 explicit -CsvPath.
 
-The retained 2.0.0 walkthrough predates yellow eligibility skips/continued
-inspection and the 2.1.0 installer/input and skip guidance. Use this written
-guide for those changes; media has not been regenerated:
-  docs\Exchange-KoreanRules-2.0.0-Walkthrough.mp4
+Current 2.1.0 walkthroughs cover the installer and skip behavior:
+  docs\en\Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4
+  docs\hi\Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4
+  docs\Walkthroughs.md
+Each language has matching audio, captions and a transcript. The Hindi version
+has Hindi narration/Devanagari captions with unchanged English command cards.
+The PowerShell scripts and their error messages are not localized.
+Media is a separate download from the immutable source ZIP. The older 2.0.0
+walkthrough is now at archive\media\2.0.0; prefer the current bilingual guide.
 
 The 1.2.1 media is HISTORICAL, not current instructions:
   archive\media\1.2.1\Exchange-KB5130098-1.2.1-Walkthrough.mp4

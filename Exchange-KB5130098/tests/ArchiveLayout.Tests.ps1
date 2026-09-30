@@ -26,12 +26,21 @@ Describe 'Current repository and historical archive separation' {
         }
     }
 
-    It 'keeps the latest available recording active and previous recordings in the archive' {
-        @(Get-ChildItem -LiteralPath (Join-Path $script:root 'docs') -Filter '*-Walkthrough.mp4' -File).Count | Should -Be 1
+    It 'keeps current English and Hindi recordings active and previous versions archived' {
+        $docs=Join-Path $script:root 'docs'
+        @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File).Count | Should -Be 0
+        @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File -Recurse).Count | Should -Be 2
+        foreach ($language in @(@{Folder='en';Name='English'},@{Folder='hi';Name='Hindi'})) {
+            foreach ($suffix in @('Walkthrough.mp4','Narration.m4a','Captions.srt','Captions.vtt','Transcript.txt','Poster.png')) {
+                $relative='docs\{0}\Exchange-KoreanRules-{1}-{2}-{3}' -f $language.Folder,$script:version,$language.Name,$suffix
+                Test-Path -LiteralPath (Join-Path $script:root $relative) -PathType Leaf | Should -BeTrue
+            }
+        }
         @(Get-ChildItem -LiteralPath (Join-Path $script:root 'docs') -Filter 'Exchange-KB5130098-*' -File).Count | Should -Be 0
         foreach($version in @('1.0.1','1.2.1')) {
             Test-Path -LiteralPath (Join-Path $script:root "archive\media\$version\Exchange-KB5130098-$version-Walkthrough.mp4") | Should -BeTrue
         }
+        Test-Path -LiteralPath (Join-Path $script:root 'archive\media\2.0.0\Exchange-KoreanRules-2.0.0-Walkthrough.mp4') | Should -BeTrue
     }
 
     It 'can import the compatibility module from its archived location' {

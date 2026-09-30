@@ -1,5 +1,49 @@
 # Exchange Korean Rules: validation and operational limits
 
+## Current 2.1.0 English and Hindi media
+
+The [bilingual walkthroughs](Walkthroughs.md) were regenerated for current 2.1.0
+behavior: positional and quoted installer inputs, no-argument guidance, incomplete
+media diagnostics, expected yellow skips, continued inspection and practical
+operator next steps. The Hindi edition has Hindi narration and Devanagari
+captions; the English command cards are identical across both editions.
+This does not localize the PowerShell scripts or their runtime messages.
+
+| Media check | English | Hindi |
+|---|---|---|
+| Duration | 11:06 (665.67 seconds) | 13:38 (817.83 seconds) |
+| Video | 1920 x 1080, H.264, 24 fps | 1920 x 1080, H.264, 24 fps |
+| Audio | AAC, 48 kHz, stereo | AAC, 48 kHz, stereo |
+| Chapters / caption cues | 18 / 95 | 18 / 95 |
+| Integrated loudness | -16.54 LUFS | -16.20 LUFS |
+| True peak | -4.20 dBTP | -4.39 dBTP |
+
+Both videos and their standalone narration tracks passed full decoding. Audio-only
+files match the corresponding video audio streams. Every narration-source sentence
+appears in the transcript and captions; caption cues are ordered, bounded and
+non-overlapping. The language-specific chapter table matches each media timeline.
+Encoded frames were inspected for readable commands, yellow skip styling and
+correctly shaped Devanagari captions using Nirmala UI and the video subtitle shaper.
+
+The Hindi translation preserves the English scenario IDs, visual cards and
+technical commands. Both use generic neural voices synthesized locally, not a
+human speaker's cloned voice. The translated narration is not a separate
+operational approval or a new product localization.
+
+Hindi synthesis uses the model's native multilingual pronunciation frontend.
+Local speech-recognition passes supplemented the translation/text checks,
+including isolated key Hindi statements to reduce long-segment recognition
+artifacts. Recognition is a quality check, not a claim of perfect transcription
+or a human voice recording. All published caption/transcript text comes from the
+reviewed narration source, not from automatic speech-recognition output.
+
+The current repository suite passed **326 tests**, including the updated layout
+check for exactly two active language videos and their companions. The previous
+2.0.0 media was moved to the archive with its original hashes unchanged. The
+published 2.1.0 source ZIP was not rebuilt or modified; its separate 321-test
+release evidence remains below. No Apply, SQL extraction or workload-recovery
+pilot was performed to create these media.
+
 ## Repository archive cleanup
 
 Superseded material is indexed in the [archive](../archive/README.md).
@@ -8,9 +52,9 @@ files** without changing any of their SHA256 identities. Four forwarding
 compatibility entry points moved to `archive\compatibility`; their relative-root
 resolution was updated so they remain usable from that location.
 
-The active root now has exactly the three recommended operator scripts, active
-downloads contains only the latest 2.1.0 ZIP and sidecar, and active docs retains
-the latest available 2.0.0 video and current written guidance.
+At that cleanup, the active root retained the three operator scripts and the
+latest 2.1.0 source ZIP. The later bilingual refresh moved the 2.0.0 media into
+the archive and replaced the active videos with English and Hindi editions.
 The **326-test repository suite passed**, including native compatibility
 execution, current runtime packaging and five layout/checksum regressions.
 Local Markdown links were checked after the moves.
@@ -375,13 +419,13 @@ historical test; normal disconnected-mailbox retention applied. The original
 Apply receipt and installed workaround files were retained, not removed merely
 to force another Apply. This is not an instruction to clean up current state.
 
-## Current 2.0.0 walkthrough validation
+## Historical 2.0.0 walkthrough validation
 
-The [current video](Exchange-KoreanRules-2.0.0-Walkthrough.mp4) was rebuilt for
+The [historical 2.0.0 video](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) was rebuilt for
 the three-command interface with new offline natural-sounding synthetic
 narration, rather than relabeling the 1.2.1 recording. It lasts **8 minutes
 57 seconds**, at **1920 x 1080 / 24 fps**, with **16 chapters** and **81 caption
-cues**. A separate [audio track](Exchange-KoreanRules-2.0.0-Narration.m4a),
+cues**. A separate [audio track](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Narration.m4a),
 transcript, SRT/WebVTT captions and poster accompany it.
 
 Full video and audio decoding completed without errors. Caption text matches
@@ -411,8 +455,9 @@ It shows old names and detailed output, not the three-command interface or 4+
 compact behavior. Former workstation-only, ComputerName-only and default-prompt
 instructions are also superseded. Use the [current written guide](../README.md)
 and [reporting contract](Reporting-and-Splunk.md). A separate current
-[2.0.0 walkthrough](Exchange-KoreanRules-2.0.0-Walkthrough.mp4) now covers the
-three-command interface and its operating boundaries.
+[2.0.0 walkthrough](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) now covers the
+three-command interface as it existed in 2.0.0. The current bilingual
+[2.1.0 walkthroughs](Walkthroughs.md) additionally cover installer usability and expected skips.
 The [1.0.1 recording](../archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
 Historical media decoding, caption/transcript and illustrative-command checks
