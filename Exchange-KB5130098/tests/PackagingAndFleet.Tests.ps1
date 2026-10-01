@@ -377,10 +377,27 @@ Describe 'Serial fleet rollout with mocked remoting' {
         Mock Invoke-Command { [pscustomobject]@{Status='RuleFilesPresentStop';Eligible=$false;ExistingRules=@('ko.token.rule.bin','ko.complex.rule.bin')} } -ParameterFilter {
             $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Apply')
         }
+
         $result=Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved
         $result.Results.Status | Should -Be @('RuleFilesPresentStop','RuleFilesPresentStop')
         $result.ExitCode | Should -Be 20
         Should -Invoke Read-Host -Times 0 -Exactly
+    }
+
+    It 'uses version-only multiline reasons for compact incompatible-server skips' {
+        Mock Write-Host {}
+        Mock Invoke-Command { [pscustomobject]@{Eligible=$false;Status='NotApplicableStop';ExchangeVersion='15.2.2562.46';DllVersion='16.0.5056.1000';DllBytes=251232;DllSHA256='WRONG';ExistingRules=@()} } -ParameterFilter {
+            $ScriptBlock.ToString().Contains('Invoke-KBLocal -Mode Detect')
+        }
+        $result=Invoke-KBFleet -Mode Apply -ComputerName EX01,EX02,EX03,EX04 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports
+        Should -Invoke Write-Host -Times 4 -Exactly -ParameterFilter {
+            [string]$Object -match '^SKIPPED EX0[1-4]:' -and
+            [string]$Object -like ('*Exchange build: found 15.2.2562.46; required 15.2.2562.49' + [Environment]::NewLine + '  Korean DLL version: found 16.0.5056.1000; required 16.0.5194.1000') -and
+            $ForegroundColor -eq 'Yellow'
+        }
+        Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { [string]$Object -match 'SHA256|size \(bytes\)|WRONG' }
+        $result.ReportData.Count | Should -Be 4
+        $result.ReportData[0].ApplicabilityReason | Should -Match 'SHA256: found WRONG'
     }
 
     It 'Detect needs no Confirm false and never applies or requests a recovery attestation' {

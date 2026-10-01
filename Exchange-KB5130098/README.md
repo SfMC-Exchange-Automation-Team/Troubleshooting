@@ -1,14 +1,14 @@
 # Exchange Korean Rules: operator guide
 
-**Version 2.2.0 · Exchange Server administrators and change owners**
+**Version 2.2.1 · Exchange Server administrators and change owners**
 
 This is custom PowerShell automation of the workaround in the
 [Microsoft support article](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
 That article is source guidance, not the tool's identity. Re-read it before use.
 This tool is not a Microsoft-signed hotfix, security update, or permanent product fix.
 
-[Source and tests](downloads/Exchange-KoreanRules-2.2.0-source.zip) ·
-[Source SHA256](downloads/Exchange-KoreanRules-2.2.0-source.zip.sha256) ·
+[Source and tests](downloads/Exchange-KoreanRules-2.2.1-source.zip) ·
+[Source SHA256](downloads/Exchange-KoreanRules-2.2.1-source.zip.sha256) ·
 [English / Hindi walkthroughs](docs/Walkthroughs.md) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
@@ -45,8 +45,9 @@ The retained 2.1.0 walkthrough is available in English and Hindi below.
 > remaining targets. It never overwrites or restarts a skipped target. Actual
 > connection, copy, verification, restart and recovery-attestation failures still
 > stop a modifying rollout. The existing status names remain for compatibility.
-> `ApplicabilityReason` explains observed versus required identity in the console,
-> `$report`, CSV and JSON. Missing installation files now produce a multiline
+> Console identity differences show build and DLL versions on separate lines.
+> `ApplicabilityReason` retains all identity details in `$report`, CSV and JSON.
+> Missing installation files now produce a multiline
 > preflight message with preparation commands and the expected caller-side path.
 
 ## Retained 2.1.0 walkthroughs
@@ -298,7 +299,7 @@ The verified rules are:
 
 ## 4. Verify and stage the runtime
 
-The locally built archive is **`Exchange-KoreanRules-2.2.0-deploy.zip`**, rooted at
+The locally built archive is **`Exchange-KoreanRules-2.2.1-deploy.zip`**, rooted at
 `Exchange-KoreanRules`. Its **exactly three root `.ps1` entry points** are:
 
 ```text
@@ -335,7 +336,7 @@ authentication or code signing. Signing/rebuilding changes the archive hash.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KoreanRules-2.2.0-deploy.zip'
+$zip = 'C:\Temp\Exchange-KoreanRules-2.2.1-deploy.zip'
 $record = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 if ($record -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
     throw 'Malformed checksum record; obtain the approved build record.'
@@ -402,12 +403,20 @@ Read status/actions, not color alone: an inapplicable identity is yellow; match 
 green only with a match, yellow for an explicit mismatch, neutral when unobserved.
 Present remains green for presence only, **not** verified remediation or workload recovery.
 
-The identity row now says **Not applicable**, followed by the exact differences,
-for example `Exchange build: found 15.2.2562.46; required 15.2.2562.49.`
-DLL version, byte count and SHA256 differences are listed when present.
+The identity row says **Not applicable**, followed by mismatched build and DLL
+versions on separate lines, without byte counts or hashes:
+
+```text
+Exchange build: found 15.2.2562.46; required 15.2.2562.49
+Korean DLL version: found 16.0.5056.1000; required 16.0.5194.1000
+```
+
+Size and SHA256 verification remain mandatory. If only those checks differ, the
+console directs the operator to the detailed detection report.
 `RuleFilesPresentStop` distinguishes both files already present from a partial
 pair; it does not verify that a previous installation/restart completed.
-These same explanations appear in `ApplicabilityReason` in the typed report/exports.
+`ApplicabilityReason` in the typed report/exports retains full identity differences,
+including byte counts and SHA256 values.
 Expected skips do not require a Support escalation. Review the actual build for
 an inapplicable target, or the prior receipt, hashes and restart/recovery record
 for existing rules. Investigate a partial pair without overwriting or blindly

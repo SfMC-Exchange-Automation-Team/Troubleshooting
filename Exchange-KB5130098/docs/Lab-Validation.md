@@ -1,5 +1,20 @@
 # Exchange Korean Rules: validation and operational limits
 
+## 2.2.1 console identity formatting
+
+The console now lists mismatched Exchange build and Korean DLL version on
+separate lines without trailing periods, byte counts or hashes. Compact fleet
+skip messages use the same presentation. Full identity differences remain in
+typed/exported reports, and size/hash eligibility gates are unchanged. A
+size-only or hash-only mismatch still reports non-applicability and directs
+the operator to the detailed detection report.
+
+Validation: **333 tests passed from the extracted source archive**, including
+exact multiline output, yellow skip color, compact fleet output, size/hash-only
+fallbacks and retained report details. The **five repository-only archive layout
+tests also passed**. This is a presentation change, not a new Apply or workload
+recovery validation.
+
 ## 2.2.0 payload-default contract and evidence boundary
 
 The current [operator guide](../README.md) documents connected defaults: after
@@ -51,7 +66,7 @@ cover the corrected code after the fixture correction.
 
 On October 1, 2026, the final repository suite passed **334 tests**.
 An independent run from the freshly extracted
-[`Exchange-KoreanRules-2.2.0-source.zip`](../downloads/Exchange-KoreanRules-2.2.0-source.zip)
+[`Exchange-KoreanRules-2.2.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.2.0-source.zip)
 passed **329 tests**. The difference is the five repository-only archive/media
 layout cases in `ArchiveLayout.Tests.ps1`, intentionally not bundled because
 they depend on historical repository assets.
@@ -169,7 +184,7 @@ layout and checksum. No files were removed from an operator or lab working folde
 - **2.1.0 final offline worktree validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 independent source-archive validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 stable-folder/native lab verification:** September 30, 2026; **7 cases passed**.
-- **Current operator interface:** 2.2.0; see the [written guide](../README.md).
+- **Current operator interface:** 2.2.1; see the [written guide](../README.md).
 
 This separates release-specific offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
