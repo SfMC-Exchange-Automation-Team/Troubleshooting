@@ -15,7 +15,7 @@ caption, transcript or poster was deleted or changed during this move.
 - [Set-KoreanRulesState.ps1](../Set-KoreanRulesState.ps1) — change eligible servers.
 - [Latest 2.3.1 complete public kit](../downloads/Exchange-KoreanRules-2.3.1.zip)
   and [checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256).
-- [Retained 2.1.0 walkthroughs and the 2.3.1 corrections](../docs/Walkthroughs.md).
+- [Current 2.3.1 English, Hindi and Tamil walkthroughs](../docs/Walkthroughs.md).
 
 The current release is **2.3.1**. Public inclusion of both exact, pinned Microsoft
 BINs was explicitly approved. The public ZIP contains the complete runtime, docs,
@@ -89,12 +89,13 @@ explicit public approval for the two BINs, not a restriction on the current
 - [1.0.1 video and companions](media/1.0.1)
 - [1.2.1 video, audio and companions](media/1.2.1)
 - [2.0.0 video, audio and companions](media/2.0.0)
+- [2.1.0 English and Hindi video, audio and companions](media/2.1.0)
 
-The retained [2.1.0 English and Hindi walkthroughs](../docs/Walkthroughs.md)
-remain in the active language folders and were not regenerated for 2.3.1.
+The 2.1.0 English and Hindi walkthroughs have been archived unchanged.
 Their mandatory maintenance flag, default portable output and manual payload
 handoff are superseded by the current written contract.
-Use the [written guide](../README.md)
+The [2.3.1 recordings](../docs/Walkthroughs.md) cover the bundled-file workflow
+in English, Hindi and Tamil. Use them and the [written guide](../README.md)
 for current operating instructions; archiving does not make old advice current.
 
 ## Compatibility entry points

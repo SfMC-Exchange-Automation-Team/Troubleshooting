@@ -1,0 +1,502 @@
+1
+00:00:00,480 --> 00:00:04,925
+Welcome to Exchange Korean Rules, version two point three point one.
+
+2
+00:00:05,145 --> 00:00:13,399
+The public kit now includes both verified rule files. You
+do not need to download SQL media just to start using it.
+
+3
+00:00:13,619 --> 00:00:24,028
+Get inspects servers. Set applies the guarded workaround. Install verifies
+the bundled files or prepares a replacement source when explicitly requested.
+
+4
+00:00:24,248 --> 00:00:31,263
+This is custom automation of published guidance, not
+a Microsoft-signed hotfix or a permanent product fix.
+
+5
+00:00:31,483 --> 00:00:37,241
+The examples are illustrative. This recording
+does not apply changes to an Exchange server.
+
+6
+00:00:38,438 --> 00:00:45,977
+Open the current guide on GitHub main and choose the two
+point three point one zip, not an older source-only archive.
+
+7
+00:00:46,197 --> 00:00:50,418
+Use your browser's Show in folder option to locate the download.
+
+8
+00:00:50,638 --> 00:00:57,164
+After verifying its source and checksum, extract
+the complete kit into a dedicated working folder.
+
+9
+00:00:57,384 --> 00:01:02,794
+Keep the module, manifest, private folder,
+and payload beside the entry-point scripts.
+
+10
+00:01:03,014 --> 00:01:11,384
+The example uses drive D, but you choose the location. Normal
+use does not create another copy of the kit under drive C.
+
+11
+00:01:12,605 --> 00:01:16,517
+Windows may mark a downloaded zip as coming from the Internet.
+
+12
+00:01:16,737 --> 00:01:22,730
+First review the approved source and compare the
+calculated checksum with the published release value.
+
+13
+00:01:22,950 --> 00:01:28,419
+Only after you trust the package, unblock that exact zip and extract a fresh copy.
+
+14
+00:01:28,639 --> 00:01:32,316
+Calculating a hash is not the same as checking that it matches.
+
+15
+00:01:32,536 --> 00:01:40,436
+This procedure does not disable PowerShell policy, application
+control, or your organization's security requirements.
+
+16
+00:01:41,647 --> 00:01:49,047
+Unblocking the zip after extraction does not remove
+Internet-zone tags from files that were already extracted.
+
+17
+00:01:49,267 --> 00:01:55,772
+After reviewing the kit, you can unblock its script and
+module files together, including the private folder.
+
+18
+00:01:55,992 --> 00:02:01,440
+Use the dedicated kit folder only, not the whole software or temporary directory.
+
+19
+00:02:01,660 --> 00:02:13,113
+Get Execution Policy List is a read-only diagnostic. A signing requirement or
+application-control restriction needs the appropriate organizational process.
+
+20
+00:02:13,333 --> 00:02:21,885
+The administrator consent window is UAC, not an Internet-zone
+warning. Unblocking files does not remove that requirement.
+
+21
+00:02:23,105 --> 00:02:29,406
+In a complete bundled kit, running Install without
+arguments only verifies the two rule files.
+
+22
+00:02:29,626 --> 00:02:37,442
+That verification is read-only and does not require
+administrator access, download media, or create directories.
+
+23
+00:02:37,662 --> 00:02:44,284
+You may skip this optional step and use Get and
+Set directly. Set performs its own required checks.
+
+24
+00:02:44,504 --> 00:02:54,068
+Set looks for payload beside its own kit, even when called from a different
+working directory. An explicit alternate payload path still takes precedence.
+
+25
+00:02:54,288 --> 00:03:03,395
+An invalid or partial payload fails clearly. Only a custom or
+historical kit with no payload shows preparation guidance instead.
+
+26
+00:03:04,605 --> 00:03:11,835
+Run Get to inspect the observed installation. Get does not
+need the rule payload and does not apply the workaround.
+
+27
+00:03:12,055 --> 00:03:19,328
+The tool requires its exact supported Exchange
+build and DLL identity, with both rule files absent.
+
+28
+00:03:19,548 --> 00:03:29,177
+A server called a client-access or relay server is not excluded just by
+that label. Check the actual installed components and supported build.
+
+29
+00:03:29,397 --> 00:03:40,339
+Modern Exchange client-access services are part of the Mailbox role. Dedicated
+Edge and older CAS-only installations are not validated by this walkthrough.
+
+30
+00:03:40,559 --> 00:03:47,904
+Eligible means the file checks passed. It is not proof
+of a deadlock, a completed restart, or recovered search.
+
+31
+00:03:49,105 --> 00:03:55,768
+An incompatible target shows the found and
+required build and DLL version on separate lines.
+
+32
+00:03:55,988 --> 00:04:05,560
+The console no longer prints the long size and hash explanation here, but
+those verification checks still run and the detailed reports retain the
+
+33
+00:04:05,560 --> 00:04:06,352
+information.
+
+34
+00:04:06,572 --> 00:04:11,754
+If only size or hash differs, the console directs you to the detailed report.
+
+35
+00:04:11,974 --> 00:04:19,854
+Existing rules and incompatible installations are yellow
+skips. Set leaves them unchanged and continues the list.
+
+36
+00:04:20,074 --> 00:04:30,590
+Investigate a partial rule pair rather than overwriting it. Routine skips do
+not automatically require Support; real operation failures still halt rollout.
+
+37
+00:04:31,772 --> 00:04:36,900
+Remote Set uses the verified payload on the computer where you launch the command.
+
+38
+00:04:37,120 --> 00:04:45,192
+It transfers the small runtime, inspects the remote server,
+and sends the two rule files only when that target is eligible.
+
+39
+00:04:45,412 --> 00:04:51,672
+The remote operation verifies them again before
+copying them into Exchange's Native directory.
+
+40
+00:04:51,892 --> 00:05:01,990
+The two files total about seven hundred fifty-six kibibytes. The large
+SQL package is neither copied nor extracted on each remote server.
+
+41
+00:05:02,210 --> 00:05:10,814
+Use existing authorized PowerShell remoting. Do not weaken
+authentication or trust configuration to make a connection work.
+
+42
+00:05:12,022 --> 00:05:19,560
+Computer names can be the first positional argument.
+A CSV still uses the explicit CSV Path parameter.
+
+43
+00:05:19,780 --> 00:05:27,811
+From an Exchange management shell, export the native Name and
+FQDN properties without inventing a Computer Name property.
+
+44
+00:05:28,031 --> 00:05:34,311
+The importer selects Computer Name, otherwise
+FQDN, otherwise Name, once for the whole file.
+
+45
+00:05:34,531 --> 00:05:43,159
+A blank or invalid selected value stops the run instead of
+silently choosing another column. Duplicate targets are rejected.
+
+46
+00:05:43,379 --> 00:05:53,254
+Get validates the list before contact. Its remote inspection can create
+code staging and reports, but does not copy rule files into Exchange.
+
+47
+00:05:54,438 --> 00:06:02,701
+One to three targets show detailed state, action, and next
+steps. Four or more use compact status totals and report paths.
+
+48
+00:06:02,921 --> 00:06:12,518
+That display change does not discard any target. Dollar report contains
+typed rows, and dollar report Files contains the export locations.
+
+49
+00:06:12,738 --> 00:06:19,571
+Use Pass Through when you want explicit pipeline
+assignment, or JSON for a separate automation process.
+
+50
+00:06:19,791 --> 00:06:28,342
+The script's own UAC handoff returns its results, but an unrelated
+PowerShell process cannot set variables in its parent shell.
+
+51
+00:06:28,562 --> 00:06:33,787
+Errors and required recovery prompts remain visible even when the list is large.
+
+52
+00:06:34,980 --> 00:06:43,341
+Normal runs write CSV, detailed JSON, and final JSON
+Lines into a unique report directory on the caller.
+
+53
+00:06:43,561 --> 00:06:47,475
+The existing report-root name is retained for compatibility.
+
+54
+00:06:47,695 --> 00:06:55,319
+For Splunk file monitoring, collect the final JSON Lines
+file rather than the repeatedly rewritten rollout checkpoint.
+
+55
+00:06:55,539 --> 00:07:03,515
+Use the documented extraction model. Do not combine search-time
+and indexed JSON extraction for the same source type.
+
+56
+00:07:03,735 --> 00:07:14,133
+The customer's administrator still needs to verify event counts, timestamps,
+and duplicates. The tool does not configure or validate their Splunk pipeline.
+
+57
+00:07:15,313 --> 00:07:19,386
+Set defaults to Apply, so start with What If before making a change.
+
+58
+00:07:19,606 --> 00:07:25,385
+The adjacent payload is automatic, and the
+maintenance-window switch is no longer required.
+
+59
+00:07:25,605 --> 00:07:34,669
+Local preview can inspect local state. Remote preview makes no
+remote connections, so it is not a connectivity or eligibility test.
+
+60
+00:07:34,889 --> 00:07:39,142
+Use remote Get for actual inspection before the modifying run.
+
+61
+00:07:39,362 --> 00:07:48,901
+At the normal confirmation preference, Confirm is optional. What If,
+UAC consent, and per-server recovery attestation are different controls.
+
+62
+00:07:50,105 --> 00:07:54,829
+After the health checks and operational approval, start with one pilot server.
+
+63
+00:07:55,049 --> 00:08:04,348
+Restart Search is still an explicit request. The old maintenance-window
+switch is accepted for compatibility but no longer gates the operation.
+
+64
+00:08:04,568 --> 00:08:10,423
+Without Restart Search, Set stages the files
+and reports that a restart is still required.
+
+65
+00:08:10,643 --> 00:08:18,832
+The requested restart affects Host Controller and content
+processing. It does not automatically restart Transport or Store.
+
+66
+00:08:19,052 --> 00:08:29,503
+Plan for impact on search and affected processing; do not promise zero
+mail-delivery impact. A stable process does not prove that the workload recovered.
+
+67
+00:08:30,688 --> 00:08:36,212
+For mailbox search checks, use a mailbox whose
+active database is on the changed server.
+
+68
+00:08:36,432 --> 00:08:44,184
+Verify ordinary and Korean messages deliver and become
+searchable, using unique terms and a negative control.
+
+69
+00:08:44,404 --> 00:08:54,841
+For an Exchange relay workload, also validate the actual relay route and affected
+processing. Do not invent a mailbox-search result for a server that cannot
+
+70
+00:08:54,841 --> 00:08:55,644
+provide one.
+
+71
+00:08:55,864 --> 00:09:01,962
+Review fresh errors and queues, and treat historical
+indexing backlog as a separate observation.
+
+72
+00:09:02,182 --> 00:09:11,022
+If a check fails, stop rollout and preserve evidence. Investigate
+the actual caller before any separately approved recovery action.
+
+73
+00:09:12,230 --> 00:09:17,773
+After the pilot passes, expand with a reviewed list and an explicit restart request.
+
+74
+00:09:17,993 --> 00:09:25,981
+Restarted remote rollout is serial. Validate the current
+server before entering the exact recovered statement requested.
+
+75
+00:09:26,201 --> 00:09:31,564
+Do not enter that statement merely because the
+files are present or the service is running.
+
+76
+00:09:31,784 --> 00:09:41,007
+Expected skips continue without modification, but a true operation
+or recovery failure stops the run and leaves later targets Not Run.
+
+77
+00:09:41,227 --> 00:09:47,157
+Four or more targets may have compact output, but
+the recovery gate is still visible and required.
+
+78
+00:09:48,355 --> 00:09:59,108
+For preparation, use elevated sixty-four-bit Windows PowerShell five point
+one. Download is an explicit fallback for fresh media extraction or a kit that
+
+79
+00:09:59,108 --> 00:10:01,005
+needs its payload prepared.
+
+80
+00:10:01,225 --> 00:10:08,667
+You can instead supply an existing SQL executable,
+or a folder containing the two verified rule files.
+
+81
+00:10:08,887 --> 00:10:16,521
+SQL Server is not installed. The fallback only
+extracts media locally and verifies the required files.
+
+82
+00:10:16,741 --> 00:10:23,405
+The large media download is not repeated by Get or
+Set, and it is never needed on every remote target.
+
+83
+00:10:23,625 --> 00:10:32,252
+A partial download or identity conflict is an error, not permission
+to bypass checks or overwrite an invalid existing payload.
+
+84
+00:10:33,438 --> 00:10:42,011
+Normal preparation now fills only the current kit's adjacent
+payload. It does not generate another working copy or zip.
+
+85
+00:10:42,231 --> 00:10:49,514
+From an elevated preparation session, request a new Output
+Directory only when you want a separate portable package.
+
+86
+00:10:49,734 --> 00:10:59,077
+Without that request, the package and zip-hash return values are empty
+because no zip was created. The payload path points to the current kit.
+
+87
+00:10:59,297 --> 00:11:04,340
+Using verified BINs does not create an empty extraction directory.
+
+88
+00:11:04,560 --> 00:11:15,812
+Actual SQL-media extraction still uses a unique work folder for safe extraction
+and diagnostics. Existing user folders are not automatically deleted.
+
+89
+00:11:17,022 --> 00:11:24,957
+Zero may mean eligible detection, a preview, or a completed
+operation; it is not proof that the workload recovered.
+
+90
+00:11:25,177 --> 00:11:31,063
+One is an error. Ten means a Search restart is still required, not a Windows reboot.
+
+91
+00:11:31,283 --> 00:11:42,138
+Twenty indicates an incompatible installation or existing rules that need
+review. A mixed file-only run that actually stages rules can still return ten.
+
+92
+00:11:42,358 --> 00:11:48,596
+Preserve the reports and operation receipts.
+Partial changes are not automatically rolled back.
+
+93
+00:11:48,816 --> 00:11:59,405
+Use Support for uncertain partial recovery or exceptional rollback, not every
+routine skip. Rollback remains local, receipt-bound, and dependent on actual
+
+94
+00:11:59,405 --> 00:12:01,261
+Microsoft Support approval.
+
+95
+00:12:02,480 --> 00:12:09,272
+The two rule files are now in GitHub and in the public
+zip, so the normal workflow starts with the complete kit.
+
+96
+00:12:09,492 --> 00:12:16,775
+No per-server SQL preparation, manual payload handoff,
+or mandatory maintenance-window switch is needed.
+
+97
+00:12:16,995 --> 00:12:21,153
+Restarts remain explicit, and operational planning still matters.
+
+98
+00:12:21,373 --> 00:12:28,102
+Unblocking a trusted package is not permission
+to bypass UAC or organizational policy.
+
+99
+00:12:28,322 --> 00:12:35,007
+Use the current guide and reviewed target list, then
+base rollout decisions on actual workload evidence.
+
+100
+00:12:36,188 --> 00:12:46,637
+The two point three point one release passed three hundred forty-four runtime
+tests, the same number against the extracted kit, and five repository layout
+
+101
+00:12:46,637 --> 00:12:47,044
+tests.
+
+102
+00:12:47,264 --> 00:12:54,343
+The published files were downloaded back from GitHub and
+checked, including native verification of the bundled payload.
+
+103
+00:12:54,563 --> 00:13:01,526
+Those checks do not certify customer workload recovery,
+production load, or historical indexing backlog.
+
+104
+00:13:01,746 --> 00:13:07,962
+This walkthrough updates the commands and explanation;
+it is not a recording of a fresh remediation.
+
+105
+00:13:08,182 --> 00:13:17,447
+Use the current guide, inspect your targets, preview the change, and
+expand only after a deliberately chosen pilot passes the workload checks.

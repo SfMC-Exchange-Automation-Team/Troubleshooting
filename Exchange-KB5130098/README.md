@@ -9,7 +9,7 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 
 [Complete kit with bundled rules](downloads/Exchange-KoreanRules-2.3.1.zip) ·
 [Kit SHA256](downloads/Exchange-KoreanRules-2.3.1.zip.sha256) ·
-[English / Hindi walkthroughs](docs/Walkthroughs.md) ·
+[English / Hindi / Tamil walkthroughs](docs/Walkthroughs.md) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
 
@@ -19,7 +19,7 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 [`downloads`](downloads) contains only the latest complete public kit and checksum.
 Superseded versions, old recordings and compatibility entry points are preserved
 in the [legacy archive](archive/README.md), not mixed into the active folders.
-The retained 2.1.0 walkthrough is available in English and Hindi below.
+Current 2.3.1 walkthroughs are available in English, Hindi and Tamil below.
 
 > **2.3.1 public bundle:** the repository and complete public ZIP include both
 > exact, pinned Microsoft BINs under `payload`, with public inclusion explicitly
@@ -30,12 +30,11 @@ The retained 2.1.0 walkthrough is available in English and Hindi below.
 > creation. A second portable kit and ZIP are created **only** with an explicit,
 > new `-OutputDirectory`; there are no implicit downloads.
 
-> **Video correction:** the English/Hindi 2.1.0 media was **not regenerated** for
-> 2.3.1. Follow this written guide for bundled payload, optional Install,
-> adjacent-only preparation and opt-in portable output. Its mandatory maintenance
-> flag is obsolete: `-MaintenanceWindowApproved` is an optional compatibility
-> no-op. Restart still requires explicit `-RestartSearch` in Set; plan an
-> operational window and retain Support-approved rollback and recovery gates.
+> **Current walkthroughs:** all three editions cover the bundled payload,
+> optional Install, adjacent-only preparation, opt-in portable output and
+> package-scoped Internet-zone handling. `-MaintenanceWindowApproved` is an
+> optional compatibility no-op. Restart still requires explicit `-RestartSearch`
+> in Set; plan an operational window and retain recovery and rollback safeguards.
 
 > **2.0.1 correction:** Set now reports existing rules and an incompatible build/DLL
 > as **yellow skips**, not fatal deployment errors, and continues to inspect the
@@ -47,40 +46,46 @@ The retained 2.1.0 walkthrough is available in English and Hindi below.
 > Missing installation files now produce a multiline
 > preflight message with preparation commands and the expected caller-side path.
 
-## Retained 2.1.0 walkthroughs
+## Current 2.3.1 walkthroughs
 
-**1080p · regenerated offline narration · visible captions · 18 chapters per language**
+**1080p · locally generated narration · visible captions · 20 chapters per language**
 
-**English: 11:06 · Hindi: 13:38**
+**English: 13:18 · Hindi: 16:28 · Tamil: 16:32**
 
 | Language | Video | Audio-only | Transcript |
 |---|---|---|---|
-| English | [Watch/download](docs/en/Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4) | [M4A](docs/en/Exchange-KoreanRules-2.1.0-English-Narration.m4a) | [Text](docs/en/Exchange-KoreanRules-2.1.0-English-Transcript.txt) |
-| Hindi / हिंदी | [देखें / डाउनलोड करें](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4) | [M4A](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Narration.m4a) | [हिंदी पाठ](docs/hi/Exchange-KoreanRules-2.1.0-Hindi-Transcript.txt) |
+| English | [Watch/download](docs/en/Exchange-KoreanRules-2.3.1-English-Walkthrough.mp4) | [M4A](docs/en/Exchange-KoreanRules-2.3.1-English-Narration.m4a) | [Text](docs/en/Exchange-KoreanRules-2.3.1-English-Transcript.txt) |
+| Hindi / हिंदी | [देखें / डाउनलोड करें](docs/hi/Exchange-KoreanRules-2.3.1-Hindi-Walkthrough.mp4) | [M4A](docs/hi/Exchange-KoreanRules-2.3.1-Hindi-Narration.m4a) | [हिंदी पाठ](docs/hi/Exchange-KoreanRules-2.3.1-Hindi-Transcript.txt) |
+| Tamil / தமிழ் | [பார்க்க / பதிவிறக்க](docs/ta/Exchange-KoreanRules-2.3.1-Tamil-Walkthrough.mp4) | [M4A](docs/ta/Exchange-KoreanRules-2.3.1-Tamil-Narration.m4a) | [தமிழ் உரை](docs/ta/Exchange-KoreanRules-2.3.1-Tamil-Transcript.txt) |
 
-[![English walkthrough preview](docs/en/Exchange-KoreanRules-2.1.0-English-Poster.png)](docs/en/Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4)
+[![English walkthrough preview](docs/en/Exchange-KoreanRules-2.3.1-English-Poster.png)](docs/en/Exchange-KoreanRules-2.3.1-English-Walkthrough.mp4)
 
-Both versions cover **Install / Get / Set**, no-argument installer guidance,
-positional source/output and server arguments, quoted paths and folder selection,
-incomplete-media diagnostics, yellow eligibility skips that continue the list,
-four-plus-target compact output, reports and recovery boundaries.
-Hindi narration and captions use Devanagari; the on-screen PowerShell commands,
-parameter names and technical example cards stay in English so they match the tool.
+All three versions cover the current bundled-file workflow: verify trust,
+optionally verify the payload with Install, inspect with Get, preview with Set,
+then pilot and validate before expanding. They explain the two-file remote
+transfer, explicit download fallback, optional portable export, version-only
+console explanations, CSV targets, compact output and recovery boundaries.
+Hindi narration/captions use Devanagari; Tamil narration/captions use Tamil script.
+The PowerShell commands, parameter names and example cards remain English so
+they match the tool exactly.
 **The script interface and its own error messages are not translated.**
 
 Commands and abbreviated output are illustrative, not a fresh deployment recording.
-Both voices are generic neural voices synthesized locally, not voice clones.
+The voices are generic neural voices synthesized locally, not voice clones.
 No narration text or audio was sent to an online speech service. Install prepares
 files only; Set modifies eligible servers unless `-WhatIf` is supplied.
 
 See the [language downloads, captions and chapter index](docs/Walkthroughs.md).
 If GitHub shows a file page instead of a player, select **Download raw file**.
-The media is separate from the public kit ZIP. The archived 2.1.0 ZIP and checksum
-remain unchanged; 2.3.1 is the current public bundle. The superseded
+Media is downloaded separately from the small public kit ZIP. The already
+published 2.3.1 ZIP and its checksum remain unchanged; its bundled text documents
+are a release-time snapshot. Use this guide and the current media index for
+the refreshed recordings. The superseded
 [2.3.0 source ZIP](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
 [checksum](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are archived unchanged.
-The superseded [2.0.0 recording](archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
-is preserved in the archive, not mixed into the active language folders.
+The superseded [2.1.0 English/Hindi recordings](archive/media/2.1.0) and
+[2.0.0 recording](archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
+are preserved unchanged in the archive, not mixed into active language folders.
 
 ## Find the files: browse, download, and run are different steps
 
@@ -679,7 +684,7 @@ The [1.2.1 video](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
 They show older command names and detailed output, not the new three-command interface or
 4+ compact behavior. Their workstation-only, ComputerName-only and default-confirmation
 instructions are superseded by this [current written guide](README.md) and the
-[retained English and Hindi walkthroughs and their 2.3.1 corrections](docs/Walkthroughs.md).
+[current English, Hindi and Tamil walkthroughs](docs/Walkthroughs.md).
 The [1.0.1 recording](archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
 [1.0.1 source](archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
 [1.2.3 source](archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.

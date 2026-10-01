@@ -1,0 +1,347 @@
+WEBVTT
+
+00:00:00.480 --> 00:00:04.052
+This is Exchange Korean Rules, version two point one.
+
+00:00:04.272 --> 00:00:13.379
+The tool now separates three jobs: Install prepares verified
+installation files, Get inspects servers, and Set applies the workaround.
+
+00:00:13.599 --> 00:00:18.449
+Install does not install SQL Server or apply anything to Exchange.
+
+00:00:18.669 --> 00:00:26.313
+This is custom automation of published guidance, not a
+knowledge base article, signed hotfix, or permanent product fix.
+
+00:00:26.533 --> 00:00:31.577
+The examples are illustrative. Nothing in this video changes an Exchange server.
+
+00:00:32.772 --> 00:00:36.748
+On GitHub, open the current guide on main and check the version.
+
+00:00:36.968 --> 00:00:45.573
+The active folders now keep the current scripts and latest source
+kit. Older releases and compatibility commands are in the archive.
+
+00:00:45.793 --> 00:00:52.798
+The source zip goes to your browser's download location.
+Use Show in folder, then extract the complete kit.
+
+00:00:53.018 --> 00:00:57.314
+Keep the shared module and private folder alongside the three scripts.
+
+00:00:57.534 --> 00:01:06.226
+Downloading does not stage files on Exchange. Update your existing
+working folder deliberately; you do not need a new versioned folder.
+
+00:01:07.438 --> 00:01:15.852
+Running Install with no arguments now shows examples and
+exits. It does not prompt, download, elevate, or write files.
+
+00:01:16.072 --> 00:01:23.535
+To prepare the files, use elevated sixty-four-bit Windows
+PowerShell five point one and deliberately choose a source.
+
+00:01:23.755 --> 00:01:30.026
+Download explicitly fetches about seven hundred
+forty-nine megabytes of Microsoft media.
+
+00:01:30.246 --> 00:01:40.490
+The output directory is optional and defaults to a unique location. A
+management workstation is recommended; an Exchange host warns about resource use
+
+00:01:40.490 --> 00:01:41.924
+rather than blocking.
+
+00:01:42.144 --> 00:01:47.752
+Install only prepares files. It does not install SQL or apply the workaround.
+
+00:01:48.938 --> 00:01:57.844
+The first positional argument is an existing executable or source
+folder. The optional second argument is a new output directory.
+
+00:01:58.064 --> 00:02:06.840
+A folder must directly contain the expected executable or the
+rule files. The tool does not recursively search subfolders.
+
+00:02:07.060 --> 00:02:13.702
+If media and rules coexist, specify the exact
+executable or use Rule Source Directory.
+
+00:02:13.922 --> 00:02:21.023
+Paths with spaces and matching pasted quotation marks
+are accepted literally, without evaluating expressions.
+
+00:02:21.243 --> 00:02:28.954
+For a download destination, use Download with Output
+Directory. A bare folder is never treated as download consent.
+
+00:02:30.147 --> 00:02:37.131
+A matching filename or displayed version is not
+enough. Size, hash, and Microsoft signature must pass.
+
+00:02:37.351 --> 00:02:46.501
+An identity error now shows what was found and what is required. A
+much smaller file is consistent with an incomplete or corrupt copy.
+
+00:02:46.721 --> 00:02:53.662
+Obtain a fresh complete copy rather than bypassing
+verification or opening a routine Support case.
+
+00:02:53.882 --> 00:02:58.881
+Downloads keep a partial filename until identity and signature checks pass.
+
+00:02:59.101 --> 00:03:07.119
+Failures show one concise message and exit one. Automation
+can request a catchable error with Error Action Stop.
+
+00:03:08.313 --> 00:03:12.909
+A successful build does not populate the source folder's payload directory.
+
+00:03:13.129 --> 00:03:19.229
+Use the returned Payload Directory with Set, or
+change to the returned Expanded Package folder.
+
+00:03:19.449 --> 00:03:27.680
+If installation files are missing, the error now names the expected
+folder and files and explains how to prepare or select them.
+
+00:03:27.900 --> 00:03:33.539
+Remote Apply validates the payload on the
+calling computer before connecting to a target.
+
+00:03:33.759 --> 00:03:39.335
+Get does not need those installation files,
+and an incomplete package fails explicitly.
+
+00:03:40.522 --> 00:03:46.321
+Get checks the exact Exchange build, Korean
+WordBreaker identity, and rule-file state.
+
+00:03:46.541 --> 00:03:51.562
+It has no Apply mode and never adds Exchange rules or restarts services.
+
+00:03:51.782 --> 00:03:56.623
+A local interactive run can request normal Windows UAC elevation.
+
+00:03:56.843 --> 00:04:03.466
+Automation and remote sessions still need the required
+rights; those protections have not been removed.
+
+00:04:03.686 --> 00:04:13.060
+The result shows one observed Status column. Eligibility is only a
+prerequisite. It does not diagnose the problem or prove recovery.
+
+00:04:14.272 --> 00:04:21.095
+Expected existing-rule and incompatible-identity
+results are now yellow skips, not fatal errors.
+
+00:04:21.315 --> 00:04:26.304
+Set leaves that server unchanged and continues inspecting the remaining list.
+
+00:04:26.524 --> 00:04:37.022
+An incompatible result explains the found and required build, DLL
+version, size, or hash. The same explanation is in Applicability Reason.
+
+00:04:37.242 --> 00:04:45.273
+Existing files are never overwritten. A partial pair needs
+investigation, and presence alone does not prove recovery.
+
+00:04:45.493 --> 00:04:54.515
+Routine skips give practical next steps, not blanket Support
+instructions. Genuine operation or recovery failures still stop Set.
+
+00:04:55.730 --> 00:05:06.231
+Get and Set accept computer names as the first positional argument. For a
+CSV, explicitly use CSV Path; the script does not guess from a positional
+
+00:05:06.231 --> 00:05:06.874
+filename.
+
+00:05:07.094 --> 00:05:12.138
+Native Name and FQDN properties now work without renaming a column.
+
+00:05:12.358 --> 00:05:18.873
+The importer chooses Computer Name first,
+otherwise FQDN, then Name, once for the whole file.
+
+00:05:19.093 --> 00:05:25.021
+A blank or invalid selected value stops the
+run instead of falling back to another column.
+
+00:05:25.241 --> 00:05:36.011
+The entire roster is validated before contact. Remote Get uses existing
+Kerberos access and writes code staging and reports, not Exchange rule files.
+
+00:05:37.230 --> 00:05:41.143
+One to three computers retain the detailed per-server display.
+
+00:05:41.363 --> 00:05:48.737
+At four or more, the tool suppresses those blocks and progress
+dumps, then shows totals by status and the report paths.
+
+00:05:48.957 --> 00:05:53.192
+This is a display change only. No target data is discarded.
+
+00:05:53.412 --> 00:06:00.931
+Errors still identify the failed server, and restarted
+rollouts still require recovery input after every server.
+
+00:06:01.151 --> 00:06:06.694
+Explicit JSON and Pass Through output remain complete, regardless of list size.
+
+00:06:07.897 --> 00:06:12.036
+Dollar report contains typed PowerShell rows for every target.
+
+00:06:12.256 --> 00:06:17.735
+Format or filter it when you want details that compact output deliberately hides.
+
+00:06:17.955 --> 00:06:24.161
+Dollar report Files holds the output paths. Pass
+Through supports explicit pipeline assignment.
+
+00:06:24.381 --> 00:06:31.227
+Normal runs retain the objects in your existing
+session, including after the script's own UAC handoff.
+
+00:06:31.447 --> 00:06:40.384
+An unrelated external PowerShell process cannot populate its
+parent's variables. Use its exports or explicit JSON instead.
+
+00:06:41.605 --> 00:06:49.572
+Normal runs export all three formats to a unique folder on
+the caller, using the existing report root for compatibility.
+
+00:06:49.792 --> 00:06:54.685
+CSV is convenient for spreadsheets. JSON keeps structured detail.
+
+00:06:54.905 --> 00:07:01.602
+For Splunk file monitoring, use the finalized JSON
+Lines file, not the rewritten rollout checkpoint.
+
+00:07:01.822 --> 00:07:07.247
+Do not combine search-time and indexed JSON extraction for the same source type.
+
+00:07:07.467 --> 00:07:16.394
+The customer's Splunk administrator must validate event count,
+timestamps, and duplicates. No live customer integration is claimed.
+
+00:07:17.605 --> 00:07:22.434
+Set defaults to Apply. Start with What If on a still-eligible installation.
+
+00:07:22.654 --> 00:07:30.543
+Local preview validates applicability and payload without
+changing files, restarting services, or exporting reports.
+
+00:07:30.763 --> 00:07:36.157
+At the default PowerShell preference, a
+normal Set run no longer needs Confirm false.
+
+00:07:36.377 --> 00:07:41.144
+Add Confirm to request a prompt; stricter caller preferences are still honored.
+
+00:07:41.364 --> 00:07:46.598
+That does not remove UAC consent, maintenance approval, or the recovery gate.
+
+00:07:46.818 --> 00:07:51.562
+Remote What If only plans the roster. It does not inspect remote state.
+
+00:07:52.772 --> 00:07:57.291
+After the actual health checks and approved window, apply to one pilot.
+
+00:07:57.511 --> 00:08:04.751
+Restart Search must be requested explicitly. Without
+it, Set only stages files and returns exit ten.
+
+00:08:04.971 --> 00:08:13.140
+The approved restart affects Host Controller and its content-processing
+work, not an automatic restart of Transport or Store.
+
+00:08:13.360 --> 00:08:17.784
+Do not promise zero delivery impact or a fixed outage duration.
+
+00:08:18.004 --> 00:08:25.575
+The tool checks the exact Content Engine process for a
+bounded stability period. That is not workload validation.
+
+00:08:26.772 --> 00:08:30.900
+Use a mailbox whose active database is on the changed server.
+
+00:08:31.120 --> 00:08:38.894
+Verify new ordinary and Korean messages deliver and become
+searchable, with unique terms and a negative control.
+
+00:08:39.114 --> 00:08:45.726
+Check the original affected workload, fresh errors,
+and queues. Assess historical backlog separately.
+
+00:08:45.946 --> 00:08:51.490
+If checks fail, stop and preserve evidence. Stale callers may need investigation.
+
+00:08:51.710 --> 00:09:00.188
+An event provider name alone does not identify the service. If
+a caller needs recovery, follow a separately approved procedure.
+
+00:09:01.397 --> 00:09:06.909
+After the pilot passes, use Set with a
+reviewed list and the explicit restart options.
+
+00:09:07.129 --> 00:09:12.097
+A restarted remote rollout is serial and requires an interactive console.
+
+00:09:12.317 --> 00:09:18.223
+Validate each server, then enter the exact
+requested recovered statement before the next one.
+
+00:09:18.443 --> 00:09:25.844
+Compact output does not hide or skip that gate. Errors
+stop the run and unvisited targets remain Not Run.
+
+00:09:26.064 --> 00:09:33.880
+The old Fleet wrapper remains compatible, but its Apply still
+implies a restart. Use the new commands for new procedures.
+
+00:09:35.063 --> 00:09:42.231
+Zero can mean eligible detection, a preview, or a
+completed operation. It is not proof of recovery.
+
+00:09:42.451 --> 00:09:48.156
+One is an error. Ten means Search restart is still required, not a Windows reboot.
+
+00:09:48.376 --> 00:09:59.350
+Twenty means an identity or existing-rule skip needs review. A skipped-only
+run never claims restart pending. If a mixed file-only run actually stages
+
+00:09:59.350 --> 00:10:00.959
+rules, it returns ten.
+
+00:10:01.179 --> 00:10:08.089
+Preserve reports and the protected operation receipts.
+Partial failures are not automatically rolled back.
+
+00:10:08.309 --> 00:10:18.821
+Support escalation remains appropriate for uncertain partial operations or
+unstable restarted processes. Rollback still requires the owned receipt,
+
+00:10:18.821 --> 00:10:23.111
+unchanged identities, and actual Microsoft Support approval.
+
+00:10:24.313 --> 00:10:33.163
+The two point one source release passed three hundred twenty-one tests.
+The later repository archive cleanup passed three hundred twenty-six.
+
+00:10:33.383 --> 00:10:42.809
+Native lab checks exercised the installer input cases and confirmed that
+skipped targets no longer prevent later servers from being inspected.
+
+00:10:43.029 --> 00:10:53.246
+That is not a new workload-recovery pilot. Earlier EWS results did not
+certify Outlook, web access, historical backlog, or production load.
+
+00:10:53.466 --> 00:10:56.973
+Start with the current guide on main and the complete package.
+
+00:10:57.193 --> 00:11:04.963
+Prepare verified files, inspect, preview, pilot carefully,
+and expand only after the workload evidence passes.
