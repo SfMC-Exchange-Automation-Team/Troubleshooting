@@ -1,4 +1,4 @@
-EXCHANGE KOREAN RULES 2.2.0 - START HERE
+EXCHANGE KOREAN RULES 2.2.1 - START HERE
 
 Install now prepares/verifies payload beside Install-KoreanRules.ps1 after
 a successful portable build. From the SAME folder/computer, use Install,
@@ -88,7 +88,7 @@ PREVIEW REMEDIATION
 
 WHERE THE FILES ARE
   Browser download: your browser's Downloads folder, commonly
-    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.2.0-source.zip
+    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.2.1-source.zip
   This source download contains no vendor binaries.
   Downloading does not extract or deploy the kit. Use Show in folder in the
   browser's Downloads page, then extract the entire Exchange-KoreanRules folder.

@@ -104,7 +104,34 @@ Describe 'Console status columns and contextual colors' {
             Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { [string]$Object -like '*involve Microsoft Support if recovery is unclear*' }
         }
 
-        It 'includes actual and required DLL version size and SHA256 mismatches' {
+        It 'shows only mismatched build and DLL versions on separate console lines' {
+            $state = [pscustomobject]@{
+                Status='NotApplicableStop';ExchangeVersion='15.2.2562.46'
+                DllVersion='16.0.5056.1000';DllBytes=251232
+                DllSHA256='6BF643CEB094B50803423FB73F15BEE02C5CD30C981117E1DBDCDADD9864F26C'
+                ExistingRules=@()
+            }
+            Write-KBConsoleResult -Mode Detect -Result $state -Before $state -After $state
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+                [string]$Object -ceq ('  Exchange build: found 15.2.2562.46; required 15.2.2562.49' +
+                    [Environment]::NewLine + '  Korean DLL version: found 16.0.5056.1000; required 16.0.5194.1000') -and
+                $ForegroundColor -eq 'Yellow'
+            }
+            Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter {
+                [string]$Object -match 'SHA256|size \(bytes\)|251232|326544|6BF643CE'
+            }
+        }
+
+        It 'retains a clear console skip reason for a size-only or hash-only mismatch' -ForEach @(
+            @{ Bytes=99; Hash='1C6BD8E144BA677EBCC83323AE59DB3881918170F9B3A5189B44611558B92C61' }
+            @{ Bytes=326544; Hash='WRONG' }
+        ) {
+            $state = [pscustomobject]@{Status='NotApplicableStop';ExchangeVersion=$script:Spec.ExchangeVersion;DllVersion=$script:Spec.Dll.Version;DllBytes=$Bytes;DllSHA256=$Hash}
+            Get-KBApplicabilityReason $state -ForConsole | Should -Be 'The installation does not match the required Exchange/DLL identity; inspect the detailed detection report.'
+            Get-KBApplicabilityReason $state | Should -Match 'Korean DLL (size|SHA256)'
+        }
+
+        It 'includes actual and required DLL version size and SHA256 mismatches in reports' {
             $state = [pscustomobject]@{Status='NotApplicableStop';ExchangeVersion='15.2.2562.49';DllVersion='16.0.0.0';DllBytes=99;DllSHA256='WRONG';ExistingRules=@()}
             $reason = Get-KBApplicabilityReason $state
             $reason | Should -Match 'Korean DLL version: found 16.0.0.0; required 16.0.5194.1000'

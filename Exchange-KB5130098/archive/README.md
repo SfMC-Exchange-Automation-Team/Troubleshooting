@@ -16,7 +16,7 @@ caption, transcript or poster was deleted or changed during this move.
 - [Latest source kit and checksum](../downloads).
 - [Retained 2.1.0 walkthroughs and the 2.2.0 correction](../docs/Walkthroughs.md).
 
-The current release is **2.2.0**. After Install succeeds, Set in the same complete
+The current release is **2.2.1**. After Install succeeds, Set in the same complete
 writable kit/computer uses its adjacent payload without a manual handoff.
 Microsoft binaries generated there remain local-only, not source-download
 contents. The release root retains exactly three operator scripts.
@@ -37,7 +37,7 @@ Archives are immutable snapshots: their internal layouts and instructions
 reflect those versions. They are not instructions for the current release.
 The 2.1.0 source ZIP and sidecar are also preserved unchanged here; its historical
 compatibility wrappers still occupy their original locations inside that ZIP.
-The latest 2.2.0 source kit and checksum belong in the active
+The latest 2.2.1 source kit and checksum belong in the active
 [downloads folder](../downloads).
 
 ## Historical recordings

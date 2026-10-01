@@ -1,4 +1,8 @@
-Exchange Korean Rules | 2.2.0
+Exchange Korean Rules | 2.2.1
+
+2.2.1 console identity differences show only mismatched Exchange build and
+Korean DLL version, one per line, without byte counts or hashes. Size/hash
+checks remain mandatory; detailed identity differences remain in reports.
 
 2.2.0: After a successful portable build, Install prepares/verifies payload
 beside Install-KoreanRules.ps1. Set in that SAME folder/computer uses it by
@@ -208,7 +212,7 @@ Required payload:
 
 2. VERIFY AND STAGE
 
-Local build: Exchange-KoreanRules-2.2.0-deploy.zip
+Local build: Exchange-KoreanRules-2.2.1-deploy.zip
 Archive root: Exchange-KoreanRules
 Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
 Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
@@ -222,7 +226,7 @@ module. Missing components cause an explicit "package is incomplete" failure;
 restore the complete package, including private and the module, before retrying.
 Get needs no vendor payload but still requires the complete code package.
 
-Public source: downloads\Exchange-KoreanRules-2.2.0-source.zip
+Public source: downloads\Exchange-KoreanRules-2.2.1-source.zip
 Source also includes tests and legacy compatibility wrappers under
 archive\compatibility, not at the release root. Only the repository-only
 ArchiveLayout.Tests.ps1 is excluded because it requires historical assets.

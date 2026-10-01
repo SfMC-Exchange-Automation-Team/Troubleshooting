@@ -98,5 +98,5 @@ SRT/WebVTT files are supplied for reuse.
 
 Media is kept separate from the source ZIP. The 2.1.0 code archive and checksum
 are preserved unchanged in [archived downloads](../archive/downloads).
-The latest source kit is 2.2.0; this documentation correction does not regenerate
+The latest source kit is 2.2.1; this documentation correction does not regenerate
 media or move/remove files in existing operator working folders.

@@ -227,7 +227,7 @@ function Invoke-KBAutoElevation {
 }
 
 function Get-KBApplicabilityReason {
-    param($State)
+    param($State, [switch]$ForConsole)
     if ($null -eq $State) { return 'State was not observed.' }
     $status = [string](Get-KBReportValue $State 'Status')
     if ($status -eq 'NotApplicableStop') {
@@ -238,12 +238,15 @@ function Get-KBApplicabilityReason {
                 @{Name='Korean DLL size (bytes)';Property='DllBytes';Expected=$script:Spec.Dll.Bytes},
                 @{Name='Korean DLL SHA256';Property='DllSHA256';Expected=$script:Spec.Dll.SHA256}
             )) {
+                if ($ForConsole -and $check.Property -in @('DllBytes','DllSHA256')) { continue }
                 $actual = Get-KBReportValue $State $check.Property
                 if ($null -ne $actual -and [string]$actual -ne [string]$check.Expected) {
-                    '{0}: found {1}; required {2}.' -f $check.Name,$actual,$check.Expected
+                    $line = '{0}: found {1}; required {2}' -f $check.Name,$actual,$check.Expected
+                    if ($ForConsole) { $line } else { $line + '.' }
                 }
             }
         )
+        if ($ForConsole -and $differences.Count) { return $differences -join ([Environment]::NewLine + '  ') }
         if ($differences.Count) { return $differences -join ' ' }
         return 'The installation does not match the required Exchange/DLL identity; inspect the detailed detection report.'
     }
@@ -333,7 +336,7 @@ function Write-KBConsoleResult {
         & $writeState -Value $afterValue -IdentityMatch $afterIdentity
     }
     if ($null -ne $After -and $After.Status -in @('NotApplicableStop','RuleFilesPresentStop')) {
-        Write-Host ('  ' + (Get-KBApplicabilityReason -State $After)) -ForegroundColor Yellow
+        Write-Host ('  ' + (Get-KBApplicabilityReason -State $After -ForConsole)) -ForegroundColor Yellow
     }
     Write-Host ''
     Write-Host 'ACTION TAKEN' -ForegroundColor Cyan
@@ -1263,7 +1266,7 @@ function Invoke-KBFleet {
                 $record.Current = $record.Detection
                 if (-not $Quiet) {
                     if ($compact) {
-                        Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Current)) -ForegroundColor Yellow
+                        Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Current -ForConsole)) -ForegroundColor Yellow
                     } else {
                         Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $record.Current `
                             -Before $record.Detection -After $record.Current
@@ -1299,7 +1302,7 @@ function Invoke-KBFleet {
                 Write-KBConsoleResult -ComputerName $server -Mode $Mode -Result $display `
                     -Before $record.Detection -After $record.Current -StabilitySeconds $StabilitySeconds
             } elseif (-not $Quiet -and $Mode -eq 'Apply' -and $record.Status -in @('NotApplicableStop','RuleFilesPresentStop')) {
-                Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Result)) -ForegroundColor Yellow
+                Write-Host ("SKIPPED {0}: {1}" -f $server,(Get-KBApplicabilityReason $record.Result -ForConsole)) -ForegroundColor Yellow
             }
             if ($RestartSearch -and $record.Result.Status -eq 'RestartedWorkloadValidationRequired') {
                 $record.Status = 'AwaitingWorkloadValidation'
