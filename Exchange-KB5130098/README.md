@@ -1,14 +1,14 @@
 # Exchange Korean Rules: operator guide
 
-**Version 2.3.0 · Exchange Server administrators and change owners**
+**Version 2.3.1 · Exchange Server administrators and change owners**
 
 This is custom PowerShell automation of the workaround in the
 [Microsoft support article](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
 That article is source guidance, not the tool's identity. Re-read it before use.
 This tool is not a Microsoft-signed hotfix, security update, or permanent product fix.
 
-[Source and tests](downloads/Exchange-KoreanRules-2.3.0-source.zip) ·
-[Source SHA256](downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) ·
+[Complete kit with bundled rules](downloads/Exchange-KoreanRules-2.3.1.zip) ·
+[Kit SHA256](downloads/Exchange-KoreanRules-2.3.1.zip.sha256) ·
 [English / Hindi walkthroughs](docs/Walkthroughs.md) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
@@ -16,22 +16,22 @@ This tool is not a Microsoft-signed hotfix, security update, or permanent produc
 [Start-here checklist](00-START-HERE.txt)
 
 **Current files only:** the root contains the three recommended scripts;
-[`downloads`](downloads) contains only the latest source kit and checksum.
+[`downloads`](downloads) contains only the latest complete public kit and checksum.
 Superseded versions, old recordings and compatibility entry points are preserved
 in the [legacy archive](archive/README.md), not mixed into the active folders.
 The retained 2.1.0 walkthrough is available in English and Hindi below.
 
-> **2.3.0 preparation contract:** the private/local customer-ready deploy ZIP
-> includes the complete runtime and both verified BINs. Get and Set need no prior
-> Install when that bundled payload is complete and verified; Set still performs
-> its own checks. Bare Install verifies the adjacent payload read-only, without
-> downloads, administrator rights or directory creation. In a source-only kit
-> with no payload it shows help, without prompting or downloading.
-> Normal preparation writes only the adjacent `payload`; a second portable kit
-> and ZIP are created **only** with an explicit, new `-OutputDirectory`.
+> **2.3.1 public bundle:** the repository and complete public ZIP include both
+> exact, pinned Microsoft BINs under `payload`, with public inclusion explicitly
+> approved. No SQL media download or preparation is needed. Run Get, then Set
+> `-WhatIf` from the complete kit; Set automatically uses adjacent `payload` and
+> still performs its own checks. Install is optional: bare Install verifies the
+> bundled files read-only, without downloads, administrator rights or directory
+> creation. A second portable kit and ZIP are created **only** with an explicit,
+> new `-OutputDirectory`; there are no implicit downloads.
 
 > **Video correction:** the English/Hindi 2.1.0 media was **not regenerated** for
-> 2.3.0. Follow this written guide for bundled payload, optional Install,
+> 2.3.1. Follow this written guide for bundled payload, optional Install,
 > adjacent-only preparation and opt-in portable output. Its mandatory maintenance
 > flag is obsolete: `-MaintenanceWindowApproved` is an optional compatibility
 > no-op. Restart still requires explicit `-RestartSearch` in Set; plan an
@@ -75,8 +75,10 @@ files only; Set modifies eligible servers unless `-WhatIf` is supplied.
 
 See the [language downloads, captions and chapter index](docs/Walkthroughs.md).
 If GitHub shows a file page instead of a player, select **Download raw file**.
-The media is separate from the source ZIP. The archived 2.1.0 ZIP and checksum
-remain unchanged; 2.3.0 is the current source release, and 2.2.1 is archived.
+The media is separate from the public kit ZIP. The archived 2.1.0 ZIP and checksum
+remain unchanged; 2.3.1 is the current public bundle. The superseded
+[2.3.0 source ZIP](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
+[checksum](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are archived unchanged.
 The superseded [2.0.0 recording](archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
 is preserved in the archive, not mixed into the active language folders.
 
@@ -87,10 +89,11 @@ is preserved in the archive, not mixed into the active language folders.
   current written guide. Check the **version at the top** and the GitHub branch
   selector; changes on a topic branch do not update the repository's default
   `main` page until the pull request is merged.
-- **Download the source kit:** the ZIP is stored in this repository's
+- **Download the complete public kit:** the ZIP is stored in this repository's
   [`downloads` folder](downloads). A browser saves it to its configured download
   location, commonly `%USERPROFILE%\Downloads`; downloading does not extract it,
-  copy it to an Exchange server, or prepare the Microsoft rule files. Use the
+  or deploy it to an Exchange server. The two verified Microsoft rule files are
+  already included; no SQL media preparation is needed. Use the
   browser's Downloads page and **Show in folder** to locate the saved file.
 - **Extract the whole kit:** the archive's top-level folder is
   `Exchange-KoreanRules`. Keep its module and `private` directory with the three
@@ -120,18 +123,16 @@ required anywhere**; it remains an optional compatibility no-op for old commands
 not an approval record. Plan an appropriate operational window and obtain actual
 change approval. Rollback still requires Microsoft Support approval and its receipt.
 
-**Two package contracts:** the private/local customer-ready
-`Exchange-KoreanRules-2.3.0-deploy.zip` includes the complete runtime and the
-verified **56,132-byte** token BIN and **717,792-byte** complex BIN.
-The public GitHub `Exchange-KoreanRules-2.3.0-source.zip` remains **source-only**.
-Public redistribution approval could not be confirmed while the release owner
-was unavailable, so vendor payload is withheld from public publication pending
-confirmation. This does not assert that redistribution is illegal.
-Prepare a source kit locally from exact Microsoft media or verified rules.
-Exclude the local adjacent payload, SQL media and payload-bearing deploy ZIP
-from public source publication.
-The tool folder's `.gitignore` excludes `/payload/` from normal Git staging;
-do not force-add it or include it when preparing a source archive.
+**Approved public package:** `Exchange-KoreanRules-2.3.1.zip` contains the complete
+runtime, documentation, tests, archived compatibility wrappers and the verified
+**56,132-byte** token BIN and **717,792-byte** complex BIN. The user explicitly
+approved adding both pinned Microsoft files to the public repository.
+The payload allowlist tracks only `payload\ko.token.rule.bin` and
+`payload\ko.complex.rule.bin`; unrelated payload files remain ignored.
+No SQL EXE, MSI or DLL is included. The archived 2.3.0 source ZIP remains an
+unchanged source-only snapshot, not the current distribution contract.
+An explicit `-OutputDirectory` is only for exporting a separate portable runtime
+and deployment ZIP; it is not required to use the public kit.
 
 ## 2. Prerequisites and exact applicability
 
@@ -144,8 +145,8 @@ Explicit switches and inherited WhatIf/confirmation preferences survive that bou
 For local `-AsJson`, pipelines, remoting and unattended operation, start already elevated.
 On Set, `-NoAutoElevate` disables local relaunch, not the administrator requirement.
 Media preparation still requires elevation. Bare Install's bundled-payload
-verification and source-only help require no administrator rights and create no
-directories. State-command UAC behavior is unchanged. No execution-policy bypass
+verification and historical/custom source-only help require no administrator
+rights and create no directories. State-command UAC behavior is unchanged. No execution-policy bypass
 or automatic self-unblocking is supplied.
 Keep administrative code readable by the launching account but writable only by administrators.
 
@@ -174,24 +175,26 @@ Do not relax the manifest to accept a future build; obtain current Microsoft gui
 ## 3. Verify bundled payload or prepare it only when needed
 
 Start in the reviewed, complete kit containing `Install-KoreanRules.ps1`.
-The private/local deploy ZIP already contains both verified rules. **Neither Get
+The current public ZIP and repository already contain both verified rules. **Neither Get
 nor Set requires a prior Install run** with that complete verified payload.
-Get never needs payload; Set checks payload and target eligibility itself.
+Get never needs payload; Set automatically uses adjacent `payload` and checks
+payload and target eligibility itself. No SQL media preparation is needed.
 An optional bare Install verifies the existing adjacent pair **read-only** and
 exits `0`: no download, elevation, writes, work/output directories or prompts.
-In a public source-only kit with no payload, bare Install instead shows help and
-exits `0` without those side effects. Help is not a claim that payload is ready.
-An invalid or partial adjacent payload fails verification, with no fallback
-to help, download or another source.
-
 ```powershell
-# Optional verification in a complete deploy kit; help in a payload-free source kit:
+# Optional read-only verification of the bundled files:
 .\Install-KoreanRules.ps1
 .\Get-KoreanRulesState.ps1
 .\Set-KoreanRulesState.ps1 -WhatIf
 ```
 
-Only if payload needs preparation, choose **one** explicit source below.
+Only in a historical/custom source-only kit with no payload does bare Install
+show help and exit `0` without those side effects. Help is not a claim that
+payload is ready. An invalid or partial adjacent payload fails verification,
+with no fallback to help, download or another source.
+
+Only if fresh media extraction or payload preparation is needed, choose **one**
+explicit source below; it is not part of the normal public-kit workflow.
 Keep the kit writable for preparation, not for read-only verification.
 `-Download` is a fallback: it downloads approximately 749 MB of Microsoft media
 and extracts once locally, never installs SQL. Existing EXE extraction is also
@@ -326,10 +329,12 @@ The verified rules are:
 
 ## 4. Verify and stage the runtime
 
-The private/local customer-ready archive, or one created with explicit output,
-is **`Exchange-KoreanRules-2.3.0-deploy.zip`**, rooted at `Exchange-KoreanRules`.
-Default preparation does not create this archive. A deploy ZIP contains the
-complete runtime plus both verified BINs. Its **exactly three root `.ps1` entry points** are:
+The current public archive is **`Exchange-KoreanRules-2.3.1.zip`**, rooted at
+`Exchange-KoreanRules`, with its `.sha256` sidecar. It contains the complete
+runtime, documentation, tests, archived compatibility wrappers and both verified
+BINs. Install creates a separate portable runtime and ZIP only with explicit
+`-OutputDirectory`; default verification/preparation does not duplicate the kit.
+The public kit has **exactly three root `.ps1` entry points**:
 
 ```text
 Exchange-KoreanRules\
@@ -341,16 +346,20 @@ Exchange-KoreanRules\
   private\Invoke-KoreanRulesOperation.ps1
   docs\
   examples\
+  tests\
+  archive\compatibility\
   payload\
+    ko.token.rule.bin
+    ko.complex.rule.bin
 ```
 
 Supporting readmes/checksums are omitted from this layout. The private script is not an
-operator entry point. SQL media, SQL runtime libraries and a replacement DLL are not deployed.
-The published source ZIP also contains tests and legacy compatibility wrappers
+operator entry point. No SQL EXE, MSI or DLL is included or deployed.
+The public ZIP includes tests and legacy compatibility wrappers
 under `archive\compatibility`, not at the release root.
-Only the repository-only `ArchiveLayout.Tests.ps1` is excluded from source-kit
+Only the repository-only `ArchiveLayout.Tests.ps1` is excluded from public-kit
 tests because it requires historical repository assets.
-The current source kit uses the archived-wrapper layout described in the
+The current public kit uses the archived-wrapper layout described in the
 [archive index](archive/README.md); older ZIPs retain their original layouts.
 
 **Extract/copy the whole code package, not just a `.ps1` wrapper.** Get, Set and the legacy
@@ -370,11 +379,12 @@ Obtain the kit and expected checksum from an approved source and review their
 trustworthiness. Internet downloads can carry Mark of the Web (MOTW), the
 `Zone.Identifier` alternate data stream (ADS). After checksum/trust verification,
 **unblock the exact ZIP before extraction**, then extract into a fresh unique
-folder. Use the same procedure for the public source ZIP, substituting its name.
+folder. Use the same procedure for an explicitly exported portable ZIP with its
+own filename and trusted checksum.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Temp\Exchange-KoreanRules-2.3.0-deploy.zip'
+$zip = 'C:\Temp\Exchange-KoreanRules-2.3.1.zip'
 $record = (Get-Content -LiteralPath "$zip.sha256" -Raw).Trim()
 if ($record -notmatch '^(?<Hash>[A-Fa-f0-9]{64})\s{2}(?<Name>.+)$') {
     throw 'Malformed checksum record; obtain the approved build record.'
@@ -669,7 +679,7 @@ The [1.2.1 video](archive/media/1.2.1/Exchange-KB5130098-1.2.1-Walkthrough.mp4),
 They show older command names and detailed output, not the new three-command interface or
 4+ compact behavior. Their workstation-only, ComputerName-only and default-confirmation
 instructions are superseded by this [current written guide](README.md) and the
-[retained English and Hindi walkthroughs and their 2.3.0 corrections](docs/Walkthroughs.md).
+[retained English and Hindi walkthroughs and their 2.3.1 corrections](docs/Walkthroughs.md).
 The [1.0.1 recording](archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
 [1.0.1 source](archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
 [1.2.3 source](archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.

@@ -9,8 +9,8 @@ Describe 'Current repository and historical archive separation' {
             Should -Be @('Get-KoreanRulesState.ps1','Install-KoreanRules.ps1','Set-KoreanRulesState.ps1')
     }
 
-    It 'keeps only the latest source ZIP and checksum in active downloads' {
-        $name="Exchange-KoreanRules-$($script:version)-source.zip"
+    It 'keeps only the latest bundled ZIP and checksum in active downloads' {
+        $name="Exchange-KoreanRules-$($script:version).zip"
         @(Get-ChildItem -LiteralPath (Join-Path $script:root 'downloads') -File | Select-Object -ExpandProperty Name | Sort-Object) |
             Should -Be @($name,"$name.sha256")
     }

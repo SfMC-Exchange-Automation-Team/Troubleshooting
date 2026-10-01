@@ -1,17 +1,106 @@
 # Exchange Korean Rules: validation and operational limits
 
-## 2.3.0 contract and verification status
+## 2.3.1 public bundle and verification results
 
-The [2.3.0 operator guide](../README.md) describes the release contract.
-Verification results and their limits are recorded separately below:
+The [2.3.1 operator guide](../README.md) describes the current approved public
+bundle, not a new workload-recovery result:
+
+- The user explicitly approved adding both exact, pinned Microsoft rule BINs
+  to the public repository: `payload\ko.token.rule.bin` (**56,132 bytes**) and
+  `payload\ko.complex.rule.bin` (**717,792 bytes**). The payload allowlist tracks
+  these two files; unrelated payload files remain ignored.
+- The public [Exchange-KoreanRules-2.3.1.zip](../downloads/Exchange-KoreanRules-2.3.1.zip)
+  and [checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256) are the
+  validated release artifacts. The ZIP contains the complete runtime, docs, tests, archived
+  compatibility wrappers and payload, with no SQL EXE, MSI or DLL.
+  The [2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  and [checksum](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256)
+  are archived unchanged as historical source-only artifacts.
+- No SQL media preparation or Install run is needed. Get needs no payload;
+  Set automatically uses adjacent `payload` and retains its own checks.
+  Optional bare Install verifies both bundled files read-only, without
+  administrator rights, prompts, downloads, writes or directory creation.
+  No-payload help applies only to historical/custom source-only kits; invalid
+  or partial payload fails verification without fallback.
+- Explicit `-Download` remains a fallback for freshly extracted media; no
+  implicit downloads occur. Only an explicit, new `-OutputDirectory` requests
+  a separate portable runtime and ZIP. Default behavior does not duplicate
+  the kit.
+- Exact identity, no-overwrite, receipt, recovery and explicit `-RestartSearch`
+  behavior remain as in 2.3.0. `-MaintenanceWindowApproved` remains an optional
+  compatibility no-op, not a required gate or approval record.
+  The retained English/Hindi 2.1.0 media was not regenerated; use the
+  [written corrections](Walkthroughs.md).
+
+### Worktree and final bundled-archive verification
+
+On October 1, 2026, the parent release task reported these separate results:
+
+- **344 runtime/native tests passed** in the full worktree suite.
+- **344 tests passed** from a fresh extraction of the actual final bundled ZIP.
+- **Five repository-only archive-layout tests passed** separately. They are
+  excluded from the ZIP and are not part of either 344-test result.
+
+The runtime suite includes **three new real published-payload cases**.
+Source-only no-argument help remains covered using isolated payload-free
+fixtures, not the now-bundled repository.
+
+The initial archive-test harness imported both source and extracted modules.
+The private runner's isolation was corrected, then the entire archive suite
+passed. This was a test-harness isolation issue, not a runtime fault.
+
+The final ZIP has **28 entries: 27 manifest-covered files plus the manifest**.
+It includes the runtime, start-here checklist, packaged instructions, reporting
+guide, tests and archived compatibility wrappers, with **exactly two approved
+BINs and no EXE, MSI or DLL**. All manifest hashes, script parsing and the
+payload's exact pinned identities were verified.
+
+Final bundled ZIP SHA256:
+`AD2EFDD5546365143894144C7BE0082457CD6C43D8B1211F785FF4A84143EEBD`
+
+### Native actual-bundle checks
+
+- Bare Install verified the actual bundled files **read-only as a
+  non-administrator**, invoked from a **different current working directory**,
+  with **zero file changes**.
+- Remote Set with `-RestartSearch -WhatIf`, **without an explicit payload
+  argument**, returned **`Servers=0`** with **zero target connections**.
+  This verifies default-payload resolution and no-contact planning, not remote
+  inventory, Apply, an actual restart or workload recovery.
+
+### Guarded stable lab update and read-only verification
+
+The parent release task reported a successful guarded stable working-kit update
+from **2.3.0 to 2.3.1**, covering **146 manifest entries**. All **152 existing
+history files were preserved**. The existing payload was reused unchanged.
+Before/after checks found installed Exchange file identities and ACLs, the
+Native-directory ACL, service states/PIDs and NodeRunner identities unchanged.
+
+Read-only Get returned **exit 20, `RuleFilesPresentStop`**, the expected
+existing-rule review result. **No actual Apply, service restart, SQL-media
+download or SQL-media extraction occurred in the live lab.** These checks
+establish guarded kit delivery and read-only verification, not new workload
+recovery, a modifying rollout or a customer deployment.
+
+All 2.3.1 results above are attributed to the parent release task, not independent
+reruns by this documentation-only task. This evidence update changes only this
+validation record; the source-bundled docs and final immutable ZIP remain
+unchanged. It does not establish publication to GitHub `main`; delivery is a
+separate step. Private evidence paths and hostnames are omitted.
+The 2.3.0 results below remain historical evidence, not additional 2.3.1 passes.
+
+## Historical 2.3.0 contract and verification status
+
+The following contract and parent-reported results belong to 2.3.0.
+Its source-only public distribution preceded the explicit approval for the
+current 2.3.1 bundle; it is not the current publication boundary.
 
 - The private/local customer-ready deploy ZIP contains the complete runtime plus
   verified `ko.token.rule.bin` (**56,132 bytes**) and `ko.complex.rule.bin`
   (**717,792 bytes**), with the pinned SHA256 identities in the operator guide.
-  The public [2.3.0 source ZIP](../downloads/Exchange-KoreanRules-2.3.0-source.zip)
-  remains source-only; 2.2.1 is archived. Public redistribution approval could
-  not be confirmed while the release owner was unavailable, so no vendor payload
-  is included in public distribution pending confirmation.
+  The public [2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  was produced without vendor payload before public inclusion was explicitly
+  approved. That source-only archive and its checksum remain unchanged.
 - Bare Install verifies existing bundled adjacent payload read-only: no
   downloads, administrator rights, writes, work/output directories or prompts.
   In a source-only kit with no payload it shows help without those side effects.
@@ -73,7 +162,7 @@ built and the suite run from the **extracted final source ZIP passed 341 tests**
 This is separate from the earlier runtime/native result, not a combined total.
 The **five additional archive-layout tests also passed**. Those five cases are
 separate from, and not included in, either 341-test result.
-Public source packaging continues to exclude BINs pending redistribution approval.
+That 2.3.0 public source archive excluded BINs.
 
 The private/local customer deploy ZIP is **98,196 bytes** (under 100 KB compressed)
 and contains **exactly 12 entries**, including the complete runtime, its manifest
@@ -135,10 +224,10 @@ Native checks used the **actual staged kit**:
 kit delivery and bounded native verification/previews, not new workload recovery,
 a modifying rollout or an extension of the historical workload evidence below.
 
-All new results above are attributed to the parent release task, not independent
-reruns by this documentation-only task. This update changed only this validation
-record; it did not rebuild or modify the final archives or other packaged files.
-No final archive hash was supplied or is invented here.
+All 2.3.0 results in this section are attributed to the parent release task,
+not independent documentation-task reruns. The documentation-only follow-up
+recorded those results without rebuilding or modifying the final 2.3.0 archives
+or other packaged files. No final 2.3.0 archive hash was supplied or is invented here.
 
 All evidence below belongs to its named historical release. Older default
 portable paths, preparation requirements and maintenance gates are retained as
@@ -176,8 +265,8 @@ In 2.2.0, portable output defaulted to
 `DefaultPayloadDirectory` identifies the adjacent copy. Explicit Set payload
 overrides take precedence, with no hidden fallback, latest-folder scan or
 persisted global path. Downloads, Apply and restarts are not implicit.
-Generated Microsoft binaries, including the adjacent source copy, stay local
-and are excluded from source publication.
+For that 2.2.0 source-only release, generated Microsoft binaries, including the
+adjacent source copy, stayed local and were excluded from source publication.
 
 The 2.2.0 verification results below are distinct from historical evidence,
 which belongs to its named releases. The 2.1.0 source ZIP and sidecar are
@@ -329,7 +418,7 @@ layout and checksum. No files were removed from an operator or lab working folde
 - **2.1.0 final offline worktree validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 independent source-archive validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 stable-folder/native lab verification:** September 30, 2026; **7 cases passed**.
-- **Current operator interface:** 2.3.0, with release-specific verification recorded above; see the [written guide](../README.md).
+- **Current operator interface:** 2.3.1, with parent-reported worktree, final-archive and bounded lab verification recorded above; see the [written guide](../README.md).
 
 This separates release-specific offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
@@ -410,7 +499,7 @@ verification. This is input guidance, not a live extraction result.
 The final 2.1.0 worktree suite passed **321 of 321 tests** on September 30, 2026.
 The independent archive and limited native lab results are scoped separately
 below. Historical results belong to their named releases, not automatically to
-2.1.0. Public distribution remains source-only, without vendor binaries. The
+2.1.0. That 2.1.0 public distribution was source-only, without vendor binaries. The
 retained 2.0.0 media predates these installer/input and skip-guidance changes;
 use the current written guide rather than treating the recording as current
 validation.
@@ -520,7 +609,7 @@ After the incomplete-package guards were added,
 [`Exchange-KoreanRules-2.0.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.0.0-source.zip)
 independently passed **281 of 281 tests** when tested from the final archive.
 All **21 manifest-covered files** were hash-verified, and the source archive
-contains **no vendor binaries**. No payload-bearing deployment archive is
+contains **no vendor binaries**. No payload-bearing 2.0.0 deployment archive was
 distributed publicly.
 
 The actual generated runtime's `Get-KoreanRulesState.ps1` was
@@ -726,16 +815,19 @@ Its administrator must validate timestamps, extraction, duplicates and index pol
 
 ## Public distribution and operational boundaries
 
-The public repository contains source, offline tests, instructions and finished
-retained/historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
-Public redistribution approval is pending confirmation because the release owner
-was unavailable. The private/local customer-ready deploy ZIP includes both
-verified BINs and the complete runtime. The 2.3.0 archive and staged-kit results
-above establish their stated checks, not production workload recovery.
-For a source-only kit, obtain verified payload using `Install-KoreanRules.ps1` and the
+The public repository contains source, offline tests, instructions, finished
+retained/historical media and the two explicitly approved, pinned Microsoft
+rule BINs. The current 2.3.1 public ZIP includes the complete runtime, docs,
+tests, archived compatibility wrappers and those BINs; it includes no SQL
+EXE, MSI or DLL. Only the two named payload files are allowlisted for tracking;
+unrelated payload files remain ignored.
+The 2.3.0 archive and staged-kit results above establish only their historical
+checks, not 2.3.1 verification or production workload recovery.
+For a historical/custom source-only kit, or when fresh media extraction is
+needed, use the explicit Install inputs described in the
+[operator guide](../README.md) and review the
 [Microsoft source guidance](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
-Keep populated adjacent payload and private/local deploy ZIPs out of public
-source publication pending approval confirmation.
+Preparation is not required for the complete current public bundle.
 
 Keep exact applicability, no-overwrite creation, protected incremental receipts,
 inherited-read checks, operation serialization, bounded restart observation and

@@ -963,10 +963,14 @@ exit $LASTEXITCODE
         $result.Output | Should -Not -Match 'Default payload ready|Downloading'
     }
 
-    It 'runs with no arguments without prompting downloading or requiring elevation' -ForEach @(
+    It 'shows source-only help without prompting downloading or requiring elevation' -ForEach @(
         @{Script='Install-KoreanRules.ps1'},@{Script='Build-KB5130098Package.ps1'}
     ) {
-        $path=Get-TestPackageFile $Script
+        $sourceOnly=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        Copy-Item -LiteralPath $script:builderRoot -Destination $sourceOnly -Recurse
+        $payload=Join-Path $sourceOnly 'payload'
+        if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload -Recurse -Force }
+        $path=Join-Path $sourceOnly $Script
         $result=Invoke-NativeFixture -Arguments ('-File "{0}"' -f $path)
         $result.ExitCode | Should -Be 0
         $result.Error | Should -BeNullOrEmpty
@@ -977,7 +981,11 @@ exit $LASTEXITCODE
 
     It 'rejects an export request without a bundled or explicit source' {
         $output=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $path=Get-TestPackageFile 'Install-KoreanRules.ps1'
+        $sourceOnly=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        Copy-Item -LiteralPath $script:builderRoot -Destination $sourceOnly -Recurse
+        $payload=Join-Path $sourceOnly 'payload'
+        if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload -Recurse -Force }
+        $path=Join-Path $sourceOnly 'Install-KoreanRules.ps1'
         $result=Invoke-NativeFixture -Arguments ('-File "{0}" -OutputDirectory "{1}"' -f $path,$output)
         $result.ExitCode | Should -Be 1
         $result.Error | Should -Match 'no bundled payload to export'
