@@ -5,10 +5,10 @@ Compatibility entry point for the former fleet workflow.
 .DESCRIPTION
 Prefer Get-KoreanRulesState.ps1 or Set-KoreanRulesState.ps1 for new usage.
 For compatibility, this entry point's Apply still includes a Search restart
-and requires maintenance approval and recovery attestation after every server.
+and requires recovery attestation after every server.
 Reports default to C:\Temp\KB5130098-Reports on the calling computer.
 Standard PowerShell confirmation is opt-in with -Confirm at the default
-ConfirmPreference; maintenance approval and recovery attestation still apply.
+ConfirmPreference. MaintenanceWindowApproved is accepted only for compatibility.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', PositionalBinding=$false)]
 param(

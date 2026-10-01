@@ -4,7 +4,7 @@
 Shared implementation for the Korean Rules state commands.
 .DESCRIPTION
 No Exchange changes occur in Detect mode. Apply never overwrites existing rules.
-Restart is opt-in and requires an approved maintenance window. Workload validation
+Restart is opt-in; schedule it appropriately. Workload validation
 is always manual. Local interactive runs can request UAC elevation. Human-readable
 status/action output is the default, with before/current comparisons for Apply.
 -AsJson preserves machine output.

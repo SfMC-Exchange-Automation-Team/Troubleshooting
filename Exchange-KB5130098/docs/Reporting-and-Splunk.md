@@ -2,20 +2,62 @@
 
 This guide applies to `Get-KoreanRulesState.ps1` (Detect only) and
 `Set-KoreanRulesState.ps1` (Apply by default; `-Rollback` for local, receipt-bound
-rollback). See the [2.2.0 operator guide](../README.md) for prerequisites and
+rollback). See the [2.3.0 operator guide](../README.md) for prerequisites and
 approval/recovery gates. `Install-KoreanRules.ps1` prepares the verified payload
-and runtime; its build-result object is not a server-state report.
+and optionally a portable runtime; its preparation-result object is not a
+server-state report.
 
-After a successful portable build, Install prepares/verifies `payload` beside
-itself. From the same complete writable kit on the same computer, the normal flow
-is `.\Install-KoreanRules.ps1 -Download` (or existing media/rules), then
-`.\Get-KoreanRulesState.ps1`, then `.\Set-KoreanRulesState.ps1 -WhatIf`.
-No `$build` capture or payload handoff is required. Optional build-result capture
-still returns the portable `PayloadDirectory`; `DefaultPayloadDirectory` names
-the adjacent copy. An explicit Set `-PayloadDirectory` takes precedence, with
-errors reported rather than hidden. None of this authorizes Apply or restart.
-The retained 2.1.0 videos' manual payload handoff is superseded; see the
-[walkthrough correction](Walkthroughs.md).
+The private/local 2.3.0 customer-ready deploy ZIP contains the complete runtime
+and both verified BINs: token **56,132 bytes**, complex **717,792 bytes**.
+Get/Set require no prior Install with complete verified bundled payload; Set
+still checks for itself. Bare Install verifies adjacent payload read-only with
+no downloads, administrator rights, writes, directories or prompts. A public
+source-only kit with no payload instead shows help without those side effects.
+An invalid or partial adjacent payload fails verification with no fallback.
+Public download: [2.3.0 source ZIP](../downloads/Exchange-KoreanRules-2.3.0-source.zip);
+2.2.1 is [archived](../archive/README.md). Public redistribution approval could
+not be confirmed while the release owner was unavailable, so public GitHub
+distribution remains source-only pending confirmation.
+
+Use Get, then Set `-WhatIf` from the same complete kit. If preparation is needed,
+explicit `-Download` downloads/extracts Microsoft media once locally, never
+installs SQL; an existing EXE or verified BIN input is also supported. Default
+preparation writes only adjacent `payload`, not a second kit, ZIP or default
+`KoreanRules-Ready` directory. BIN input creates no empty work directory.
+Only media uses unique `WorkRoot` extraction/log directories for collision
+safety; these are intentionally retained, not automatically removed along with
+old user directories. Explicit `-OutputDirectory` (second positional argument)
+requests a portable expanded kit plus ZIP and refuses existing folders.
+With no source/download arguments, explicit output uses bundled payload.
+If bundled payload is absent, that output request fails with an error, not
+silent help or an automatic download; supply a verified source or explicitly
+choose `-Download`.
+
+| Install result | Default preparation/verification | Explicit new `-OutputDirectory` |
+|---|---|---|
+| `Package`, `SHA256` | Both `$null`; no ZIP | Generated ZIP path and hash |
+| `ExpandedPackage` | Current invoked kit | Generated portable runtime |
+| `PayloadDirectory` | Same adjacent path as `DefaultPayloadDirectory` | Portable runtime's payload |
+| `DefaultPayloadDirectory` | Verified adjacent `payload` | Original kit's verified adjacent `payload` |
+
+No `$build` capture or payload handoff is needed. An explicit Set
+`-PayloadDirectory` takes precedence, with errors reported rather than hidden.
+None of this authorizes Apply or restart. `-MaintenanceWindowApproved` is an
+optional compatibility no-op, not required anywhere or an approval record.
+Set still requires explicit `-RestartSearch`; plan an operational window.
+Rollback stays Support-approved and receipt-bound; restarted remote rollout
+stays serial with required per-server workload recovery attestation.
+
+Follow the [trust/MOTW procedure](../README.md#trust-mark-of-the-web-and-extraction):
+verify the approved source/checksum, unblock the exact ZIP before fresh unique
+extraction, or review and manually unblock only the dedicated extracted kit's
+scripts/modules/manifests, including `private`. Unblocking the ZIP later does
+not clear extracted file ADS. This is not self-unblocking or a policy bypass;
+UAC, publisher trust, AllSigned, GPO and WDAC remain distinct and effective.
+`Get-ExecutionPolicy -List` is read-only, and no removal of all prompts is promised.
+The retained 2.1.0 videos were not regenerated; their payload, default portable
+output and mandatory maintenance-flag guidance is superseded by the
+[2.3.0 walkthrough corrections](Walkthroughs.md).
 
 ## Why keep JSON if CSV is easier to read?
 

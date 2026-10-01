@@ -1,6 +1,150 @@
 # Exchange Korean Rules: validation and operational limits
 
-## 2.2.1 console identity formatting
+## 2.3.0 contract and verification status
+
+The [2.3.0 operator guide](../README.md) describes the release contract.
+Verification results and their limits are recorded separately below:
+
+- The private/local customer-ready deploy ZIP contains the complete runtime plus
+  verified `ko.token.rule.bin` (**56,132 bytes**) and `ko.complex.rule.bin`
+  (**717,792 bytes**), with the pinned SHA256 identities in the operator guide.
+  The public [2.3.0 source ZIP](../downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  remains source-only; 2.2.1 is archived. Public redistribution approval could
+  not be confirmed while the release owner was unavailable, so no vendor payload
+  is included in public distribution pending confirmation.
+- Bare Install verifies existing bundled adjacent payload read-only: no
+  downloads, administrator rights, writes, work/output directories or prompts.
+  In a source-only kit with no payload it shows help without those side effects.
+  Invalid or partial adjacent payload fails verification with no fallback.
+  Get/Set need no Install with complete verified bundled payload; Get never
+  needs payload and Set retains its own payload/eligibility checks.
+- Default preparation writes only adjacent `payload`, not a second kit, ZIP or
+  default `KoreanRules-Ready` directory. BIN input creates no empty work directory.
+  `Package` and `SHA256` are null, `ExpandedPackage` is the current invoked kit,
+  and `PayloadDirectory` equals adjacent `DefaultPayloadDirectory`.
+- Explicit `-OutputDirectory` (second positional argument) requests a portable
+  expanded kit plus ZIP, refusing existing folders. With no source/download
+  arguments it uses bundled payload. If payload is absent, that explicit output
+  request fails with an error rather than silently showing help or downloading;
+  supply a verified source or explicitly choose `-Download`.
+  It preserves portable ZIP/hash/runtime/
+  payload return values; `DefaultPayloadDirectory` remains the original adjacent
+  payload.
+- Explicit `-Download` is a fallback that downloads/extracts once locally, never
+  installs SQL. Existing EXE extraction is supported. Only media uses unique
+  `WorkRoot` extraction/log directories for collision safety; those diagnostics
+  are retained intentionally, even on success. Old user directories are never
+  automatically deleted.
+- `-MaintenanceWindowApproved` is not required anywhere and remains only an
+  optional compatibility no-op. Current Set restart still needs explicit
+  `-RestartSearch`. Operational window advice remains; rollback stays
+  Support-approved, local and receipt-bound; restarted remote rollout stays
+  serial with required per-server workload recovery attestation. UAC is unchanged.
+- The [trust/MOTW procedure](../README.md#trust-mark-of-the-web-and-extraction)
+  requires approved-source/checksum verification and exact-ZIP unblocking before
+  fresh unique extraction. Unblocking the ZIP later does not clear extracted
+  ADS. Manual unblocking is only after review, scoped to the dedicated package's
+  `.ps1`/`.psm1`/`.psd1` files including `private`, not a shared tree.
+  No self-unblock or policy bypass is added. UAC, publisher trust, AllSigned,
+  GPO and WDAC are distinct; no guarantee of removing every prompt is made.
+  `Get-ExecutionPolicy -List` is a read-only diagnostic, not a policy change.
+- The English/Hindi 2.1.0 videos and companions were not regenerated.
+  Their mandatory maintenance flag, default portable output and payload guidance
+  are superseded by the [current written corrections](Walkthroughs.md).
+
+### Runtime/native results reported by the parent release task
+
+On October 1, 2026, the parent release task reported **341 runtime/native tests
+passed**. Reported coverage includes bundled no-argument read-only verification
+without administrator rights or directory creation; invalid/partial payload
+failure without fallback; and an error, not help, for an explicit output request
+without bundled payload. Paired-quote and positional input handling remains intact.
+
+Media-path tests use **mocked media** to exercise explicit `-Download` and existing
+media inputs, both for default adjacent preparation and optional portable output.
+They are not evidence of an actual media download/extraction or live lab operation.
+The parent initially confirmed that the real, pinned BIN pair was verified and
+available. Final archive results are recorded separately below.
+
+### Final source and private customer archive results
+
+On October 1, 2026, the parent release task reported that the final archives were
+built and the suite run from the **extracted final source ZIP passed 341 tests**.
+This is separate from the earlier runtime/native result, not a combined total.
+The **five additional archive-layout tests also passed**. Those five cases are
+separate from, and not included in, either 341-test result.
+Public source packaging continues to exclude BINs pending redistribution approval.
+
+The private/local customer deploy ZIP is **98,196 bytes** (under 100 KB compressed)
+and contains **exactly 12 entries**, including the complete runtime, its manifest
+and both verified BINs. Compressed archive size is not the uncompressed payload
+size: the token and complex rules remain **56,132** and **717,792 bytes** respectively,
+with their pinned identities.
+
+Native checks of the actual customer kit established:
+
+- Bare Install succeeded on a **non-administrator workstation**, with **zero
+  file changes**. This exercises the packaged read-only bundled-payload path,
+  not media extraction or Exchange preparation.
+- A native Set preview using `-RestartSearch -WhatIf -AsJson`, **without**
+  `-MaintenanceWindowApproved`, and reserved example target `example.invalid`
+  made **zero target contacts**. This is no-contact planning, not remote
+  inventory, Apply, an actual restart or recovery attestation.
+
+### Controlled Internet-zone and unblocking reproduction
+
+The parent release task also reported these checks against a fresh extraction
+of the **actual customer ZIP**, not a substitute script-only fixture:
+
+1. An unsigned Internet-zone execution failure was reproduced using
+   **child-process-only `RemoteSigned`**. No machine execution policy was changed.
+2. Unblocking the ZIP **after extraction** did **not** clear the extracted files'
+   existing `Zone.Identifier` alternate data streams.
+3. Package-scoped `Unblock-File` across `.ps1`, `.psm1` and `.psd1` files in the
+   dedicated kit, including `private`, removed those ADS. Native bare Install
+   then succeeded, and **all script byte hashes were preserved**.
+
+This controlled reproduction supports the documented exact-ZIP-before-extraction
+and reviewed, package-scoped unblocking guidance. It does **not** establish the
+cause of a particular customer's prompt or guarantee removal of every prompt.
+MOTW, UAC consent, publisher trust, AllSigned, GPO and WDAC remain distinct
+controls; these checks did not add self-unblocking or a policy bypass.
+
+### Guarded stable lab update and native staged-kit checks
+
+The parent release task reported that the guarded stable lab working-kit update
+from **2.2.1 to 2.3.0 passed**, covering **141 manifest entries**. Before/after
+checks found installed Exchange file hashes and ACLs, the Native-directory ACL,
+service states/PIDs and NodeRunner identities unchanged. All **146 existing
+history files were preserved**. Private paths and hostnames are omitted.
+
+Native checks used the **actual staged kit**:
+
+- Bare Install from an **unrelated current working directory** succeeded without
+  downloading, extracting or creating **any new directories**. Recursive
+  before/after snapshots covered the kit and the `KoreanRules-Ready` and
+  `KoreanRules-Build` locations, not just the adjacent payload directory.
+- Local Set with `-RestartSearch -WhatIf -AsJson`, without
+  `-MaintenanceWindowApproved`, returned **exit 20, `RuleFilesPresentStop`**.
+  This was the expected existing-rule review result, not an Apply failure.
+- Remote Set with the same switches, also without the maintenance switch,
+  targeted a separate lab server and returned **exit 0, `Servers=0`**, with
+  **zero target contacts**. This was no-contact planning, not remote inventory.
+
+**No actual Apply or service restart occurred.** These results establish guarded
+kit delivery and bounded native verification/previews, not new workload recovery,
+a modifying rollout or an extension of the historical workload evidence below.
+
+All new results above are attributed to the parent release task, not independent
+reruns by this documentation-only task. This update changed only this validation
+record; it did not rebuild or modify the final archives or other packaged files.
+No final archive hash was supplied or is invented here.
+
+All evidence below belongs to its named historical release. Older default
+portable paths, preparation requirements and maintenance gates are retained as
+historical evidence, not current instructions.
+
+## Historical 2.2.1 console identity formatting
 
 The console now lists mismatched Exchange build and Korean DLL version on
 separate lines without trailing periods, byte counts or hashes. Compact fleet
@@ -15,17 +159,18 @@ fallbacks and retained report details. The **five repository-only archive layout
 tests also passed**. This is a presentation change, not a new Apply or workload
 recovery validation.
 
-## 2.2.0 payload-default contract and evidence boundary
+## Historical 2.2.0 payload-default contract and evidence boundary
 
-The current [operator guide](../README.md) documents connected defaults: after
-a successful portable build, Install prepares/verifies `payload` beside the
-invoked `Install-KoreanRules.ps1`. Set from that same complete writable kit and
-computer uses the adjacent payload without `$build` capture or an override.
+That release documented connected defaults: after a successful portable build,
+Install prepared/verified `payload` beside the invoked `Install-KoreanRules.ps1`.
+Set from that same complete writable kit and computer used the adjacent payload
+without `$build` capture or an override. The default portable build described
+in this historical section is superseded by 2.3.0 adjacent-only preparation.
 Existing matching exact BINs are reused without rewriting; a missing sibling
 is added only after existing files verify. Mismatches, refused paths and write
 failures remain hard errors. Install never writes Exchange Native.
 
-Portable output still defaults to
+In 2.2.0, portable output defaulted to
 `C:\Temp\KoreanRules-Ready\<unique-id>\Exchange-KoreanRules`, with an optional
 `OutputDirectory` override. Returned `PayloadDirectory` remains portable;
 `DefaultPayloadDirectory` identifies the adjacent copy. Explicit Set payload
@@ -184,7 +329,7 @@ layout and checksum. No files were removed from an operator or lab working folde
 - **2.1.0 final offline worktree validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 independent source-archive validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 stable-folder/native lab verification:** September 30, 2026; **7 cases passed**.
-- **Current operator interface:** 2.2.1; see the [written guide](../README.md).
+- **Current operator interface:** 2.3.0, with release-specific verification recorded above; see the [written guide](../README.md).
 
 This separates release-specific offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
@@ -202,7 +347,7 @@ Use these names for current operations:
 
 | Command | Scope |
 |---|---|
-| `Install-KoreanRules.ps1` | Build verified portable runtime and prepare/verify adjacent payload; no SQL installation or Exchange Apply |
+| `Install-KoreanRules.ps1` | Verify/prepare adjacent payload; portable runtime/ZIP only with explicit output; no SQL installation or Exchange Apply |
 | `Get-KoreanRulesState.ps1` | Detect-only local, explicit-name or CSV inventory; no payload required |
 | `Set-KoreanRulesState.ps1` | Apply by default; `-Rollback` is local and receipt-bound |
 
@@ -219,7 +364,9 @@ or use `$report | Format-List *` for all fields.
 These interface checks are not proof that a large modifying
 rollout or its workload recovery has been exercised. Standard confirmation is
 still opt-in at the default preference; exact identity, no-overwrite, explicit
-restart, maintenance approval and per-server recovery gates remain separate.
+restart and per-server recovery gates remain separate. Operational window
+planning is still advised; `-MaintenanceWindowApproved` is an optional
+compatibility no-op, not a current gate.
 
 The repository folder, `C:\Temp\KB5130098-Reports`, receipts beneath
 `%ProgramData%\Exchange-KB5130098` and established stable lab folders retain their
@@ -565,9 +712,9 @@ summaries. It is not a recording of a fresh deployment or a 2.0.0 demonstration.
 It shows old names and detailed output, not the three-command interface or 4+
 compact behavior. Former workstation-only, ComputerName-only and default-prompt
 instructions are also superseded. Use the [current written guide](../README.md)
-and [reporting contract](Reporting-and-Splunk.md). A separate current
-[2.0.0 walkthrough](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) now covers the
-three-command interface as it existed in 2.0.0. The current bilingual
+and [reporting contract](Reporting-and-Splunk.md). The historical
+[2.0.0 walkthrough](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) covers the
+three-command interface as it existed in 2.0.0. The retained bilingual
 [2.1.0 walkthroughs](Walkthroughs.md) additionally cover installer usability and expected skips.
 The [1.0.1 recording](../archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
@@ -580,10 +727,15 @@ Its administrator must validate timestamps, extraction, duplicates and index pol
 ## Public distribution and operational boundaries
 
 The public repository contains source, offline tests, instructions and finished
-current/historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
-Obtain verified payload using `Install-KoreanRules.ps1` and the
+retained/historical media, not Microsoft rule binaries, SQL media or payload-bearing ZIPs.
+Public redistribution approval is pending confirmation because the release owner
+was unavailable. The private/local customer-ready deploy ZIP includes both
+verified BINs and the complete runtime. The 2.3.0 archive and staged-kit results
+above establish their stated checks, not production workload recovery.
+For a source-only kit, obtain verified payload using `Install-KoreanRules.ps1` and the
 [Microsoft source guidance](https://support.microsoft.com/en-us/servicing/exchange/server/update/2026/5130098).
-Review licensing before distributing a generated deployment package.
+Keep populated adjacent payload and private/local deploy ZIPs out of public
+source publication pending approval confirmation.
 
 Keep exact applicability, no-overwrite creation, protected incremental receipts,
 inherited-read checks, operation serialization, bounded restart observation and

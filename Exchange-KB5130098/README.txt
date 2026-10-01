@@ -1,20 +1,24 @@
-Exchange Korean Rules | 2.2.1
+Exchange Korean Rules | 2.3.0
 
-2.2.1 console identity differences show only mismatched Exchange build and
+Console identity differences show only mismatched Exchange build and
 Korean DLL version, one per line, without byte counts or hashes. Size/hash
 checks remain mandatory; detailed identity differences remain in reports.
 
-2.2.0: After a successful portable build, Install prepares/verifies payload
-beside Install-KoreanRules.ps1. Set in that SAME folder/computer uses it by
-default; no $build capture or PayloadDirectory handoff is required. Keep the
-complete kit writable. No implicit download, Exchange Apply or restart.
-VIDEO CORRECTION: retained English/Hindi 2.1.0 media was not regenerated.
-Its manual payload-handoff section is superseded by these 2.2.0 defaults.
+2.3.0: The private/local customer-ready deploy ZIP contains the complete
+runtime and both verified BINs. Get/Set need no Install when bundled payload
+is complete and verified; Set still checks for itself. Bare Install verifies
+that adjacent payload read-only, with no download, admin requirement, writes,
+directories or prompts. A source-only kit with no payload instead shows help.
+Normal preparation writes only adjacent payload. Only explicit OutputDirectory
+requests a portable expanded kit and ZIP; it must name a NEW directory.
+Public GitHub distribution stays source-only pending confirmation of public
+redistribution approval; the release owner was unavailable to confirm it.
 
-2.1.0: Install with no arguments prints usage and exits 0 without prompts,
-download, elevation or file writes. Source first; optional NEW output second.
-Get/Set accept server names first; CSV still requires -CsvPath. Routine skips
-and input errors need review/correction, not default Support escalation.
+VIDEO CORRECTION: retained English/Hindi 2.1.0 media was not regenerated for
+2.3.0. Its mandatory maintenance flag, default portable outputs and manual
+payload handoff are superseded. MaintenanceWindowApproved is now an optional
+compatibility no-op, not required anywhere. RestartSearch remains explicit;
+operational window planning, Support-approved rollback and recovery checks remain.
 
 2.0.1: Existing rules and incompatible identities are yellow skips, not fatal
 Apply errors. Fleet Set records them and continues to inspect the remaining
@@ -37,25 +41,30 @@ Historical evidence and limits: docs\Lab-Validation.md
 
 THREE RECOMMENDED COMMANDS
 
-Install-KoreanRules.ps1    Build runtime and prepare/verify adjacent payload.
+Install-KoreanRules.ps1    Verify/prepare adjacent payload; portable output only
+                          when explicitly requested with OutputDirectory.
                           NOT SQL installation; NOT applying rules to Exchange.
 Get-KoreanRulesState.ps1   Detect only: local, -ComputerName, or -CsvPath.
 Set-KoreanRulesState.ps1   Apply by default; -Rollback is receipt-bound/local.
 
-Safe order: prepare, verify, Get, Set -WhatIf, approved pilot, actual workload
-checks, then the next server. Get does not require payload files. Set never
-infers restart: select -RestartSearch and assert -MaintenanceWindowApproved.
+Safe order: verify trusted kit, prepare only if needed, Get, Set -WhatIf,
+approved pilot, actual workload checks, then the next server.
+Get does not require payload files. Set never infers restart: select
+-RestartSearch. Plan an operational window and obtain actual change approval.
+-MaintenanceWindowApproved is an optional compatibility no-op, not approval.
 
 PREREQUISITES AND EXACT IDENTITY
 
-Use 64-bit Windows PowerShell 5.1. Actual installer preparation requires
-elevation; its no-argument usage display does not. Local
+Use 64-bit Windows PowerShell 5.1. Use an elevated session for media/file-writing
+preparation; bare Install's bundled verification or source-only help needs no
+administrator rights and creates no directories. Local
 interactive state commands can request normal UAC and preserve switches,
 WhatIf and confirmation preferences. Their private data-only handoff returns
 exit/report data to the invoking session and is removed afterward.
 Declined elevation is an error. For local JSON, pipelines, remoting and
 unattended operation, start elevated. Set's -NoAutoElevate disables relaunch;
-it does not bypass administrator checks. No execution-policy bypass is used.
+it does not bypass administrator checks. State-command UAC is unchanged.
+No execution-policy bypass or automatic self-unblocking is used.
 Keep administrative code readable by its initial caller but not world-writable.
 
 Remote operations require existing administrative Kerberos/WinRM access to a
@@ -83,20 +92,29 @@ repair-by-reapply is supported. Eligibility alone does not establish symptoms.
 
 1. PREPARE THE VERIFIED PAYLOAD
 
-From the source folder, show usage/examples without side effects:
+From the reviewed complete deploy kit, optionally verify bundled payload:
 
   .\Install-KoreanRules.ps1
 
-This exits 0 without prompting, downloading, elevating or writing files.
-For preparation choose ONE input in elevated Windows PowerShell. Download
-requires explicit -Download (approximately 749 MB of Microsoft media):
+This verifies both adjacent BINs read-only and exits 0 without prompting,
+downloading, elevating, writing files or creating work/output directories.
+In a public source-only kit with no payload it instead shows help and exits 0;
+help does not mean the payload is ready. An invalid or partial adjacent payload
+fails verification, without fallback to help, download or another source.
+Get and Set need no prior Install
+when the bundled payload is complete and verified. Set performs its own checks:
 
-  .\Install-KoreanRules.ps1 -Download
   .\Get-KoreanRulesState.ps1
   .\Set-KoreanRulesState.ps1 -WhatIf
 
-Instead, use existing exact Microsoft media. Capturing $build in these
-alternative examples is optional, for portable output paths/build records:
+Only if payload needs preparation, choose ONE input in elevated Windows
+PowerShell. Keep the complete kit writable for preparation. Explicit -Download
+is a fallback: download approximately 749 MB of Microsoft media and extract
+once locally, never install SQL. Capturing $build is optional:
+
+  $build = .\Install-KoreanRules.ps1 -Download
+
+Instead, extract from existing exact Microsoft media:
 
   $build = .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
 
@@ -131,14 +149,29 @@ The optional second positional argument is a NEW output directory:
 
   $build = .\Install-KoreanRules.ps1 '.\Microsoft Media\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
 
-For an explicit download destination, name the output parameter:
+For portable output while downloading, name the output parameter:
 
   $build = .\Install-KoreanRules.ps1 -Download -OutputDirectory 'C:\Temp\PreparedDownload'
 
-OutputDirectory is optional. Its default is a UNIQUE child of
-C:\Temp\KoreanRules-Ready. An explicit directory must be new; existing output
-is not overwritten. WorkRoot defaults to C:\Temp\KoreanRules-Build, with a
-unique extraction subfolder. Allow several GB of space.
+With bundled payload, explicit output needs no source/download argument:
+
+  $build = .\Install-KoreanRules.ps1 -OutputDirectory 'C:\Temp\PreparedBundledRules'
+
+If bundled payload is absent, this explicit output request is an error, not
+silent help or an automatic download. Supply a verified source or explicitly
+choose -Download when requesting portable output from a source-only kit.
+
+Without OutputDirectory, preparation writes only the adjacent payload.
+There is NO second kit, ZIP or default C:\Temp\KoreanRules-Ready directory;
+BIN input creates no empty work directory. OutputDirectory (second positional
+argument) explicitly requests a portable expanded kit PLUS ZIP. Existing output
+folders are refused, not reused or overwritten.
+
+Only media download/extraction uses unique WorkRoot directories for
+collision-safe extraction/logs. The root defaults to C:\Temp\KoreanRules-Build;
+allow several GB of space. Media work directories are intentionally retained
+even after success, not second deployment kits. Old user directories are never
+automatically deleted.
 
 A management workstation is recommended. An Exchange host is allowed with
 a disk/CPU warning, not an additional approval switch. That allowance does
@@ -167,18 +200,25 @@ they are not Exchange failures or default reasons to contact Support.
 
   $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, DefaultPayloadDirectory, ExtractionArtifacts
 
-Package is the generated ZIP; SHA256 is its hash; ExpandedPackage is the
-generated runtime folder; PayloadDirectory still identifies its portable
-generated payload, preserving compatibility. DefaultPayloadDirectory identifies
-the verified payload beside the invoked Install-KoreanRules.ps1.
-ExtractionArtifacts identifies retained extraction artifacts.
+Default result (no OutputDirectory):
+  Package and SHA256 are null because no ZIP is created.
+  ExpandedPackage is the current invoked kit.
+  PayloadDirectory = DefaultPayloadDirectory = the adjacent verified payload.
+Explicit OutputDirectory preserves the portable result:
+  Package is the generated ZIP; SHA256 is its hash.
+  ExpandedPackage is the generated portable runtime.
+  PayloadDirectory is that portable runtime's payload.
+  DefaultPayloadDirectory still identifies the original kit's adjacent payload.
+ExtractionArtifacts identifies retained media extraction/log artifacts when
+media was used; BIN-only preparation creates no empty work directory.
 
-After a successful portable build, Install prepares/verifies the original
-script folder's payload. Both exact BINs are required. Matching existing files
+Install prepares/verifies the original script folder's adjacent payload;
+portable output is NOT a prerequisite. Both exact BINs are required. Matching existing files
 are reused without rewriting; a missing sibling is added only after existing
 files verify. Mismatching files, refused paths or write failures are hard
-errors, never overwritten or hidden by fallback. Install requires a writable
-complete kit and NEVER writes Exchange Native. The same folder can be reused.
+errors, never overwritten or hidden by fallback. Preparation needs a writable
+complete kit; bare verification is read-only. Install NEVER writes Exchange
+Native. The same folder can be reused.
 
 Set in the SAME folder/computer automatically uses that adjacent payload.
 There are no latest-folder scans, guessed paths or persisted global paths.
@@ -187,7 +227,7 @@ are not hidden. For example, after optionally capturing $build:
 
   .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
 
-Alternatively:
+After explicitly requesting portable output, you can work from that runtime:
 
   Set-Location -LiteralPath $build.ExpandedPackage
   .\Get-KoreanRulesState.ps1
@@ -212,7 +252,10 @@ Required payload:
 
 2. VERIFY AND STAGE
 
-Local build: Exchange-KoreanRules-2.2.1-deploy.zip
+Private/local customer-ready deploy ZIP: Exchange-KoreanRules-2.3.0-deploy.zip
+It includes the complete runtime and verified 56,132-byte token BIN plus
+717,792-byte complex BIN. Explicit OutputDirectory can create this portable
+package; default preparation does not create a ZIP.
 Archive root: Exchange-KoreanRules
 Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
 Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
@@ -226,22 +269,63 @@ module. Missing components cause an explicit "package is incomplete" failure;
 restore the complete package, including private and the module, before retrying.
 Get needs no vendor payload but still requires the complete code package.
 
-Public source: downloads\Exchange-KoreanRules-2.2.1-source.zip
+Public source: downloads\Exchange-KoreanRules-2.3.0-source.zip
 Source also includes tests and legacy compatibility wrappers under
 archive\compatibility, not at the release root. Only the repository-only
 ArchiveLayout.Tests.ps1 is excluded because it requires historical assets.
-No vendor rules,
-SQL media or payload-bearing deployment ZIP is published in this repository.
-Install's newly generated adjacent payload is local-only too: exclude these
+The previous 2.2.1 source ZIP and checksum belong under archive\downloads.
+No vendor rules, SQL media or payload-bearing deployment ZIP is published in
+this repository. Public redistribution approval could not be confirmed while
+the release owner was unavailable, so public packaging stays source-only
+pending confirmation. Exclude the private/local deploy ZIP and adjacent
 Microsoft binaries from source publication.
 The tool folder's .gitignore excludes /payload/ from normal Git staging;
 do not force-add it or include it in a source archive.
-Review licensing before redistribution of your generated runtime.
+Obtain approval confirmation before changing this public distribution boundary.
 
 Verify the ZIP hash and sidecar against the approved build record before
 extracting to a NEW directory; README.md has the complete checksum example.
 A checksum is not signing or authentication of an untrusted download. Sign
 scripts/module before building when policy requires; rebuilding changes hashes.
+
+MARK OF THE WEB (MOTW)
+
+Obtain the ZIP and expected checksum from an approved source, verify trust and
+checksum, then Unblock-File the EXACT ZIP BEFORE extracting. Use a fresh unique
+extraction directory. Only after that trust/checksum verification:
+
+  $zip = 'C:\Temp\Exchange-KoreanRules-2.3.0-deploy.zip'
+  Unblock-File -LiteralPath $zip
+  $destination = 'C:\Temp\KoreanRules-Extract-' + [Guid]::NewGuid().ToString('N')
+  if (Test-Path -LiteralPath $destination) { throw 'Choose a new extraction directory.' }
+  Expand-Archive -LiteralPath $zip -DestinationPath $destination
+
+For the public source ZIP use its exact 2.3.0 filename instead.
+Unblocking a ZIP AFTER extraction does not clear Zone.Identifier alternate
+data streams (ADS) already on extracted files. Prefer a fresh extraction from
+the verified, unblocked ZIP. If keeping an extracted kit, first review the
+WHOLE package including private and verify trusted identities. Only then, if
+policy permits, manually unblock its .ps1, .psm1 and .psd1 files.
+This example assumes the exact dedicated kit C:\Tools\Exchange-KoreanRules
+contains NO unrelated files:
+
+  $kit = 'C:\Tools\Exchange-KoreanRules'
+  Set-Location -LiteralPath $kit
+  Get-ChildItem -LiteralPath $kit -Recurse -File |
+      Where-Object { $_.Extension -in '.ps1', '.psm1', '.psd1' } |
+      Unblock-File
+
+This includes private but only inside that reviewed kit. Never unblock all
+of C:\Temp or another shared tree. The tool does not self-unblock.
+Microsoft Unblock-File documentation:
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/unblock-file?view=powershell-5.1
+
+MOTW is distinct from UAC consent, publisher trust/signature prompts,
+AllSigned, Group Policy (GPO) and Windows Defender Application Control (WDAC).
+Unblocking does not sign code, elevate, override those controls or guarantee
+that every prompt disappears. Get-ExecutionPolicy -List is a read-only
+diagnostic. Do not disable policies or use an execution-policy bypass.
+Follow organizational signing and approval requirements.
 
 Retain an established stable folder, such as C:\Scripts\Exchange-KB5130098.
 Update reviewed contents only while no run is active; preserve user edits and
@@ -304,18 +388,20 @@ gets separate guidance to Download, select the real EXE, or use extracted rules.
 
 4. PREVIEW AND APPLY
 
-From the same kit after Install succeeds, a complete generated runtime, or
+From a complete verified bundled kit (no Install prerequisite), the same kit
+after needed preparation, an explicitly generated portable runtime, or
 with an explicit alternate caller-side -PayloadDirectory:
 
   .\Set-KoreanRulesState.ps1 -WhatIf
 
 Only after real pilot/maintenance approval:
 
-  .\Set-KoreanRulesState.ps1 -RestartSearch -MaintenanceWindowApproved
+  .\Set-KoreanRulesState.ps1 -RestartSearch
 
 Set defaults to Apply. Without RestartSearch it only stages the rules,
 returns 10 and requires a separately controlled manual restart/recovery.
-MaintenanceWindowApproved alone does not request restart.
+MaintenanceWindowApproved is an optional compatibility no-op: it does not
+request restart or record/obtain approval and is not required for any command.
 WhatIf is file-free: no Exchange writes, operation receipts or report exports;
 remote previews also avoid connections/staging. Local preflight can still
 return a review-required skip (exit 20) for an ineligible/already-staged
@@ -324,7 +410,8 @@ installation; that is not a fatal Apply failure.
 Standard confirmation remains opt-in as in 1.2.3. At ConfirmPreference High
 no Confirm false is required. Use -Confirm to request a prompt; inherited
 stricter preferences remain effective. Confirm false does not remove UAC,
-restart selection, maintenance approval, rollback approval or recovery gates.
+restart selection, rollback approval or recovery gates, or operational
+change/window responsibilities.
 Report persistence adds no separate confirmation prompt.
 
 Apply rechecks identity, uses no-overwrite creation, verifies destination
@@ -400,7 +487,7 @@ separate approval/runbook; the tool does not restart Transport for you.
 
 After a successful pilot, in a local interactive console:
 
-  .\Set-KoreanRulesState.ps1 -CsvPath 'C:\Temp\approved-servers.csv' -RestartSearch -MaintenanceWindowApproved
+  .\Set-KoreanRulesState.ps1 -CsvPath 'C:\Temp\approved-servers.csv' -RestartSearch
 
 The serial rollout waits after each restarted target for actual recovery
 checks and the exact response RECOVERED <exact-target-name>. Any other
@@ -443,7 +530,7 @@ problem. Require actual Microsoft Support approval, a maintenance window and
 the original completed Apply receipt for the same computer/install/build.
 Changed files/builds and partial/failed deployments are refused.
 
-  .\Set-KoreanRulesState.ps1 -Rollback -ReceiptPath 'C:\ProgramData\Exchange-KB5130098\<operation-id>\receipt.json' -MicrosoftSupportApprovedRollback -MaintenanceWindowApproved -RestartSearch
+  .\Set-KoreanRulesState.ps1 -Rollback -ReceiptPath 'C:\ProgramData\Exchange-KB5130098\<operation-id>\receipt.json' -MicrosoftSupportApprovedRollback -RestartSearch
 
 Use the real completed receipt, not the placeholder. Only the exact two owned,
 unchanged files are backed up and removed. No arbitrary file deletion, remote
@@ -458,10 +545,12 @@ The current source kit uses this archived-wrapper layout. The archived 2.1.0
 source ZIP and sidecar are unchanged and retain their original internal layout.
 See archive\README.md in the repository for the index.
 Old fleet Apply STILL
-IMPLIES RESTART and retains maintenance/recovery gates. Prefer the new three
+IMPLIES RESTART and retains recovery gates. Operational window planning remains
+advice, not a required maintenance flag. Prefer the new three
 commands. Internal KB function/error keys and the mutex remain compatible.
 Build-KB5130098Package accepts the same source-first/output-second arguments,
-optional default output and explicit Download; it propagates the installer
+adjacent-only default preparation, opt-in portable output and explicit Download;
+it propagates the installer
 exit code. Legacy Invoke wrappers accept positional ComputerName; CSV remains
 explicit -CsvPath.
 
@@ -473,7 +562,8 @@ Each language has matching audio, captions and a transcript. The Hindi version
 has Hindi narration/Devanagari captions with unchanged English command cards.
 The PowerShell scripts and their error messages are not localized.
 Media is a separate download from the source ZIP and was not regenerated for
-2.2.0. Its manual payload handoff is superseded by the adjacent-payload default.
+2.3.0. Its mandatory maintenance flag, default portable output and manual
+payload handoff are superseded by the current written contract.
 The older 2.0.0 walkthrough is at archive\media\2.0.0; use the current written
 guide for operating instructions.
 
@@ -492,6 +582,6 @@ Older downloads and recordings are preserved under archive; existing operator
 folders and previously downloaded packages have not been moved or removed.
 
 For release-specific recorded results and limits, read docs\Lab-Validation.md.
-Historical results do not establish a 2.2.0 test/archive pass or new lab rollout.
+Historical results do not establish a 2.3.0 test/archive pass or new lab rollout.
 The historical pilot proved tested EWS new-message results, not OWA/Outlook
 recovery, full backlog, sustained production load or live rollback.

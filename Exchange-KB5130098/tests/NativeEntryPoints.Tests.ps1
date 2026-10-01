@@ -791,7 +791,9 @@ foreach ($rule in $script:Spec.Rules) {
     $rule.Bytes = (Get-Item -LiteralPath $path).Length
     $rule.SHA256 = '__FIXTURE_SHA256__'
 }
-function Assert-KBAdministrator {}
+function Assert-KBAdministrator {
+    if ($env:KBFixtureForbidAdmin -eq '1') { throw 'Read-only verification must not require elevation.' }
+}
 function Test-Path {
     [CmdletBinding(DefaultParameterSetName='Path')]
     param(
@@ -845,7 +847,7 @@ function Invoke-KBLocal {
         $result = Invoke-NativeFixture -Arguments $arguments -WorkingDirectory $TestDrive
         $result.ExitCode | Should -Be 0 -Because ($result.Error + $result.Output)
         $result.Error | Should -BeNullOrEmpty
-        $result.Output | Should -Match 'Exchange installation detected'
+        $result.Output | Should -Not -Match 'Exchange installation detected'
         $result.Output | Should -Not -Match 'Supply values|missing mandatory parameters'
         $zip = @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File)
         $zip.Count | Should -Be 1
@@ -886,6 +888,81 @@ exit $LASTEXITCODE
         $override.Error | Should -BeNullOrEmpty
     }
 
+    It 'prepares adjacent files without duplicate output or extraction directories' {
+        $work=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $child=Join-Path $TestDrive 'prepare-in-place.ps1'
+        @'
+param($Kit,$Work)
+$result=& (Join-Path $Kit 'Install-KoreanRules.ps1') -RuleSourceDirectory (Join-Path $Kit 'rules') -WorkRoot $Work -ErrorAction Stop
+$code=$LASTEXITCODE
+'RESULT:'+($result | ConvertTo-Json -Compress)
+exit $code
+'@ | Set-Content -LiteralPath $child -Encoding ASCII
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" -Kit "{1}" -Work "{2}"' -f $child,$script:builderRoot,$work) -WorkingDirectory $TestDrive
+        $result.ExitCode | Should -Be 0 -Because $result.Error
+        $line=@($result.Output -split '\r?\n' | Where-Object { $_ -like 'RESULT:*' })[0]
+        $packet=$line.Substring(7) | ConvertFrom-Json
+        $packet.Package | Should -BeNullOrEmpty
+        $packet.SHA256 | Should -BeNullOrEmpty
+        $packet.ExtractionArtifacts | Should -BeNullOrEmpty
+        $packet.ExpandedPackage | Should -Be $script:builderRoot
+        $packet.PayloadDirectory | Should -Be (Join-Path $script:builderRoot 'payload')
+        Test-Path -LiteralPath $work | Should -BeFalse
+        $result.Output | Should -Not -Match 'portable package created|Exchange installation detected'
+    }
+
+    It 'verifies a bundled payload without elevation downloads or any new files' {
+        $payload=Join-Path $script:builderRoot 'payload'
+        $null=New-Item -ItemType Directory -Path $payload -Force
+        foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) {
+            Copy-Item -LiteralPath (Join-Path $script:builderRules $name) -Destination $payload -Force
+        }
+        $before=@(Get-ChildItem -LiteralPath $script:builderRoot -Recurse -File | Sort-Object FullName | Select-Object FullName,Length,LastWriteTimeUtc) | ConvertTo-Json
+        $child=Join-Path $TestDrive 'verify-bundled.ps1'
+        @'
+param($Kit)
+$env:KBFixtureForbidAdmin='1'
+& (Join-Path $Kit 'Install-KoreanRules.ps1')
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $child -Encoding ASCII
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" -Kit "{1}"' -f $child,$script:builderRoot) -WorkingDirectory $TestDrive
+        $result.ExitCode | Should -Be 0 -Because $result.Error
+        $result.Output | Should -Match 'Default payload ready for this kit'
+        $result.Output | Should -Not -Match 'No source selected|portable package created|Downloading'
+        $after=@(Get-ChildItem -LiteralPath $script:builderRoot -Recurse -File | Sort-Object FullName | Select-Object FullName,Length,LastWriteTimeUtc) | ConvertTo-Json
+        $after | Should -BeExactly $before
+    }
+
+    It 'creates a portable kit from bundled files only when OutputDirectory is explicit' {
+        $output=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $work=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $payload=Join-Path $script:builderRoot 'payload'
+        $null=New-Item -ItemType Directory -Path $payload -Force
+        foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) { Copy-Item -LiteralPath (Join-Path $script:builderRules $name) -Destination $payload -Force }
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" -OutputDirectory "{1}" -WorkRoot "{2}"' -f (Join-Path $script:builderRoot 'Install-KoreanRules.ps1'),$output,$work)
+        $result.ExitCode | Should -Be 0 -Because $result.Error
+        $result.Output | Should -Match 'Optional portable package created'
+        @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File).Count | Should -Be 1
+        Test-Path -LiteralPath $work | Should -BeFalse
+    }
+
+    It 'rejects a <Problem> bundled payload rather than silently downloading' -ForEach @(
+        @{ Problem='corrupt' }, @{ Problem='partial' }
+    ) {
+        $kit=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        Copy-Item -LiteralPath $script:builderRoot -Destination $kit -Recurse
+        $payload=Join-Path $kit 'payload'
+        $null=New-Item -ItemType Directory -Path $payload -Force
+        foreach ($name in @('ko.token.rule.bin','ko.complex.rule.bin')) { Copy-Item -LiteralPath (Join-Path $script:builderRules $name) -Destination $payload -Force }
+        $file=Join-Path $payload 'ko.token.rule.bin'
+        if ($Problem -eq 'corrupt') { 'Corrupt fixture' | Set-Content -LiteralPath $file }
+        else { Remove-Item -LiteralPath $file }
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}"' -f (Join-Path $kit 'Install-KoreanRules.ps1'))
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'MISMATCH|MISSING'
+        $result.Output | Should -Not -Match 'Default payload ready|Downloading'
+    }
+
     It 'runs with no arguments without prompting downloading or requiring elevation' -ForEach @(
         @{Script='Install-KoreanRules.ps1'},@{Script='Build-KB5130098Package.ps1'}
     ) {
@@ -896,6 +973,15 @@ exit $LASTEXITCODE
         $result.Output | Should -Match 'No source selected'
         $result.Output | Should -Match 'Optional second positional argument'
         $result.Output | Should -Not -Match 'Supply values|Exchange installation detected'
+    }
+
+    It 'rejects an export request without a bundled or explicit source' {
+        $output=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $path=Get-TestPackageFile 'Install-KoreanRules.ps1'
+        $result=Invoke-NativeFixture -Arguments ('-File "{0}" -OutputDirectory "{1}"' -f $path,$output)
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match 'no bundled payload to export'
+        Test-Path -LiteralPath $output | Should -BeFalse
     }
 
     It 'accepts positional rule-source and output folders including pasted quote characters' -ForEach @(
@@ -912,7 +998,7 @@ exit $LASTEXITCODE
         $result=Invoke-NativeFixture -Arguments ('-Command "{0}"' -f $command)
         $result.ExitCode | Should -Be 0 -Because $result.Error
         $result.Error | Should -BeNullOrEmpty
-        $result.Output | Should -Match 'installation files prepared'
+        $result.Output | Should -Match 'Default payload ready for this kit'
         @(Get-ChildItem -LiteralPath $output -Filter '*-deploy.zip' -File).Count | Should -Be 1
     }
 

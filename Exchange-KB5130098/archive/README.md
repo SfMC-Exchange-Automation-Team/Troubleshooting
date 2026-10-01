@@ -10,16 +10,51 @@ caption, transcript or poster was deleted or changed during this move.
 
 ## Current files (outside this archive)
 
-- [Install-KoreanRules.ps1](../Install-KoreanRules.ps1) — build a portable runtime and prepare/verify adjacent payload.
+- [Install-KoreanRules.ps1](../Install-KoreanRules.ps1) — verify/prepare adjacent payload; portable runtime/ZIP only with explicit output.
 - [Get-KoreanRulesState.ps1](../Get-KoreanRulesState.ps1) — inspect servers.
 - [Set-KoreanRulesState.ps1](../Set-KoreanRulesState.ps1) — change eligible servers.
-- [Latest source kit and checksum](../downloads).
-- [Retained 2.1.0 walkthroughs and the 2.2.0 correction](../docs/Walkthroughs.md).
+- [Latest 2.3.0 source kit](../downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  and [checksum](../downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256).
+- [Retained 2.1.0 walkthroughs and the 2.3.0 corrections](../docs/Walkthroughs.md).
 
-The current release is **2.2.1**. After Install succeeds, Set in the same complete
-writable kit/computer uses its adjacent payload without a manual handoff.
-Microsoft binaries generated there remain local-only, not source-download
-contents. The release root retains exactly three operator scripts.
+The current release is **2.3.0**. The private/local customer-ready deploy ZIP
+contains the complete runtime and both verified BINs: token **56,132 bytes** and
+complex **717,792 bytes**. The public GitHub source ZIP remains source-only
+because public redistribution approval could not be confirmed while the release
+owner was unavailable. Keep vendor payload and deploy ZIPs out of public source
+publication pending confirmation. The release root retains exactly three
+operator scripts.
+
+Get/Set need no prior Install with complete verified bundled payload; Set keeps
+its own checks. Bare Install verifies adjacent payload read-only, with no
+download, admin requirement, writes, directories or prompts. In a source-only
+kit with no payload it instead shows help. Invalid or partial adjacent payload
+fails verification with no fallback. Default preparation writes only
+adjacent `payload`: no second kit/ZIP/default `KoreanRules-Ready` directory or
+empty work directory for BIN input. `Package`/`SHA256` are null,
+`ExpandedPackage` is the current invoked kit, and `PayloadDirectory` equals the
+adjacent `DefaultPayloadDirectory`.
+
+Explicit `-OutputDirectory` (second positional argument) requests a portable
+expanded kit plus ZIP and refuses existing folders. With no source/download
+arguments it uses bundled payload. Portable return values are preserved;
+`DefaultPayloadDirectory` still names the original adjacent payload.
+If bundled payload is absent, explicit output fails with an error, not silent
+help or an automatic download; supply a verified source or explicitly choose
+`-Download`.
+Explicit `-Download` downloads/extracts once locally, never installs SQL;
+existing EXE extraction is supported. Only media uses unique `WorkRoot`
+directories for collision-safe extraction/logs. They are retained intentionally;
+old user directories are never automatically deleted.
+
+Follow the [trust/MOTW procedure](../README.md#trust-mark-of-the-web-and-extraction)
+before running a downloaded kit: verify the approved source/checksum, unblock
+the exact ZIP before fresh unique extraction, or review then manually unblock
+only the dedicated extracted kit's scripts/modules/manifests including `private`.
+Unblocking a ZIP afterward does not clear existing extracted ADS. There is no
+self-unblock or policy bypass; UAC, publisher trust, AllSigned, GPO and WDAC
+remain distinct. `Get-ExecutionPolicy -List` is read-only, and unblocking does
+not guarantee that all prompts disappear.
 
 ## Archived downloads
 
@@ -32,12 +67,14 @@ with its original SHA256 sidecar:
 | 1.1.0, 1.1.1, 1.1.2 | Exchange-KB5130098 |
 | 1.2.0, 1.2.1, 1.2.2, 1.2.3 | Exchange-KB5130098 |
 | 2.0.0, 2.0.1, 2.1.0 | Exchange-KoreanRules |
+| 2.2.0, 2.2.1 | Exchange-KoreanRules |
 
 Archives are immutable snapshots: their internal layouts and instructions
 reflect those versions. They are not instructions for the current release.
 The 2.1.0 source ZIP and sidecar are also preserved unchanged here; its historical
 compatibility wrappers still occupy their original locations inside that ZIP.
-The latest 2.2.1 source kit and checksum belong in the active
+The superseded [2.2.1 source kit](downloads/Exchange-KoreanRules-2.2.1-source.zip)
+and its checksum are archived here. The latest 2.3.0 source kit and checksum belong in the active
 [downloads folder](../downloads).
 
 ## Historical recordings
@@ -47,8 +84,9 @@ The latest 2.2.1 source kit and checksum belong in the active
 - [2.0.0 video, audio and companions](media/2.0.0)
 
 The retained [2.1.0 English and Hindi walkthroughs](../docs/Walkthroughs.md)
-remain in the active language folders and were not regenerated for 2.2.0.
-Their manual payload-handoff section is superseded by the adjacent default.
+remain in the active language folders and were not regenerated for 2.3.0.
+Their mandatory maintenance flag, default portable output and manual payload
+handoff are superseded by the current written contract.
 Use the [written guide](../README.md)
 for current operating instructions; archiving does not make old advice current.
 
@@ -67,7 +105,12 @@ not standalone installers:
 These wrappers resolve the current tool root when run from this archive. They
 also work if deliberately copied beside a complete current runtime for an
 existing automation dependency. **The old Fleet Apply still implies a restart**;
-it retains the maintenance and recovery gates. Prefer updating automation to
+it retains recovery gates. `-MaintenanceWindowApproved` is not required anywhere;
+it remains an optional compatibility no-op for old commands. Current Set requires
+explicit `-RestartSearch`. Plan an operational window; rollback stays
+Support-approved/receipt-bound and restarted remote rollout stays serial with
+required per-server recovery attestation. State-command UAC is unchanged.
+Prefer updating automation to
 the new names rather than copying old files back into the active view.
 
 This repository cleanup intentionally changes old file URLs. Updated guide links
