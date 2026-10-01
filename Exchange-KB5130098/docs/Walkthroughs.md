@@ -4,17 +4,19 @@ Return to the [operator guide](../README.md) for complete commands and prerequis
 Both editions cover the same retained 2.1.0 workflow, with independently generated
 narration, captions, transcripts and chapter timing.
 
-> **2.3.0 corrections - follow the written guide, not outdated command cards:**
+> **2.3.1 corrections - follow the written guide, not outdated command cards:**
 > these English/Hindi recordings and companions were **not regenerated**.
-> The private/local customer-ready deploy ZIP includes the complete runtime and
-> both verified BINs (token **56,132 bytes**, complex **717,792 bytes**).
-> Get/Set need no prior Install with complete verified bundled payload; Set
-> still checks for itself. Bare Install verifies adjacent payload read-only,
+> The public repository and complete kit ZIP include both exact, pinned Microsoft
+> BINs with explicitly approved public inclusion (token **56,132 bytes**, complex
+> **717,792 bytes**). The ZIP includes runtime, docs, tests, archived compatibility
+> wrappers and payload; no SQL EXE, MSI or DLL is included.
+> No SQL media preparation or Install run is needed. Get needs no payload; Set
+> automatically uses adjacent `payload` and still checks for itself.
+> Optional bare Install verifies adjacent payload read-only,
 > with no download, admin requirement, writes, directories or prompts.
-> In a source-only kit with no payload it instead shows help without those effects.
+> Only a historical/custom source-only kit with no payload shows help instead,
+> without those effects.
 > An invalid or partial adjacent payload fails verification with no fallback.
-> Public GitHub distribution remains source-only because public redistribution
-> approval could not be confirmed while the release owner was unavailable.
 >
 > Normal preparation writes only adjacent `payload`: no second kit/ZIP/default
 > `KoreanRules-Ready` directory or empty BIN-input work directory.
@@ -25,9 +27,10 @@ narration, captions, transcripts and chapter timing.
 > source or explicitly choose `-Download`. Default `Package`/`SHA256` are null,
 > `ExpandedPackage` is the current invoked kit, and `PayloadDirectory` equals the
 > adjacent `DefaultPayloadDirectory`; explicit output preserves portable values.
-> Download is an explicit fallback that downloads/extracts once locally, never
-> installs SQL. Existing EXE extraction is supported. Media alone needs unique,
-> intentionally retained `WorkRoot` extraction/log directories; old user
+> Download is an explicit fallback for fresh media extraction or missing payload,
+> not a public-kit prerequisite; it downloads/extracts once locally, never
+> installs SQL. No implicit download occurs. Existing EXE extraction is supported.
+> Media alone needs unique, intentionally retained `WorkRoot` extraction/log directories; old user
 > directories are never automatically deleted.
 >
 > The video's mandatory `-MaintenanceWindowApproved` is obsolete: it is now an
@@ -80,7 +83,7 @@ generated and timed in its own language. Times below are elapsed minutes:seconds
 | 01:06 | 01:20 | Install choices and explicit downloads |
 | 01:48 | 02:13 | Positional source and output paths |
 | 02:29 | 03:06 | Incomplete media and strict verification |
-| 03:07 | 03:50 | Use the returned payload directory - follow 2.3.0 payload/output corrections above |
+| 03:07 | 03:50 | Use the returned payload directory - follow 2.3.1 payload/output corrections above |
 | 03:40 | 04:31 | Get is inspection only |
 | 04:13 | 05:13 | Yellow skips, reasons and continued inspection |
 | 04:55 | 06:05 | Positional computers and native Exchange CSV columns |
@@ -97,7 +100,7 @@ generated and timed in its own language. Times below are elapsed minutes:seconds
 ## What the retained 2.1.0 video changed from older recordings
 
 - In 2.1.0, Install with no arguments showed choices rather than a mandatory
-  file-path prompt; use the 2.3.0 bundled-payload behavior above for current use.
+  file-path prompt; use the 2.3.1 bundled-payload behavior above for current use.
 - Source EXE/folder and optional new output folder can be positional arguments;
   Get and Set accept positional computer names. CSV still needs `-CsvPath`.
 - Pasted paired quotes, folder ambiguity and missing input are explained.
@@ -131,10 +134,13 @@ player appears, or download the MP4 and play it locally. The audio-only M4A
 contains the same narration and chapters. Captions are burned into each video;
 SRT/WebVTT files are supplied for reuse.
 
-Media is kept separate from the source ZIP. The 2.1.0 code archive and checksum
+Media is kept separate from the public kit ZIP. The 2.1.0 code archive and checksum
 are preserved unchanged in [archived downloads](../archive/downloads).
 The latest public download is
-[Exchange-KoreanRules-2.3.0-source.zip](../downloads/Exchange-KoreanRules-2.3.0-source.zip);
-2.2.1 is archived. This correction does not regenerate media or move/remove files
+[Exchange-KoreanRules-2.3.1.zip](../downloads/Exchange-KoreanRules-2.3.1.zip) with its
+[checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256).
+The [2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
+[checksum](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are archived unchanged.
+This correction does not regenerate media or move/remove files
 in existing operator working folders. See [release-specific validation](Lab-Validation.md);
 historical media checks are not current code, package or lab evidence.

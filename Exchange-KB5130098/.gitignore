@@ -1,1 +1,3 @@
-/payload/
+/payload/*
+!/payload/ko.token.rule.bin
+!/payload/ko.complex.rule.bin

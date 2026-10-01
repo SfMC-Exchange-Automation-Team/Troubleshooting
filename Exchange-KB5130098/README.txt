@@ -1,21 +1,22 @@
-Exchange Korean Rules | 2.3.0
+Exchange Korean Rules | 2.3.1
 
 Console identity differences show only mismatched Exchange build and
 Korean DLL version, one per line, without byte counts or hashes. Size/hash
 checks remain mandatory; detailed identity differences remain in reports.
 
-2.3.0: The private/local customer-ready deploy ZIP contains the complete
-runtime and both verified BINs. Get/Set need no Install when bundled payload
-is complete and verified; Set still checks for itself. Bare Install verifies
-that adjacent payload read-only, with no download, admin requirement, writes,
-directories or prompts. A source-only kit with no payload instead shows help.
-Normal preparation writes only adjacent payload. Only explicit OutputDirectory
-requests a portable expanded kit and ZIP; it must name a NEW directory.
-Public GitHub distribution stays source-only pending confirmation of public
-redistribution approval; the release owner was unavailable to confirm it.
+2.3.1: The public repository and Exchange-KoreanRules-2.3.1.zip include both
+exact, pinned Microsoft BINs under payload. The user explicitly approved
+including both files publicly. The ZIP contains the complete runtime, docs,
+tests and archived compatibility wrappers; no SQL EXE, MSI or DLL is included.
+No SQL media preparation or Install run is needed. Get needs no payload; Set
+automatically uses adjacent payload and still checks for itself.
+Optional bare Install verifies the bundled files read-only, with no download,
+admin requirement, writes, directories or prompts. Only explicit OutputDirectory
+requests a separate portable expanded kit and ZIP; it must name a NEW directory.
+There are no implicit downloads.
 
 VIDEO CORRECTION: retained English/Hindi 2.1.0 media was not regenerated for
-2.3.0. Its mandatory maintenance flag, default portable outputs and manual
+2.3.1. Its mandatory maintenance flag, default portable outputs and manual
 payload handoff are superseded. MaintenanceWindowApproved is now an optional
 compatibility no-op, not required anywhere. RestartSearch remains explicit;
 operational window planning, Support-approved rollback and recovery checks remain.
@@ -56,8 +57,8 @@ Get does not require payload files. Set never infers restart: select
 PREREQUISITES AND EXACT IDENTITY
 
 Use 64-bit Windows PowerShell 5.1. Use an elevated session for media/file-writing
-preparation; bare Install's bundled verification or source-only help needs no
-administrator rights and creates no directories. Local
+preparation; bare Install's bundled verification or historical/custom
+source-only help needs no administrator rights and creates no directories. Local
 interactive state commands can request normal UAC and preserve switches,
 WhatIf and confirmation preferences. Their private data-only handoff returns
 exit/report data to the invoking session and is removed afterward.
@@ -90,27 +91,30 @@ checking identity. Never loosen build/hash checks to accept a future update.
 Either existing rule blocks Apply, even a partial pair; no overwrite or
 repair-by-reapply is supported. Eligibility alone does not establish symptoms.
 
-1. PREPARE THE VERIFIED PAYLOAD
+1. USE BUNDLED PAYLOAD; PREPARE ONLY IF NEEDED
 
-From the reviewed complete deploy kit, optionally verify bundled payload:
+From the reviewed complete public kit, optionally verify bundled payload:
 
   .\Install-KoreanRules.ps1
 
 This verifies both adjacent BINs read-only and exits 0 without prompting,
 downloading, elevating, writing files or creating work/output directories.
-In a public source-only kit with no payload it instead shows help and exits 0;
-help does not mean the payload is ready. An invalid or partial adjacent payload
-fails verification, without fallback to help, download or another source.
 Get and Set need no prior Install
 when the bundled payload is complete and verified. Set performs its own checks:
 
   .\Get-KoreanRulesState.ps1
   .\Set-KoreanRulesState.ps1 -WhatIf
 
-Only if payload needs preparation, choose ONE input in elevated Windows
-PowerShell. Keep the complete kit writable for preparation. Explicit -Download
-is a fallback: download approximately 749 MB of Microsoft media and extract
-once locally, never install SQL. Capturing $build is optional:
+Only in a historical/custom source-only kit with no payload does bare Install
+show help and exit 0; help does not mean the payload is ready. An invalid or
+partial adjacent payload fails verification, without fallback to help,
+download or another source.
+
+Only if fresh media extraction or payload preparation is needed, choose ONE
+input in elevated Windows PowerShell. Keep the complete kit writable for
+preparation. Explicit -Download is a fallback, not a public-kit prerequisite:
+download approximately 749 MB of Microsoft media and extract once locally,
+never install SQL. Capturing $build is optional:
 
   $build = .\Install-KoreanRules.ps1 -Download
 
@@ -159,7 +163,8 @@ With bundled payload, explicit output needs no source/download argument:
 
 If bundled payload is absent, this explicit output request is an error, not
 silent help or an automatic download. Supply a verified source or explicitly
-choose -Download when requesting portable output from a source-only kit.
+choose -Download when requesting portable output from a historical/custom
+source-only kit.
 
 Without OutputDirectory, preparation writes only the adjacent payload.
 There is NO second kit, ZIP or default C:\Temp\KoreanRules-Ready directory;
@@ -242,7 +247,7 @@ The complete generated package includes its own payload when moved to another
 computer. Scripts copied individually into another folder need the complete
 kit plus payload, or the complete kit with an explicit payload override.
 Detection needs no payload. Remote Apply validates caller-side payload before
-connecting, rather than assuming a source checkout contains the vendor files.
+connecting; bundled files do not bypass verification.
 
 Required payload:
   ko.token.rule.bin, 56132 bytes
@@ -252,15 +257,18 @@ Required payload:
 
 2. VERIFY AND STAGE
 
-Private/local customer-ready deploy ZIP: Exchange-KoreanRules-2.3.0-deploy.zip
-It includes the complete runtime and verified 56,132-byte token BIN plus
-717,792-byte complex BIN. Explicit OutputDirectory can create this portable
-package; default preparation does not create a ZIP.
+Public complete kit: downloads\Exchange-KoreanRules-2.3.1.zip
+Checksum: downloads\Exchange-KoreanRules-2.3.1.zip.sha256
+It includes the complete runtime, docs, tests, archived compatibility wrappers,
+verified 56,132-byte token BIN and 717,792-byte complex BIN.
+Explicit OutputDirectory can export a separate portable runtime and deployment
+ZIP; default verification/preparation does not duplicate the kit.
 Archive root: Exchange-KoreanRules
 Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
 Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
 It also contains KoreanRules.psm1, KoreanRules.psd1,
-private\Invoke-KoreanRulesOperation.ps1, docs, examples and payload.
+private\Invoke-KoreanRulesOperation.ps1, docs, examples, tests,
+archive\compatibility and payload.
 The private script is not a fourth operator command.
 
 Extract/copy the WHOLE code package, not just a .ps1 wrapper. Get, Set and
@@ -269,19 +277,16 @@ module. Missing components cause an explicit "package is incomplete" failure;
 restore the complete package, including private and the module, before retrying.
 Get needs no vendor payload but still requires the complete code package.
 
-Public source: downloads\Exchange-KoreanRules-2.3.0-source.zip
-Source also includes tests and legacy compatibility wrappers under
+The public kit includes tests and legacy compatibility wrappers under
 archive\compatibility, not at the release root. Only the repository-only
 ArchiveLayout.Tests.ps1 is excluded because it requires historical assets.
-The previous 2.2.1 source ZIP and checksum belong under archive\downloads.
-No vendor rules, SQL media or payload-bearing deployment ZIP is published in
-this repository. Public redistribution approval could not be confirmed while
-the release owner was unavailable, so public packaging stays source-only
-pending confirmation. Exclude the private/local deploy ZIP and adjacent
-Microsoft binaries from source publication.
-The tool folder's .gitignore excludes /payload/ from normal Git staging;
-do not force-add it or include it in a source archive.
-Obtain approval confirmation before changing this public distribution boundary.
+The previous source-only archive and checksum are preserved unchanged:
+  archive\downloads\Exchange-KoreanRules-2.3.0-source.zip
+  archive\downloads\Exchange-KoreanRules-2.3.0-source.zip.sha256
+Public inclusion of the two pinned Microsoft BINs was explicitly approved.
+The payload allowlist tracks only payload\ko.token.rule.bin and
+payload\ko.complex.rule.bin; unrelated payload files remain ignored.
+No SQL EXE, MSI or DLL is included in the public kit.
 
 Verify the ZIP hash and sidecar against the approved build record before
 extracting to a NEW directory; README.md has the complete checksum example.
@@ -294,13 +299,13 @@ Obtain the ZIP and expected checksum from an approved source, verify trust and
 checksum, then Unblock-File the EXACT ZIP BEFORE extracting. Use a fresh unique
 extraction directory. Only after that trust/checksum verification:
 
-  $zip = 'C:\Temp\Exchange-KoreanRules-2.3.0-deploy.zip'
+  $zip = 'C:\Temp\Exchange-KoreanRules-2.3.1.zip'
   Unblock-File -LiteralPath $zip
   $destination = 'C:\Temp\KoreanRules-Extract-' + [Guid]::NewGuid().ToString('N')
   if (Test-Path -LiteralPath $destination) { throw 'Choose a new extraction directory.' }
   Expand-Archive -LiteralPath $zip -DestinationPath $destination
 
-For the public source ZIP use its exact 2.3.0 filename instead.
+For an explicitly exported portable ZIP, use its own filename and trusted checksum.
 Unblocking a ZIP AFTER extraction does not clear Zone.Identifier alternate
 data streams (ADS) already on extracted files. Prefer a fresh extraction from
 the verified, unblocked ZIP. If keeping an extracted kit, first review the
@@ -541,7 +546,7 @@ COMPATIBILITY AND HISTORICAL MATERIAL
 
 In the repository, archive\compatibility retains Invoke-KB5130098.ps1,
 Invoke-KB5130098Fleet.ps1, Build-KB5130098Package.ps1 and KB5130098.psm1.
-The current source kit uses this archived-wrapper layout. The archived 2.1.0
+The current public kit uses this archived-wrapper layout. The archived 2.1.0
 source ZIP and sidecar are unchanged and retain their original internal layout.
 See archive\README.md in the repository for the index.
 Old fleet Apply STILL
@@ -561,8 +566,8 @@ Retained 2.1.0 walkthroughs cover the installer and skip behavior:
 Each language has matching audio, captions and a transcript. The Hindi version
 has Hindi narration/Devanagari captions with unchanged English command cards.
 The PowerShell scripts and their error messages are not localized.
-Media is a separate download from the source ZIP and was not regenerated for
-2.3.0. Its mandatory maintenance flag, default portable output and manual
+Media is a separate download from the public kit ZIP and was not regenerated for
+2.3.1. Its mandatory maintenance flag, default portable output and manual
 payload handoff are superseded by the current written contract.
 The older 2.0.0 walkthrough is at archive\media\2.0.0; use the current written
 guide for operating instructions.
@@ -577,11 +582,11 @@ It shows old names/detailed output, not the new commands or 4+ compact behavior.
 Use README.md and docs\Reporting-and-Splunk.md instead. Earlier workstation,
 CSV-column and default-confirmation instructions are superseded too.
 Historical 1.0.1 media and 1.0.1/1.2.3 source downloads remain linked in README.md.
-The active downloads folder contains only the latest source ZIP and checksum.
+The active downloads folder contains only the latest public kit ZIP and checksum.
 Older downloads and recordings are preserved under archive; existing operator
 folders and previously downloaded packages have not been moved or removed.
 
 For release-specific recorded results and limits, read docs\Lab-Validation.md.
-Historical results do not establish a 2.3.0 test/archive pass or new lab rollout.
+Historical results do not establish a 2.3.1 test/archive pass or new lab rollout.
 The historical pilot proved tested EWS new-message results, not OWA/Outlook
 recovery, full backlog, sustained production load or live rollback.

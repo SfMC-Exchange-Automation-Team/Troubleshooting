@@ -1,12 +1,15 @@
-EXCHANGE KOREAN RULES 2.3.0 - START HERE
+EXCHANGE KOREAN RULES 2.3.1 - START HERE
 
-Private/local customer-ready deploy ZIP: complete runtime plus verified
-ko.token.rule.bin (56,132 bytes) and ko.complex.rule.bin (717,792 bytes).
-Get and Set need no Install when this bundled payload is complete and verified.
-Set still performs its own checks. Normal preparation writes only adjacent
-payload; a portable expanded kit + ZIP requires explicit NEW OutputDirectory.
+Public repository and Exchange-KoreanRules-2.3.1.zip: both exact, pinned
+Microsoft BINs are included with explicit approval for public inclusion.
+The ZIP contains the complete runtime, docs, tests, archived compatibility
+wrappers and payload\ko.token.rule.bin (56,132 bytes) plus
+payload\ko.complex.rule.bin (717,792 bytes). No SQL EXE, MSI or DLL is included.
+No SQL media preparation or Install run is needed. Get needs no payload;
+Set automatically uses adjacent payload and still performs its own checks.
+A separate portable expanded kit + ZIP requires explicit NEW OutputDirectory.
 No implicit download, Exchange Apply by Install, or restart.
-VIDEO CORRECTION: English/Hindi 2.1.0 media was not regenerated for 2.3.0.
+VIDEO CORRECTION: English/Hindi 2.1.0 media was not regenerated for 2.3.1.
 Its mandatory maintenance flag, default portable output and manual payload
 handoff are outdated. MaintenanceWindowApproved is an optional compatibility
 no-op; RestartSearch remains explicit. Keep operational window/recovery checks.
@@ -53,18 +56,19 @@ CHECK A SERVER
   Get/Set accept server names first. CSV always needs -CsvPath; a positional
   filename is not guessed to be CSV. Other paths/switches remain named.
 
-PREPARE MISSING INSTALLATION FILES
+OPTIONAL BUNDLED VERIFICATION AND EXPLICIT PREPARATION
   Get does not need payload files. Set does.
   Optional bare Install verifies a complete bundled adjacent payload
-  read-only; a source-only kit with no payload instead shows help. Neither
-  prompts, downloads, needs admin rights, writes files or creates directories:
+  read-only, without prompts, downloads, admin rights, writes or directories:
     .\Install-KoreanRules.ps1
 
+  Only a historical/custom source-only kit with no payload shows help instead,
+  without those side effects. Help does not mean payload is ready.
   An invalid or partial adjacent payload fails verification; there is no
   fallback to help, download or another source.
 
-  If payload\ko.token.rule.bin or payload\ko.complex.rule.bin is missing,
-  choose ONE source in elevated Windows PowerShell:
+  If fresh media extraction or payload preparation is needed, choose ONE source
+  in elevated Windows PowerShell; this is not a public-kit prerequisite:
     .\Install-KoreanRules.ps1 -Download
     # OR an existing EXE, or folder directly containing the EXE/rule BINs:
     .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
@@ -79,7 +83,8 @@ PREPARE MISSING INSTALLATION FILES
     .\Install-KoreanRules.ps1 -OutputDirectory 'C:\Temp\PreparedBundledRules'
   Without bundled payload, this explicit output request fails with an error,
   not silent help or an automatic download. Supply a verified source or
-  explicitly choose -Download for portable output from a source-only kit.
+  explicitly choose -Download for portable output from a historical/custom
+  source-only kit.
   Only explicit OutputDirectory requests a portable expanded kit PLUS ZIP.
   Existing output folders are refused. Without it, preparation writes only
   adjacent payload: no second kit/ZIP/default KoreanRules-Ready directory and
@@ -137,13 +142,14 @@ PREVIEW REMEDIATION
 
 WHERE THE FILES ARE
   Browser download: your browser's Downloads folder, commonly
-    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.3.0-source.zip
-  Public GitHub download: latest source ZIP and checksum under downloads;
-  2.2.1 is archived. The public source ZIP contains no vendor binaries.
-  Public redistribution approval could not be confirmed while the release
-  owner was unavailable; keep public distribution source-only pending confirmation.
-  The private/local Exchange-KoreanRules-2.3.0-deploy.zip includes both BINs
-  plus the complete runtime.
+    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.3.1.zip
+  Public GitHub download and checksum:
+    downloads\Exchange-KoreanRules-2.3.1.zip
+    downloads\Exchange-KoreanRules-2.3.1.zip.sha256
+  Both approved, pinned BINs are already included under payload.
+  The 2.3.0 source-only ZIP and checksum are archived unchanged:
+    archive\downloads\Exchange-KoreanRules-2.3.0-source.zip
+    archive\downloads\Exchange-KoreanRules-2.3.0-source.zip.sha256
   Downloading does not extract or deploy the kit. Use Show in folder in the
   browser's Downloads page, then extract the entire Exchange-KoreanRules folder.
 
@@ -154,8 +160,8 @@ WHERE THE FILES ARE
   still names the original adjacent payload. Exact paths are returned by Install.
   A complete generated package moved to another computer already has payload.
   Individually copied scripts need the complete kit plus payload or an explicit
-  payload override. Keep the private/local deploy ZIP and populated adjacent
-  payload out of public source downloads pending approval confirmation.
+  payload override. The payload allowlist tracks only ko.token.rule.bin and
+  ko.complex.rule.bin in payload; unrelated payload files remain ignored.
 
   Existing manual working folders are not automatically moved or renamed.
   If already using C:\Scripts\Exchange-KB5130098, keep using that stable folder.
@@ -176,7 +182,7 @@ DOCUMENTATION
   Each language has audio, captions and a transcript. Hindi narration/captions
   use Devanagari; on-screen commands remain English and are not translated.
   README.md links the videos and chapter index. Media is separate from
-  the source ZIP. The older KB-named recordings are historical, not current usage.
+  the public kit ZIP. The older KB-named recordings are historical, not current usage.
 
   On GitHub, check the branch selector and the guide's version. A topic-branch
   push does not update the default main page until its pull request is merged.

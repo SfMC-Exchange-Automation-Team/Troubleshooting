@@ -2,25 +2,30 @@
 
 This guide applies to `Get-KoreanRulesState.ps1` (Detect only) and
 `Set-KoreanRulesState.ps1` (Apply by default; `-Rollback` for local, receipt-bound
-rollback). See the [2.3.0 operator guide](../README.md) for prerequisites and
-approval/recovery gates. `Install-KoreanRules.ps1` prepares the verified payload
-and optionally a portable runtime; its preparation-result object is not a
+rollback). See the [2.3.1 operator guide](../README.md) for prerequisites and
+approval/recovery gates. Optional `Install-KoreanRules.ps1` verifies bundled
+payload or prepares it from an explicit source; portable output requires
+explicit `-OutputDirectory`. Its preparation-result object is not a
 server-state report.
 
-The private/local 2.3.0 customer-ready deploy ZIP contains the complete runtime
-and both verified BINs: token **56,132 bytes**, complex **717,792 bytes**.
-Get/Set require no prior Install with complete verified bundled payload; Set
-still checks for itself. Bare Install verifies adjacent payload read-only with
-no downloads, administrator rights, writes, directories or prompts. A public
-source-only kit with no payload instead shows help without those side effects.
+The public repository and [2.3.1 complete kit ZIP](../downloads/Exchange-KoreanRules-2.3.1.zip)
+include both exact, pinned Microsoft BINs with explicitly approved public
+inclusion: token **56,132 bytes**, complex **717,792 bytes**. The ZIP and its
+[checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256) replace the
+[archived 2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+and [unchanged checksum](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256).
+The current ZIP includes the complete runtime, docs, tests, archived compatibility
+wrappers and payload; no SQL EXE, MSI or DLL is included.
+No SQL media preparation or Install run is needed. Get needs no payload; Set
+automatically uses adjacent `payload` and still checks for itself. Optional bare
+Install verifies the bundled pair read-only with no downloads, administrator
+rights, writes, directories or prompts. Only a historical/custom source-only
+kit with no payload shows help instead, without those side effects.
 An invalid or partial adjacent payload fails verification with no fallback.
-Public download: [2.3.0 source ZIP](../downloads/Exchange-KoreanRules-2.3.0-source.zip);
-2.2.1 is [archived](../archive/README.md). Public redistribution approval could
-not be confirmed while the release owner was unavailable, so public GitHub
-distribution remains source-only pending confirmation.
 
-Use Get, then Set `-WhatIf` from the same complete kit. If preparation is needed,
-explicit `-Download` downloads/extracts Microsoft media once locally, never
+Use Get, then Set `-WhatIf` from the same complete kit. If fresh media extraction
+or payload preparation is needed, explicit `-Download` is a fallback, not a
+prerequisite. It downloads/extracts Microsoft media once locally, never
 installs SQL; an existing EXE or verified BIN input is also supported. Default
 preparation writes only adjacent `payload`, not a second kit, ZIP or default
 `KoreanRules-Ready` directory. BIN input creates no empty work directory.
@@ -57,7 +62,7 @@ UAC, publisher trust, AllSigned, GPO and WDAC remain distinct and effective.
 `Get-ExecutionPolicy -List` is read-only, and no removal of all prompts is promised.
 The retained 2.1.0 videos were not regenerated; their payload, default portable
 output and mandatory maintenance-flag guidance is superseded by the
-[2.3.0 walkthrough corrections](Walkthroughs.md).
+[2.3.1 walkthrough corrections](Walkthroughs.md).
 
 ## Why keep JSON if CSV is easier to read?
 
