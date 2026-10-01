@@ -3,8 +3,9 @@
 .SYNOPSIS
 Applies the guarded Korean Rules workaround locally or on remote/CSV targets.
 .DESCRIPTION
-Requires the verified payload prepared by Install-KoreanRules. Never overwrites
-existing rules. RestartSearch is explicit and requires MaintenanceWindowApproved.
+Requires a verified bundled or locally prepared payload. Never overwrites
+existing rules. RestartSearch remains explicit; schedule any restart appropriately.
+MaintenanceWindowApproved is an optional compatibility switch, not a gate.
 Restarted remote rollout remains serial with per-server recovery attestation.
 Rollback is local, receipt-bound and requires Microsoft Support approval.
 Lists of four or more targets use compact output without hiding errors or

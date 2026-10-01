@@ -3,7 +3,8 @@
 .SYNOPSIS
 Prepares verified Korean Rules files without installing SQL or modifying Exchange.
 .DESCRIPTION
-Run without arguments for examples (no prompts or downloads). Position 0 is an
+Run without arguments to verify the bundled payload, or show examples if absent.
+No implicit downloads are performed. Position 0 is an
 existing EXE or source folder; position 1 is an optional NEW output directory.
 A source folder must directly contain the expected EXE or the rule BIN files.
 Download requires explicit -Download. Paired pasted path quotes are accepted.
@@ -12,7 +13,7 @@ rethrows the error for callers that need a catchable PowerShell error record.
 ManagementWorkstationConfirmed is an optional compatibility switch, not a gate.
 A successful build also prepares the verified payload beside this script, which
 Set-KoreanRulesState uses by default. Existing matching files are reused, never
-overwritten. The generated portable package remains available separately.
+overwritten. A second portable kit/ZIP is created only with -OutputDirectory.
 #>
 [CmdletBinding(DefaultParameterSetName='ExistingMedia', PositionalBinding=$false)]
 param(
@@ -27,10 +28,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $runDirectory=$null
 try {
-    if ($PSCmdlet.ParameterSetName -eq 'ExistingMedia' -and -not $PSBoundParameters.ContainsKey('SqlPackagePath')) {
+    $useBundledPayload = $PSCmdlet.ParameterSetName -eq 'ExistingMedia' -and -not $PSBoundParameters.ContainsKey('SqlPackagePath')
+    $adjacentPayload = Join-Path $PSScriptRoot 'payload'
+    if ($useBundledPayload -and -not (Test-Path -LiteralPath $adjacentPayload)) {
+        if ($PSBoundParameters.ContainsKey('OutputDirectory')) {
+            throw 'REQUIRED INSTALLATION FILES MISSING: no bundled payload to export. Use -Download, an existing SQL media path, or -RuleSourceDirectory with -OutputDirectory.'
+        }
         Write-Host @'
 KOREAN RULES - PREPARE INSTALLATION FILES
-No source selected. Nothing downloaded, extracted or changed. Choose ONE:
+No source selected and no bundled payload found. Nothing downloaded, extracted
+or changed. Choose ONE:
 
   .\Install-KoreanRules.ps1 -Download
   .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
@@ -41,9 +48,9 @@ Optional second positional argument: a NEW output directory.
   .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
 
 Download is explicit (about 749 MB). An existing folder is an INPUT, not a
-download destination. To choose a destination use -OutputDirectory with -Download.
-Output defaults to a unique folder under C:\Temp\KoreanRules-Ready.
-Successful preparation also fills this kit's default payload folder for Set.
+download destination. Preparation fills only this kit's adjacent payload folder.
+Use -OutputDirectory only when you want an additional portable kit and ZIP.
+If payload is already bundled, no arguments verifies it without writing files.
 Use elevated 64-bit Windows PowerShell 5.1 to prepare files.
 Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
 '@ -ForegroundColor Cyan
@@ -60,6 +67,9 @@ Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
         if ($PSCmdlet.ParameterSetName -eq 'ExistingRules') {
             $inputParameters.Path=$RuleSourceDirectory
             $inputParameters.RulesOnly=$true
+        } elseif ($useBundledPayload) {
+            $inputParameters.Path=$adjacentPayload
+            $inputParameters.RulesOnly=$true
         }
         $inputSource=Resolve-KBPreparationInput @inputParameters
         $sourceKind=$inputSource.Kind
@@ -68,17 +78,17 @@ Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
             Assert-KBPayload -Directory $RuleSourceDirectory
         } else { $SqlPackagePath=$inputSource.Path }
     }
-    if (-not $PSBoundParameters.ContainsKey('OutputDirectory')) {
-        $OutputDirectory=Join-Path 'C:\Temp\KoreanRules-Ready' ([guid]::NewGuid().ToString('N'))
+    $output=$null
+    if ($PSBoundParameters.ContainsKey('OutputDirectory')) {
+        $output=Assert-KBLocalWritePath (ConvertTo-KBInputPath $OutputDirectory)
+        if (Test-Path -LiteralPath $output) { throw "Output directory already exists: $output. Choose a NEW -OutputDirectory, or omit it to prepare only this kit. Existing files were not replaced." }
     }
-    $output=Assert-KBLocalWritePath (ConvertTo-KBInputPath $OutputDirectory)
-    $work=Assert-KBLocalWritePath (ConvertTo-KBInputPath $WorkRoot)
-    if (Test-Path -LiteralPath $output) { throw "Output directory already exists: $output. Choose a NEW -OutputDirectory, or omit it for a unique default. Existing files were not replaced." }
-    Assert-KBAdministrator
-    if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup') {
-        Write-Warning 'Exchange installation detected. Building here uses local disk and CPU; a management workstation is recommended. This prepares files only, not Exchange remediation.'
-    }
+    if (-not $useBundledPayload -or $output) { Assert-KBAdministrator }
     if ($sourceKind -eq 'Media') {
+        $work=Assert-KBLocalWritePath (ConvertTo-KBInputPath $WorkRoot)
+        if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup') {
+            Write-Warning 'Exchange installation detected. Extraction uses local disk and CPU; a management workstation is recommended. This prepares files only, not Exchange remediation.'
+        }
         if ($Download) {
             $null=New-Item -Path $work -ItemType Directory -Force
             $runDirectory=Join-Path $work ([guid]::NewGuid().ToString('N'))
@@ -106,7 +116,7 @@ Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
             $SqlPackagePath=$complete
         }
     }
-    if ($null -eq $runDirectory) {
+    if ($sourceKind -eq 'Media' -and $null -eq $runDirectory) {
         $null=New-Item -Path $work -ItemType Directory -Force
         $runDirectory=Join-Path $work ([guid]::NewGuid().ToString('N'))
         $null=New-Item -Path $runDirectory -ItemType Directory
@@ -127,29 +137,38 @@ Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
         $RuleSourceDirectory=Join-Path $files 'Program Files\Microsoft SQL Server\MSSQL.X\MSSQL\Binn\ftcomponents\wordbreakers'
         Assert-KBPayload -Directory $RuleSourceDirectory
     }
-    $null=New-Item -Path $output -ItemType Directory
-    $package=Join-Path $output 'Exchange-KoreanRules'
-    $payload=Join-Path $package 'payload'
-    $null=New-Item -Path $payload -ItemType Directory -Force
-    foreach ($name in @('KoreanRules.psd1','KoreanRules.psm1','Install-KoreanRules.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1','README.txt')) {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $package $name)
+    $zip=$null
+    $zipHash=$null
+    $package=$PSScriptRoot
+    $payload=$RuleSourceDirectory
+    if ($output) {
+        $null=New-Item -Path $output -ItemType Directory
+        $package=Join-Path $output 'Exchange-KoreanRules'
+        $payload=Join-Path $package 'payload'
+        $null=New-Item -Path $payload -ItemType Directory -Force
+        foreach ($name in @('KoreanRules.psd1','KoreanRules.psm1','Install-KoreanRules.ps1','Get-KoreanRulesState.ps1','Set-KoreanRulesState.ps1','README.txt')) {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $package $name)
+        }
+        foreach ($directory in @('private','examples','docs')) { $null=New-Item -Path (Join-Path $package $directory) -ItemType Directory }
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $package 'private')
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\servers.csv') -Destination (Join-Path $package 'examples')
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\Reporting-and-Splunk.md') -Destination (Join-Path $package 'docs')
+        foreach ($rule in $spec.Rules) { Copy-Item -LiteralPath (Join-Path $RuleSourceDirectory $rule.Name) -Destination (Join-Path $payload $rule.Name) }
+        Assert-KBPayload -Directory $payload
+        $manifest=@(Get-ChildItem -LiteralPath $package -File -Recurse | Sort-Object FullName | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,$_.FullName.Substring($package.Length+1)
+        })
+        $manifest | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding ASCII
+        $zip=Join-Path $output ('Exchange-KoreanRules-{0}-deploy.zip' -f $spec.PackageVersion)
+        Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal
+        $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+        "$zipHash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath "$zip.sha256" -Encoding ASCII
     }
-    foreach ($directory in @('private','examples','docs')) { $null=New-Item -Path (Join-Path $package $directory) -ItemType Directory }
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'private\Invoke-KoreanRulesOperation.ps1') -Destination (Join-Path $package 'private')
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\servers.csv') -Destination (Join-Path $package 'examples')
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\Reporting-and-Splunk.md') -Destination (Join-Path $package 'docs')
-    foreach ($rule in $spec.Rules) { Copy-Item -LiteralPath (Join-Path $RuleSourceDirectory $rule.Name) -Destination (Join-Path $payload $rule.Name) }
-    Assert-KBPayload -Directory $payload
-    $manifest=@(Get-ChildItem -LiteralPath $package -File -Recurse | Sort-Object FullName | ForEach-Object {
-        '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,$_.FullName.Substring($package.Length+1)
-    })
-    $manifest | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding ASCII
-    $zip=Join-Path $output ('Exchange-KoreanRules-{0}-deploy.zip' -f $spec.PackageVersion)
-    Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal
-    $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
-    "$zipHash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath "$zip.sha256" -Encoding ASCII
-    $defaultPayload = Initialize-KBDefaultPayload -SourceDirectory $payload -PackageDirectory $PSScriptRoot
-    Write-Host "Korean Rules installation files prepared: $payload" -ForegroundColor Green
+    $defaultPayload = if ($useBundledPayload -and -not $output) { $adjacentPayload } else {
+        Initialize-KBDefaultPayload -SourceDirectory $payload -PackageDirectory $PSScriptRoot
+    }
+    if (-not $output) { $payload=$defaultPayload }
+    if ($zip) { Write-Host "Optional portable package created: $zip" -ForegroundColor Green }
     Write-Host "Default payload ready for this kit: $defaultPayload" -ForegroundColor Green
     Write-Host 'No Exchange installation files were changed and no services were restarted.'
     Write-Host 'Next, from this same folder: .\Set-KoreanRulesState.ps1 -WhatIf'

@@ -113,15 +113,16 @@ Describe 'Guarded package builder' {
         if ($LegacySwitch) { $parameters.ManagementWorkstationConfirmed=$true }
         $result = & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') @parameters
         Test-Path -LiteralPath $result.Package | Should -BeTrue
-        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -like '*Exchange installation detected*' }
+        Should -Invoke Write-Warning -Times 0 -Exactly
         Should -Invoke Assert-KBAdministrator -Times 1 -Exactly
         Should -Invoke Assert-KBPayload -Times 2 -Exactly
         Should -Invoke Start-Process -Times 0 -Exactly
         Should -Invoke Invoke-WebRequest -Times 0 -Exactly
     }
 
-    It 'allows extract-only media builds on Exchange via <SourceMode> without confirmation' -ForEach @(
-        @{ SourceMode='Download' }, @{ SourceMode='ExistingMedia' }
+    It 'allows extract-only media builds via <SourceMode> with portable output <Portable>' -ForEach @(
+        @{ SourceMode='Download';Portable=$true }, @{ SourceMode='ExistingMedia';Portable=$true },
+        @{ SourceMode='Download';Portable=$false }, @{ SourceMode='ExistingMedia';Portable=$false }
     ) {
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
         $media = Join-Path $TestDrive 'fake-sql.exe'
@@ -148,15 +149,22 @@ Describe 'Guarded package builder' {
             }
             [pscustomobject]@{ ExitCode=0 }
         }
-        $parameters = @{ ErrorAction='Stop'; OutputDirectory=$script:output; WorkRoot=$script:work }
+        $parameters = @{ ErrorAction='Stop'; WorkRoot=$script:work }
+        if ($Portable) { $parameters.OutputDirectory=$script:output }
         if ($SourceMode -eq 'Download') { $parameters.Download=$true }
         else { $parameters.SqlPackagePath=$media }
         $result = & (Join-Path $script:legacyRoot 'Build-KB5130098Package.ps1') @parameters
-        Test-Path -LiteralPath $result.Package | Should -BeTrue
+        if ($Portable) {
+            Test-Path -LiteralPath $result.Package | Should -BeTrue
+        } else {
+            $result.Package | Should -BeNullOrEmpty
+            $result.PayloadDirectory | Should -Be (Join-Path $script:packageRoot 'payload')
+            Test-Path -LiteralPath $script:output | Should -BeFalse
+        }
         Should -Invoke Write-Warning -Times 1 -Exactly
         Should -Invoke Assert-KBIdentity -Times 1 -Exactly
         Should -Invoke Get-AuthenticodeSignature -Times 1 -Exactly
-        Should -Invoke Assert-KBPayload -Times 2 -Exactly
+        Should -Invoke Assert-KBPayload -Times $(if ($Portable) { 2 } else { 1 }) -Exactly
         Should -Invoke Start-Process -Times 2 -Exactly
         Should -Invoke Invoke-WebRequest -Times $(if ($SourceMode -eq 'Download') { 1 } else { 0 }) -Exactly
     }
@@ -271,7 +279,7 @@ Describe 'Serial fleet rollout with mocked remoting' {
 
     It 'never connects to the second server before recovery attestation on the first' {
         $ConfirmPreference = 'High'
-        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved
+        $result = Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com,EX02.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch
         ($global:KB5130098TestContext.Events -join '|') | Should -Be 'Connect EX01.example.com|Apply EX01.example.com|Attest EX01.example.com|Connect EX02.example.com|Apply EX02.example.com|Attest EX02.example.com'
         $report = Get-Content -LiteralPath $result.Report -Raw | ConvertFrom-Json
         $report.Count | Should -Be 2
@@ -453,13 +461,12 @@ Describe 'Serial fleet rollout with mocked remoting' {
     }
 
     It 'WhatIf makes no connections and writes no report' {
-        Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -MaintenanceWindowApproved -WhatIf
+        Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -WhatIf
         Should -Invoke New-PSSession -ModuleName KoreanRules -Times 0 -Exactly
         (Test-Path -LiteralPath $script:reports) | Should -BeFalse
     }
 
-    It 'requires maintenance approval and explicit unique host names' {
-        { Invoke-KBFleet -Mode Apply -ComputerName EX01.example.com -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -RestartSearch -Confirm:$false } | Should -Throw '*MaintenanceWindowApproved*'
+    It 'still requires explicit unique host names' {
         { Invoke-KBFleet -ComputerName 'EX*' -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*explicit DNS*'
         { Invoke-KBFleet -ComputerName EX01,EX01 -PackageDirectory $script:packageRoot -ReportDirectory $script:reports -Confirm:$false } | Should -Throw '*Duplicate*'
         Should -Invoke New-PSSession -ModuleName KoreanRules -Times 0 -Exactly
@@ -629,7 +636,7 @@ Describe 'Legacy fleet entry-point compatibility' {
         Mock Write-KBReportSummary {}
     }
 
-    It 'retains the legacy explicit maintenance and implicit restart contract for Apply' {
+    It 'accepts the legacy maintenance switch and retains legacy implicit restart for Apply' {
         $result = & (Join-Path $script:legacyRoot 'Invoke-KB5130098Fleet.ps1') -Mode Apply `
             -ComputerName EX01.example.com -ReportDirectory 'C:\Fixture' -MaintenanceWindowApproved -Confirm:$false
         $result.Servers | Should -Be 1

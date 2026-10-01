@@ -535,7 +535,7 @@ Prepare the files in elevated PowerShell:
 
 Or supply existing Microsoft media/rules using -SqlPackagePath / -RuleSourceDirectory.
 A successful Install prepares the default payload folder beside these scripts,
-so Set from the same kit needs no path argument. Install also returns the portable
+so Set from the same kit needs no path argument. With -OutputDirectory, Install returns the portable
 PayloadDirectory and ExpandedPackage. If using another kit or computer, copy the
 complete generated package or use the returned PayloadDirectory explicitly with
 -PayloadDirectory. Do not copy SQL's DLL into Exchange.
@@ -739,11 +739,8 @@ function Invoke-KBLocal {
     if ($Mode -eq 'Detect') {
         return Get-KBDetection
     }
-    if ($RestartSearch -and -not $MaintenanceWindowApproved) {
-        throw 'Restart requires -MaintenanceWindowApproved and an agreed maintenance window.'
-    }
-    if ($Mode -eq 'Rollback' -and (-not $MicrosoftSupportApprovedRollback -or -not $MaintenanceWindowApproved)) {
-        throw 'Rollback is not part of the published workaround. Require Microsoft Support approval and a maintenance window.'
+    if ($Mode -eq 'Rollback' -and -not $MicrosoftSupportApprovedRollback) {
+        throw 'Rollback is not part of the published workaround. Require Microsoft Support approval.'
     }
     $null = Assert-KBLocalWritePath $StateRoot
     $mutex = New-Object Threading.Mutex $false, 'Global\Exchange-KB5130098'
@@ -1156,7 +1153,6 @@ function Invoke-KBFleet {
     $context = New-KBReportContext @contextParameters
     $reportRoot = $context.Root
     if ($RestartSearch -and $Mode -ne 'Apply') { throw 'RestartSearch is valid only with remote Apply.' }
-    if ($RestartSearch -and -not $MaintenanceWindowApproved) { throw 'Restart requires an agreed window and -MaintenanceWindowApproved.' }
     if ($RestartSearch -and $Quiet -and -not $WhatIfPreference) {
         throw 'Remote restart requires interactive human recovery attestation. Omit -AsJson and read rollout.json for structured results.'
     }

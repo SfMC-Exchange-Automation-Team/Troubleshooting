@@ -124,13 +124,14 @@ Describe 'Local deployment with isolated filesystem fixtures' {
             @(Get-ChildItem -LiteralPath $script:native -File).Count | Should -Be 0
         }
 
-        It 'requires explicit restart approval' {
-            { Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -Confirm:$false } | Should -Throw '*MaintenanceWindowApproved*'
-            Should -Invoke Restart-KBHostController -Times 0 -Exactly
+        It 'accepts an explicit restart without the legacy maintenance approval switch' {
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -Confirm:$false
+            $result.Status | Should -Be 'RestartedWorkloadValidationRequired'
+            Should -Invoke Restart-KBHostController -Times 1 -Exactly
         }
 
         It 'WhatIf performs preflight but writes nothing and never restarts' {
-            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -MaintenanceWindowApproved -WhatIf
+            $result = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -RestartSearch -WhatIf
             $result.Status | Should -Be 'NoChanges'
             (Test-Path -LiteralPath $script:state) | Should -BeFalse
             @(Get-ChildItem -LiteralPath $script:native -File).Count | Should -Be 0
@@ -215,13 +216,13 @@ Describe 'Local deployment with isolated filesystem fixtures' {
             Should -Invoke Restart-KBHostController -Times 0 -Exactly
         }
 
-        It 'rollback requires Support and maintenance approval' {
+        It 'rollback still requires Support approval' {
             { Invoke-KBLocal -Mode Rollback -StateRoot $script:state -Confirm:$false } | Should -Throw '*Support approval*'
         }
 
         It 'rollback only removes the recorded exact files and preserves backups' {
             $apply = Invoke-KBLocal -Mode Apply -PayloadDirectory $script:payload -StateRoot $script:state -Confirm:$false
-            $rollback = Invoke-KBLocal -Mode Rollback -ReceiptPath $apply.ReceiptPath -StateRoot $script:state -MicrosoftSupportApprovedRollback -MaintenanceWindowApproved -Confirm:$false
+            $rollback = Invoke-KBLocal -Mode Rollback -ReceiptPath $apply.ReceiptPath -StateRoot $script:state -MicrosoftSupportApprovedRollback -Confirm:$false
             $rollback.Status | Should -Be 'RolledBackRestartRequired'
             @(Get-ChildItem -LiteralPath $script:native -File).Count | Should -Be 0
             Assert-KBPayload -Directory $rollback.LogDirectory
