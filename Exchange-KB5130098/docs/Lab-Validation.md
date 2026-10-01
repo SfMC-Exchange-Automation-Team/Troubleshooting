@@ -1,8 +1,104 @@
 # Exchange Korean Rules: validation and operational limits
 
-## Current 2.1.0 English and Hindi media
+## 2.2.0 payload-default contract and evidence boundary
 
-The [bilingual walkthroughs](Walkthroughs.md) were regenerated for current 2.1.0
+The current [operator guide](../README.md) documents connected defaults: after
+a successful portable build, Install prepares/verifies `payload` beside the
+invoked `Install-KoreanRules.ps1`. Set from that same complete writable kit and
+computer uses the adjacent payload without `$build` capture or an override.
+Existing matching exact BINs are reused without rewriting; a missing sibling
+is added only after existing files verify. Mismatches, refused paths and write
+failures remain hard errors. Install never writes Exchange Native.
+
+Portable output still defaults to
+`C:\Temp\KoreanRules-Ready\<unique-id>\Exchange-KoreanRules`, with an optional
+`OutputDirectory` override. Returned `PayloadDirectory` remains portable;
+`DefaultPayloadDirectory` identifies the adjacent copy. Explicit Set payload
+overrides take precedence, with no hidden fallback, latest-folder scan or
+persisted global path. Downloads, Apply and restarts are not implicit.
+Generated Microsoft binaries, including the adjacent source copy, stay local
+and are excluded from source publication.
+
+The 2.2.0 verification results below are distinct from historical evidence,
+which belongs to its named releases. The 2.1.0 source ZIP and sidecar are
+preserved unchanged under `archive\downloads`.
+The 2.2.0 source-kit tests exclude only the repository-only
+`ArchiveLayout.Tests.ps1`, which requires historical repository assets.
+Repository and source-kit suite totals therefore need separate evidence.
+
+**Media correction:** the English/Hindi 2.1.0 recordings and companions were not
+regenerated for 2.2.0. Their manual payload-handoff section is superseded by the
+same-folder default; see [walkthroughs](Walkthroughs.md).
+
+### Preview failure found during 2.2.0 validation and corrected
+
+A live preview exposed an identity-hashing failure under inherited global
+`WhatIf`. In Windows PowerShell, the `Get-FileHash` implementation's
+`Resolve-Path | ForEach-Object ProviderPath` pipeline was suppressed by that
+preference, producing a null hash. This was a real preview failure, not evidence
+of a mismatching Exchange DLL or successful payload verification.
+
+`Get-KBIdentity` now computes SHA256 through a read-only .NET file stream instead
+of `Get-FileHash`. The fix does not change preference variables or remove the
+caller's dry-run gates; it permits the identity read, not Exchange writes,
+Apply or restart.
+
+Repository and source-kit tests had passed before this fix, but those earlier
+results did not validate the revised implementation. The final reruns below
+cover the corrected code after the fixture correction.
+
+### 2.2.0 final repository and source-archive verification
+
+On October 1, 2026, the final repository suite passed **334 tests**.
+An independent run from the freshly extracted
+[`Exchange-KoreanRules-2.2.0-source.zip`](../downloads/Exchange-KoreanRules-2.2.0-source.zip)
+passed **329 tests**. The difference is the five repository-only archive/media
+layout cases in `ArchiveLayout.Tests.ps1`, intentionally not bundled because
+they depend on historical repository assets.
+
+The source ZIP contains **24 entries, including its manifest**, with **zero
+vendor binaries**. Every included file hash was verified and all scripts
+parsed successfully. Compatibility entry points reside under
+`archive\compatibility`; the release root has the three operator scripts.
+Locally prepared Microsoft payload and private lab evidence are not source
+deliverables.
+
+Source archive SHA256:
+`6C2CF55A0303661F554055A026BEBC09FDB52472C27B67479D3FB61BC11B2F5D`
+
+### 2.2.0 independent native live checks
+
+The corrected code passed bounded checks in a separate native Windows PowerShell
+kit on a lab server, without updating the established stable working folder:
+
+- Two Install runs exited `0`, verifying the pinned hashes in both the portable
+  payload and adjacent default payload, including returned
+  `DefaultPayloadDirectory`. The repeat run preserved the adjacent files'
+  hashes, ACLs and timestamps.
+- A fresh local Set process with `-WhatIf`, no payload override and an unrelated
+  current working directory resolved the kit's default payload and returned
+  exit `20`, `RuleFilesPresentStop`, for an already-installed server. This was
+  an expected no-change skip, not a new Apply or recovery result.
+- A fresh remote `Set <target> -WhatIf` process exited `0` with `Servers=0` and
+  no target contact. This establishes no-contact planning, not remote inventory
+  or remediation.
+
+Installed rule hashes/ACLs, the Exchange Native directory ACL, service/PID state
+and NodeRunner identities remained unchanged. The original failed-run evidence
+(43 files) was preserved locally before both test-owned temporary roots were
+cleaned up. Private evidence paths and machine identities are not published.
+The stable lab kit remained at 2.1.0 at this point; staging it is a separate
+step, not implied by these independent-kit checks.
+
+These checks validate repeated local preparation, default-path handoff across
+fresh processes and dry-run behavior. They do not establish SQL download or
+extraction, Exchange Apply, service restart, workload recovery or a customer
+rollout. The repository/source-suite results above remain separate from these
+bounded live checks.
+
+## Historical 2.1.0 English and Hindi media
+
+The [bilingual walkthroughs](Walkthroughs.md) were regenerated for then-current 2.1.0
 behavior: positional and quoted installer inputs, no-argument guidance, incomplete
 media diagnostics, expected yellow skips, continued inspection and practical
 operator next steps. The Hindi edition has Hindi narration and Devanagari
@@ -37,14 +133,14 @@ artifacts. Recognition is a quality check, not a claim of perfect transcription
 or a human voice recording. All published caption/transcript text comes from the
 reviewed narration source, not from automatic speech-recognition output.
 
-The current repository suite passed **326 tests**, including the updated layout
+At that media refresh, the repository suite passed **326 tests**, including the updated layout
 check for exactly two active language videos and their companions. The previous
 2.0.0 media was moved to the archive with its original hashes unchanged. The
 published 2.1.0 source ZIP was not rebuilt or modified; its separate 321-test
 release evidence remains below. No Apply, SQL extraction or workload-recovery
 pilot was performed to create these media.
 
-## Repository archive cleanup
+## Historical repository archive cleanup
 
 Superseded material is indexed in the [archive](../archive/README.md).
 The cleanup moved **22 historical download/checksum files** and **11 older media
@@ -59,7 +155,7 @@ The **326-test repository suite passed**, including native compatibility
 execution, current runtime packaging and five layout/checksum regressions.
 Local Markdown links were checked after the moves.
 
-This is repository housekeeping, not a new code/payload release or lab deployment.
+That cleanup was repository housekeeping, not a new code/payload release or lab deployment.
 Published ZIPs were not rebuilt; the 2.1.0 source ZIP keeps its existing internal
 layout and checksum. No files were removed from an operator or lab working folder.
 
@@ -73,7 +169,7 @@ layout and checksum. No files were removed from an operator or lab working folde
 - **2.1.0 final offline worktree validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 independent source-archive validation:** September 30, 2026; **321 of 321 tests passed**.
 - **2.1.0 stable-folder/native lab verification:** September 30, 2026; **7 cases passed**.
-- **Current operator interface:** 2.1.0; see the [written guide](../README.md).
+- **Current operator interface:** 2.2.0; see the [written guide](../README.md).
 
 This separates release-specific offline worktree and independent source-archive results,
 no-contact runtime checks and sanitized historical evidence.
@@ -91,7 +187,7 @@ Use these names for current operations:
 
 | Command | Scope |
 |---|---|
-| `Install-KoreanRules.ps1` | Build verified payload/runtime; no SQL installation or Exchange Apply |
+| `Install-KoreanRules.ps1` | Build verified portable runtime and prepare/verify adjacent payload; no SQL installation or Exchange Apply |
 | `Get-KoreanRulesState.ps1` | Detect-only local, explicit-name or CSV inventory; no payload required |
 | `Set-KoreanRulesState.ps1` | Apply by default; `-Rollback` is local and receipt-bound |
 
@@ -118,7 +214,7 @@ existing unversioned working folder.
 
 ## 2.1.0 input contract and evidence boundary
 
-This release documents installer/input and routine-skip guidance changes, not
+That release documented installer/input and routine-skip guidance changes, not
 a new Exchange remediation or workload-recovery result:
 
 - Install without arguments prints usage/examples and exits `0` with no prompt,
@@ -160,7 +256,7 @@ validation.
 ## 2.1.0 independent archive and native lab verification
 
 On September 30, 2026, the final
-[`Exchange-KoreanRules-2.1.0-source.zip`](../downloads/Exchange-KoreanRules-2.1.0-source.zip)
+[`Exchange-KoreanRules-2.1.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.1.0-source.zip)
 independently passed **321 of 321 tests**. All **22 manifest-covered files**
 were verified across **23 archive entries**. The source archive contains
 **no vendor binaries**.

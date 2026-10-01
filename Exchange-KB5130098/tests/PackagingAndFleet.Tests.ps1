@@ -19,6 +19,7 @@ Describe 'Guarded package builder' {
         Mock Import-Module {}
         Mock Assert-KBAdministrator {}
         Mock Assert-KBPayload {}
+        Mock Initialize-KBDefaultPayload { Join-Path $PackageDirectory 'payload' }
         Mock Test-Path { [IO.File]::Exists($LiteralPath) -or [IO.Directory]::Exists($LiteralPath) }
         Mock Test-Path { $false } -ParameterFilter { $LiteralPath -eq 'HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup' }
         Mock Start-Process { throw 'Tests must not launch installers' }
@@ -38,6 +39,10 @@ Describe 'Guarded package builder' {
             Select-Object -ExpandProperty Name | Sort-Object) |
             Should -Be @('Get-KoreanRulesState.ps1','Install-KoreanRules.ps1','Set-KoreanRulesState.ps1')
         $result.PayloadDirectory | Should -Be (Join-Path $result.ExpandedPackage 'payload')
+        $result.DefaultPayloadDirectory | Should -Be (Join-Path $script:packageRoot 'payload')
+        Should -Invoke Initialize-KBDefaultPayload -Times 1 -Exactly -ParameterFilter {
+            $PackageDirectory -eq $script:packageRoot -and $SourceDirectory -like '*\Exchange-KoreanRules\payload'
+        }
         @($files | Where-Object Name -eq 'servers.csv').Count | Should -Be 1
         @($files | Where-Object Name -eq 'Reporting-and-Splunk.md').Count | Should -Be 1
         @($files | Where-Object Extension -in '.exe', '.msi', '.dll').Count | Should -Be 0
@@ -51,6 +56,16 @@ Describe 'Guarded package builder' {
         $plan.Servers | Should -Be 0
         $plan.Targets | Should -Be @('example.invalid')
         Should -Invoke Assert-KBPayload -Times 2 -Exactly
+        Should -Invoke Start-Process -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+    }
+
+    It 'does not announce a ready default when adjacent payload preparation fails' {
+        Mock Initialize-KBDefaultPayload { throw 'Default payload preparation failed: injected write denial' }
+        Mock Write-Host {}
+        { & (Join-Path $script:packageRoot 'Install-KoreanRules.ps1') -ErrorAction Stop -RuleSourceDirectory $script:rules -OutputDirectory $script:output -WorkRoot $script:work } |
+            Should -Throw '*Default payload preparation failed*'
+        Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $ForegroundColor -eq 'Green' }
         Should -Invoke Start-Process -Times 0 -Exactly
         Should -Invoke Invoke-WebRequest -Times 0 -Exactly
     }

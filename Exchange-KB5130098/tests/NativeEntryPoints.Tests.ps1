@@ -776,7 +776,7 @@ Describe 'Native builder without a workstation-confirmation requirement' {
         $ast = [Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $script:packageRoot 'KoreanRules.psm1'), [ref]$tokens, [ref]$errors)
         if ($errors.Count) { throw 'Production module does not parse.' }
-        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload','ConvertTo-KBInputPath','Resolve-KBPreparationInput')) {
+        $helpers = foreach ($name in @('Get-KBSpecification','Assert-KBLocalWritePath','Get-KBIdentity','Assert-KBIdentity','Assert-KBPayload','ConvertTo-KBInputPath','Resolve-KBPreparationInput','Initialize-KBDefaultPayload','Copy-KBRuleNew')) {
             $definition = $ast.Find({
                 param($node)
                 $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -789,7 +789,7 @@ $script:Spec = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot '
 foreach ($rule in $script:Spec.Rules) {
     $path = Join-Path (Join-Path $PSScriptRoot 'rules') $rule.Name
     $rule.Bytes = (Get-Item -LiteralPath $path).Length
-    $rule.SHA256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    $rule.SHA256 = '__FIXTURE_SHA256__'
 }
 function Assert-KBAdministrator {}
 function Test-Path {
@@ -804,7 +804,30 @@ function Test-Path {
 }
 function Start-Process { throw 'Native builder fixtures must never launch installers.' }
 function Invoke-WebRequest { throw 'Native builder fixtures must never download software.' }
+function Get-FileHash {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$LiteralPath,[string]$Algorithm='SHA256')
+    if ($PSCmdlet.ShouldProcess($LiteralPath,'Compute hash')) {
+        Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+    }
+}
+function Invoke-KBAutoElevation { return $null }
+function New-KBReportContext { [pscustomobject]@{NoWrite=$true;RunId='fixture'} }
+function ConvertTo-KBReportRows { [pscustomobject]@{Status='NoChanges'} }
+function Save-KBReportExports { return $null }
+function Invoke-KBLocal {
+    [CmdletBinding(SupportsShouldProcess)]
+    param($Mode,$PayloadDirectory,$StateRoot,$ReceiptPath,[switch]$RestartSearch,
+        [switch]$MaintenanceWindowApproved,[switch]$MicrosoftSupportApprovedRollback,
+        $TimeoutSeconds,$StabilitySeconds)
+    if ($Mode -eq 'Detect') { return [pscustomobject]@{Status='EligibleMissingBothRules'} }
+    Assert-KBPayload -Directory $PayloadDirectory
+    if (-not $WhatIfPreference) { throw 'Hash validation must not disable the caller preview.' }
+    [Console]::WriteLine("DEFAULT-PAYLOAD-VERIFIED:$PayloadDirectory")
+    [pscustomobject]@{Status='NoChanges'}
+}
 '@
+        $fixture = $fixture.Replace('__FIXTURE_SHA256__', (Get-FileHash -LiteralPath (Join-Path $script:builderRules 'ko.token.rule.bin') -Algorithm SHA256).Hash)
         ($fixture + "`r`n" + ($helpers -join "`r`n")) |
             Set-Content -LiteralPath (Join-Path $script:builderRoot 'KoreanRules.psm1') -Encoding ASCII
     }
@@ -831,7 +854,36 @@ function Invoke-WebRequest { throw 'Native builder fixtures must never download 
         foreach ($rule in @('ko.token.rule.bin','ko.complex.rule.bin')) {
             (Get-FileHash -LiteralPath (Join-Path $output "Exchange-KoreanRules\payload\$rule")).Hash |
                 Should -Be (Get-FileHash -LiteralPath (Join-Path $script:builderRules $rule)).Hash
+            (Get-FileHash -LiteralPath (Join-Path $script:builderRoot "payload\$rule")).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $script:builderRules $rule)).Hash
         }
+        $result.Output | Should -Match 'Default payload ready for this kit'
+    }
+
+    It 'allows Set from the original kit in a new process without passing PayloadDirectory' {
+        $output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $installer = Join-Path $script:builderRoot 'Install-KoreanRules.ps1'
+        $build = Invoke-NativeFixture -Arguments ('-File "{0}" "{1}" "{2}" -WorkRoot "{3}"' -f $installer,$script:builderRules,$output,$work)
+        $build.ExitCode | Should -Be 0 -Because $build.Error
+        $child = Join-Path $TestDrive 'verify-default.ps1'
+        @'
+param($Kit,$PayloadDirectory)
+$ErrorActionPreference='Stop'
+$WhatIfPreference=$true
+$parameters=@{}
+if ($PayloadDirectory) { $parameters.PayloadDirectory=$PayloadDirectory }
+& (Join-Path $Kit 'Set-KoreanRulesState.ps1') -WhatIf -AsJson @parameters
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $child -Encoding ASCII
+        $result = Invoke-NativeFixture -Arguments ('-File "{0}" -Kit "{1}"' -f $child,$script:builderRoot) -WorkingDirectory $TestDrive
+        $result.ExitCode | Should -Be 0 -Because $result.Error
+        $result.Output | Should -Match ('DEFAULT-PAYLOAD-VERIFIED:' + [regex]::Escape((Join-Path $script:builderRoot 'payload')))
+        $result.Error | Should -BeNullOrEmpty
+        $override = Invoke-NativeFixture -Arguments ('-File "{0}" -Kit "{1}" -PayloadDirectory "{2}"' -f $child,$script:builderRoot,$script:builderRules) -WorkingDirectory $TestDrive
+        $override.ExitCode | Should -Be 0 -Because $override.Error
+        $override.Output | Should -Match ('DEFAULT-PAYLOAD-VERIFIED:' + [regex]::Escape($script:builderRules))
+        $override.Error | Should -BeNullOrEmpty
     }
 
     It 'runs with no arguments without prompting downloading or requiring elevation' -ForEach @(

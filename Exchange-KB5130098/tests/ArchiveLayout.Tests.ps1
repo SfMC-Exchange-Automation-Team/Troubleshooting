@@ -32,7 +32,7 @@ Describe 'Current repository and historical archive separation' {
         @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File -Recurse).Count | Should -Be 2
         foreach ($language in @(@{Folder='en';Name='English'},@{Folder='hi';Name='Hindi'})) {
             foreach ($suffix in @('Walkthrough.mp4','Narration.m4a','Captions.srt','Captions.vtt','Transcript.txt','Poster.png')) {
-                $relative='docs\{0}\Exchange-KoreanRules-{1}-{2}-{3}' -f $language.Folder,$script:version,$language.Name,$suffix
+                $relative='docs\{0}\Exchange-KoreanRules-{1}-{2}-{3}' -f $language.Folder,'2.1.0',$language.Name,$suffix
                 Test-Path -LiteralPath (Join-Path $script:root $relative) -PathType Leaf | Should -BeTrue
             }
         }

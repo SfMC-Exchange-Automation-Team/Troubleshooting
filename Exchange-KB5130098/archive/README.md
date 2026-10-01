@@ -10,11 +10,16 @@ caption, transcript or poster was deleted or changed during this move.
 
 ## Current files (outside this archive)
 
-- [Install-KoreanRules.ps1](../Install-KoreanRules.ps1) — prepare verified files.
+- [Install-KoreanRules.ps1](../Install-KoreanRules.ps1) — build a portable runtime and prepare/verify adjacent payload.
 - [Get-KoreanRulesState.ps1](../Get-KoreanRulesState.ps1) — inspect servers.
 - [Set-KoreanRulesState.ps1](../Set-KoreanRulesState.ps1) — change eligible servers.
 - [Latest source kit and checksum](../downloads).
-- [Most recent walkthrough and supporting documentation](../docs).
+- [Retained 2.1.0 walkthroughs and the 2.2.0 correction](../docs/Walkthroughs.md).
+
+The current release is **2.2.0**. After Install succeeds, Set in the same complete
+writable kit/computer uses its adjacent payload without a manual handoff.
+Microsoft binaries generated there remain local-only, not source-download
+contents. The release root retains exactly three operator scripts.
 
 ## Archived downloads
 
@@ -26,13 +31,14 @@ with its original SHA256 sidecar:
 | 1.0.1, 1.0.2 | Exchange-KB5130098 |
 | 1.1.0, 1.1.1, 1.1.2 | Exchange-KB5130098 |
 | 1.2.0, 1.2.1, 1.2.2, 1.2.3 | Exchange-KB5130098 |
-| 2.0.0, 2.0.1 | Exchange-KoreanRules |
+| 2.0.0, 2.0.1, 2.1.0 | Exchange-KoreanRules |
 
 Archives are immutable snapshots: their internal layouts and instructions
 reflect those versions. They are not instructions for the current release.
-The latest 2.1.0 source ZIP is also unchanged and remains in the active
-[downloads folder](../downloads); its historical compatibility wrappers still
-occupy their original locations inside that already-published ZIP.
+The 2.1.0 source ZIP and sidecar are also preserved unchanged here; its historical
+compatibility wrappers still occupy their original locations inside that ZIP.
+The latest 2.2.0 source kit and checksum belong in the active
+[downloads folder](../downloads).
 
 ## Historical recordings
 
@@ -40,8 +46,10 @@ occupy their original locations inside that already-published ZIP.
 - [1.2.1 video, audio and companions](media/1.2.1)
 - [2.0.0 video, audio and companions](media/2.0.0)
 
-The current [2.1.0 English and Hindi walkthroughs](../docs/Walkthroughs.md)
-remain in the active language folders. Use the [written guide](../README.md)
+The retained [2.1.0 English and Hindi walkthroughs](../docs/Walkthroughs.md)
+remain in the active language folders and were not regenerated for 2.2.0.
+Their manual payload-handoff section is superseded by the adjacent default.
+Use the [written guide](../README.md)
 for current operating instructions; archiving does not make old advice current.
 
 ## Compatibility entry points

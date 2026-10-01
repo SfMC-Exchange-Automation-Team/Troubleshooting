@@ -1,4 +1,11 @@
-Exchange Korean Rules | 2.1.0
+Exchange Korean Rules | 2.2.0
+
+2.2.0: After a successful portable build, Install prepares/verifies payload
+beside Install-KoreanRules.ps1. Set in that SAME folder/computer uses it by
+default; no $build capture or PayloadDirectory handoff is required. Keep the
+complete kit writable. No implicit download, Exchange Apply or restart.
+VIDEO CORRECTION: retained English/Hindi 2.1.0 media was not regenerated.
+Its manual payload-handoff section is superseded by these 2.2.0 defaults.
 
 2.1.0: Install with no arguments prints usage and exits 0 without prompts,
 download, elevation or file writes. Source first; optional NEW output second.
@@ -26,7 +33,7 @@ Historical evidence and limits: docs\Lab-Validation.md
 
 THREE RECOMMENDED COMMANDS
 
-Install-KoreanRules.ps1    Prepare verified payload and a deployable runtime.
+Install-KoreanRules.ps1    Build runtime and prepare/verify adjacent payload.
                           NOT SQL installation; NOT applying rules to Exchange.
 Get-KoreanRulesState.ps1   Detect only: local, -ComputerName, or -CsvPath.
 Set-KoreanRulesState.ps1   Apply by default; -Rollback is receipt-bound/local.
@@ -80,9 +87,12 @@ This exits 0 without prompting, downloading, elevating or writing files.
 For preparation choose ONE input in elevated Windows PowerShell. Download
 requires explicit -Download (approximately 749 MB of Microsoft media):
 
-  $build = .\Install-KoreanRules.ps1 -Download
+  .\Install-KoreanRules.ps1 -Download
+  .\Get-KoreanRulesState.ps1
+  .\Set-KoreanRulesState.ps1 -WhatIf
 
-Instead, use existing exact Microsoft media:
+Instead, use existing exact Microsoft media. Capturing $build in these
+alternative examples is optional, for portable output paths/build records:
 
   $build = .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
 
@@ -151,14 +161,25 @@ reports a concise failure once on stderr and exits 1. -ErrorAction Stop gives
 automation a catchable PowerShell exception. Correct source/download errors;
 they are not Exchange failures or default reasons to contact Support.
 
-  $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, ExtractionArtifacts
+  $build | Select-Object Package, SHA256, ExpandedPackage, PayloadDirectory, DefaultPayloadDirectory, ExtractionArtifacts
 
 Package is the generated ZIP; SHA256 is its hash; ExpandedPackage is the
-generated runtime folder; PayloadDirectory contains verified rules;
+generated runtime folder; PayloadDirectory still identifies its portable
+generated payload, preserving compatibility. DefaultPayloadDirectory identifies
+the verified payload beside the invoked Install-KoreanRules.ps1.
 ExtractionArtifacts identifies retained extraction artifacts.
 
-IMPORTANT: the original source folder is NOT populated with payload.
-Use the generated runtime or explicitly pass the returned directory:
+After a successful portable build, Install prepares/verifies the original
+script folder's payload. Both exact BINs are required. Matching existing files
+are reused without rewriting; a missing sibling is added only after existing
+files verify. Mismatching files, refused paths or write failures are hard
+errors, never overwritten or hidden by fallback. Install requires a writable
+complete kit and NEVER writes Exchange Native. The same folder can be reused.
+
+Set in the SAME folder/computer automatically uses that adjacent payload.
+There are no latest-folder scans, guessed paths or persisted global paths.
+An explicit alternate PayloadDirectory still takes precedence; its failures
+are not hidden. For example, after optionally capturing $build:
 
   .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
 
@@ -171,8 +192,11 @@ Missing-payload errors name the expected directory and both files:
   <entrypoint-folder>\payload\ko.token.rule.bin
   <entrypoint-folder>\payload\ko.complex.rule.bin
 
-Run Install with -Download or existing inputs, then select its PayloadDirectory;
+Run Install with -Download or existing inputs from this kit, then retry Set;
 or use -PayloadDirectory for an existing verified pair on the caller.
+The complete generated package includes its own payload when moved to another
+computer. Scripts copied individually into another folder need the complete
+kit plus payload, or the complete kit with an explicit payload override.
 Detection needs no payload. Remote Apply validates caller-side payload before
 connecting, rather than assuming a source checkout contains the vendor files.
 
@@ -184,7 +208,7 @@ Required payload:
 
 2. VERIFY AND STAGE
 
-Local build: Exchange-KoreanRules-2.1.0-deploy.zip
+Local build: Exchange-KoreanRules-2.2.0-deploy.zip
 Archive root: Exchange-KoreanRules
 Exactly three root .ps1 entry points: Install-KoreanRules.ps1,
 Get-KoreanRulesState.ps1 and Set-KoreanRulesState.ps1.
@@ -198,9 +222,16 @@ module. Missing components cause an explicit "package is incomplete" failure;
 restore the complete package, including private and the module, before retrying.
 Get needs no vendor payload but still requires the complete code package.
 
-Public source: downloads\Exchange-KoreanRules-2.1.0-source.zip
-Source also includes tests and legacy compatibility wrappers. No vendor rules,
+Public source: downloads\Exchange-KoreanRules-2.2.0-source.zip
+Source also includes tests and legacy compatibility wrappers under
+archive\compatibility, not at the release root. Only the repository-only
+ArchiveLayout.Tests.ps1 is excluded because it requires historical assets.
+No vendor rules,
 SQL media or payload-bearing deployment ZIP is published in this repository.
+Install's newly generated adjacent payload is local-only too: exclude these
+Microsoft binaries from source publication.
+The tool folder's .gitignore excludes /payload/ from normal Git staging;
+do not force-add it or include it in a source archive.
 Review licensing before redistribution of your generated runtime.
 
 Verify the ZIP hash and sidecar against the approved build record before
@@ -269,7 +300,8 @@ gets separate guidance to Download, select the real EXE, or use extracted rules.
 
 4. PREVIEW AND APPLY
 
-From the verified runtime, or add your caller-side -PayloadDirectory:
+From the same kit after Install succeeds, a complete generated runtime, or
+with an explicit alternate caller-side -PayloadDirectory:
 
   .\Set-KoreanRulesState.ps1 -WhatIf
 
@@ -418,8 +450,9 @@ COMPATIBILITY AND HISTORICAL MATERIAL
 
 In the repository, archive\compatibility retains Invoke-KB5130098.ps1,
 Invoke-KB5130098Fleet.ps1, Build-KB5130098Package.ps1 and KB5130098.psm1.
-The already-published 2.1.0 source ZIP is unchanged and retains its original
-internal wrapper layout. See archive\README.md in the repository for the index.
+The current source kit uses this archived-wrapper layout. The archived 2.1.0
+source ZIP and sidecar are unchanged and retain their original internal layout.
+See archive\README.md in the repository for the index.
 Old fleet Apply STILL
 IMPLIES RESTART and retains maintenance/recovery gates. Prefer the new three
 commands. Internal KB function/error keys and the mutex remain compatible.
@@ -428,15 +461,17 @@ optional default output and explicit Download; it propagates the installer
 exit code. Legacy Invoke wrappers accept positional ComputerName; CSV remains
 explicit -CsvPath.
 
-Current 2.1.0 walkthroughs cover the installer and skip behavior:
+Retained 2.1.0 walkthroughs cover the installer and skip behavior:
   docs\en\Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4
   docs\hi\Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4
   docs\Walkthroughs.md
 Each language has matching audio, captions and a transcript. The Hindi version
 has Hindi narration/Devanagari captions with unchanged English command cards.
 The PowerShell scripts and their error messages are not localized.
-Media is a separate download from the immutable source ZIP. The older 2.0.0
-walkthrough is now at archive\media\2.0.0; prefer the current bilingual guide.
+Media is a separate download from the source ZIP and was not regenerated for
+2.2.0. Its manual payload handoff is superseded by the adjacent-payload default.
+The older 2.0.0 walkthrough is at archive\media\2.0.0; use the current written
+guide for operating instructions.
 
 The 1.2.1 media is HISTORICAL, not current instructions:
   archive\media\1.2.1\Exchange-KB5130098-1.2.1-Walkthrough.mp4
@@ -453,6 +488,6 @@ Older downloads and recordings are preserved under archive; existing operator
 folders and previously downloaded packages have not been moved or removed.
 
 For release-specific recorded results and limits, read docs\Lab-Validation.md.
-Historical results do not establish a 2.1.0 test/archive pass or new lab rollout.
+Historical results do not establish a 2.2.0 test/archive pass or new lab rollout.
 The historical pilot proved tested EWS new-message results, not OWA/Outlook
 recovery, full backlog, sustained production load or live rollback.

@@ -1,8 +1,15 @@
-EXCHANGE KOREAN RULES 2.1.0 - START HERE
+EXCHANGE KOREAN RULES 2.2.0 - START HERE
+
+Install now prepares/verifies payload beside Install-KoreanRules.ps1 after
+a successful portable build. From the SAME folder/computer, use Install,
+Get, then Set -WhatIf; no $build capture or PayloadDirectory handoff needed.
+Keep the complete kit writable. No implicit download, Apply or restart.
+VIDEO CORRECTION: English/Hindi 2.1.0 media was not regenerated for 2.2.0;
+its manual payload-handoff section is superseded by this adjacent default.
 
 Set now skips existing-rule or wrong-build/DLL targets with a yellow explanation
 and continues inspecting the list. True failures still stop the modifying run.
-The current 2.1.0 videos cover these skips and installer improvements in English
+The retained 2.1.0 videos cover these skips and installer improvements in English
 and Hindi. The older recordings are archived; see docs\Walkthroughs.md.
 
 Keep this complete folder together, including KoreanRules.psm1,
@@ -27,17 +34,16 @@ PREPARE MISSING INSTALLATION FILES
 
   If payload\ko.token.rule.bin or payload\ko.complex.rule.bin is missing,
   choose ONE source in elevated Windows PowerShell:
-    $build = .\Install-KoreanRules.ps1 -Download
+    .\Install-KoreanRules.ps1 -Download
     # OR an existing EXE, or folder directly containing the EXE/rule BINs:
-    $build = .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
-    $build = .\Install-KoreanRules.ps1 'C:\Temp\VerifiedKoreanRules'
-    $build | Select-Object ExpandedPackage, PayloadDirectory
+    .\Install-KoreanRules.ps1 'C:\Temp\SQLEXPR_x64_ENU.exe'
+    .\Install-KoreanRules.ps1 'C:\Temp\VerifiedKoreanRules'
 
   First argument is INPUT (SqlPackagePath, alias Path), not a destination.
   Optional second argument is a NEW output directory:
-    $build = .\Install-KoreanRules.ps1 '.\Media\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
+    .\Install-KoreanRules.ps1 '.\Media\SQLEXPR_x64_ENU.exe' 'C:\Temp\PreparedRules'
   To select a download destination:
-    $build = .\Install-KoreanRules.ps1 -Download -OutputDirectory 'C:\Temp\PreparedDownload'
+    .\Install-KoreanRules.ps1 -Download -OutputDirectory 'C:\Temp\PreparedDownload'
   Omit output for a unique child of C:\Temp\KoreanRules-Ready.
 
   Folders are not searched recursively. Select the folder directly containing
@@ -56,17 +62,22 @@ PREPARE MISSING INSTALLATION FILES
   Downloads use SQLEXPR_x64_ENU.partial.exe until identity/signature pass.
   Failures retain available diagnostics, report once and exit 1 by default;
   use -ErrorAction Stop for a catchable automation exception.
-  It does not populate this source folder's payload directory. Use the returned
-  PayloadDirectory, or the generated runtime under ExpandedPackage.
+  After building, it prepares/verifies this script folder's payload directory.
+  Matching exact BINs are reused without rewriting. A missing sibling is added
+  only after existing files verify. Mismatch, refused path or write failure is
+  a hard error, not overwritten files or hidden fallback. Install never writes
+  Exchange Native. The same source folder can be used again.
 
 PREVIEW REMEDIATION
-  With a verified payload beside the scripts:
+  After Install succeeds, stay in the SAME folder/computer:
+    .\Get-KoreanRulesState.ps1
     .\Set-KoreanRulesState.ps1 -WhatIf
     # OR an explicit target:
     .\Set-KoreanRulesState.ps1 EX01 -WhatIf
 
-  Or, using the preparation result:
-    .\Set-KoreanRulesState.ps1 -PayloadDirectory $build.PayloadDirectory -WhatIf
+  An explicit alternate source still takes precedence; failures are not hidden:
+    .\Set-KoreanRulesState.ps1 -PayloadDirectory 'C:\Temp\VerifiedKoreanRules' -WhatIf
+  No latest-folder scans, guessed paths or persisted global paths are used.
 
   Set without WhatIf is modifying. Never overwrite existing rules or reapply
   blindly. Restarts require explicit RestartSearch and MaintenanceWindowApproved.
@@ -77,7 +88,7 @@ PREVIEW REMEDIATION
 
 WHERE THE FILES ARE
   Browser download: your browser's Downloads folder, commonly
-    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.1.0-source.zip
+    %USERPROFILE%\Downloads\Exchange-KoreanRules-2.2.0-source.zip
   This source download contains no vendor binaries.
   Downloading does not extract or deploy the kit. Use Show in folder in the
   browser's Downloads page, then extract the entire Exchange-KoreanRules folder.
@@ -85,6 +96,12 @@ WHERE THE FILES ARE
   Prepared runtime default:
     C:\Temp\KoreanRules-Ready\<unique-id>\Exchange-KoreanRules
   Exact paths are returned by Install, not inferred from the current directory.
+  Optional $build capture returns ExpandedPackage and PayloadDirectory for the
+  portable runtime, plus DefaultPayloadDirectory for the adjacent verified copy.
+  A complete generated package moved to another computer already has payload.
+  Individually copied scripts need the complete kit plus payload or an explicit
+  payload override. Generated Microsoft binaries remain local-only; never add
+  the newly populated source payload to published source downloads.
 
   Existing manual working folders are not automatically moved or renamed.
   If already using C:\Scripts\Exchange-KB5130098, keep using that stable folder.
@@ -98,7 +115,7 @@ DOCUMENTATION
   docs\Reporting-and-Splunk.md       Report formats and collection guidance
   docs\Lab-Validation.md             Verified results and limitations
 
-  Current narrated walkthrough and its companions:
+  Retained narrated walkthrough and its companions (see correction above):
     docs\en\Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4
     docs\hi\Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4
     docs\Walkthroughs.md
