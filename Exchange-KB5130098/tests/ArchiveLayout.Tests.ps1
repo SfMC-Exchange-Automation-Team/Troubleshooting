@@ -1,6 +1,7 @@
 BeforeAll {
     $script:root=Split-Path $PSScriptRoot -Parent
     $script:version=(Import-PowerShellDataFile -LiteralPath (Join-Path $script:root 'KoreanRules.psd1')).PackageVersion
+    $script:mediaVersion='2.3.1'
 }
 
 Describe 'Current repository and historical archive separation' {
@@ -26,13 +27,13 @@ Describe 'Current repository and historical archive separation' {
         }
     }
 
-    It 'keeps current English and Hindi recordings active and previous versions archived' {
+    It 'keeps current English Hindi and Tamil recordings active and previous versions archived' {
         $docs=Join-Path $script:root 'docs'
         @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File).Count | Should -Be 0
-        @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File -Recurse).Count | Should -Be 2
-        foreach ($language in @(@{Folder='en';Name='English'},@{Folder='hi';Name='Hindi'})) {
+        @(Get-ChildItem -LiteralPath $docs -Filter '*-Walkthrough.mp4' -File -Recurse).Count | Should -Be 3
+        foreach ($language in @(@{Folder='en';Name='English'},@{Folder='hi';Name='Hindi'},@{Folder='ta';Name='Tamil'})) {
             foreach ($suffix in @('Walkthrough.mp4','Narration.m4a','Captions.srt','Captions.vtt','Transcript.txt','Poster.png')) {
-                $relative='docs\{0}\Exchange-KoreanRules-{1}-{2}-{3}' -f $language.Folder,'2.1.0',$language.Name,$suffix
+                $relative='docs\{0}\Exchange-KoreanRules-{1}-{2}-{3}' -f $language.Folder,$script:mediaVersion,$language.Name,$suffix
                 Test-Path -LiteralPath (Join-Path $script:root $relative) -PathType Leaf | Should -BeTrue
             }
         }
@@ -41,6 +42,9 @@ Describe 'Current repository and historical archive separation' {
             Test-Path -LiteralPath (Join-Path $script:root "archive\media\$version\Exchange-KB5130098-$version-Walkthrough.mp4") | Should -BeTrue
         }
         Test-Path -LiteralPath (Join-Path $script:root 'archive\media\2.0.0\Exchange-KoreanRules-2.0.0-Walkthrough.mp4') | Should -BeTrue
+        foreach ($language in @('English','Hindi')) {
+            Test-Path -LiteralPath (Join-Path $script:root "archive\media\2.1.0\Exchange-KoreanRules-2.1.0-$language-Walkthrough.mp4") | Should -BeTrue
+        }
     }
 
     It 'can import the compatibility module from its archived location' {

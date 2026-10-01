@@ -1,0 +1,163 @@
+Exchange Korean Rules 2.3.1 - English narrated walkthrough
+Illustrative commands and abbreviated output; no new deployment was performed.
+Generic natural-sounding synthetic voice generated offline; not voice cloning.
+
+The two rule files are already in the kit
+
+Welcome to Exchange Korean Rules, version two point three point one.
+The public kit now includes both verified rule files. You do not need to download SQL media just to start using it.
+Get inspects servers. Set applies the guarded workaround. Install verifies the bundled files or prepares a replacement source when explicitly requested.
+This is custom automation of published guidance, not a Microsoft-signed hotfix or a permanent product fix.
+The examples are illustrative. This recording does not apply changes to an Exchange server.
+
+Download once, then keep one complete folder
+
+Open the current guide on GitHub main and choose the two point three point one zip, not an older source-only archive.
+Use your browser's Show in folder option to locate the download.
+After verifying its source and checksum, extract the complete kit into a dedicated working folder.
+Keep the module, manifest, private folder, and payload beside the entry-point scripts.
+The example uses drive D, but you choose the location. Normal use does not create another copy of the kit under drive C.
+
+Trust the package before unblocking it
+
+Windows may mark a downloaded zip as coming from the Internet.
+First review the approved source and compare the calculated checksum with the published release value.
+Only after you trust the package, unblock that exact zip and extract a fresh copy.
+Calculating a hash is not the same as checking that it matches.
+This procedure does not disable PowerShell policy, application control, or your organization's security requirements.
+
+Already extracted? Check the files, not just the ZIP
+
+Unblocking the zip after extraction does not remove Internet-zone tags from files that were already extracted.
+After reviewing the kit, you can unblock its script and module files together, including the private folder.
+Use the dedicated kit folder only, not the whole software or temporary directory.
+Get Execution Policy List is a read-only diagnostic. A signing requirement or application-control restriction needs the appropriate organizational process.
+The administrator consent window is UAC, not an Internet-zone warning. Unblocking files does not remove that requirement.
+
+Install is now an optional verification step
+
+In a complete bundled kit, running Install without arguments only verifies the two rule files.
+That verification is read-only and does not require administrator access, download media, or create directories.
+You may skip this optional step and use Get and Set directly. Set performs its own required checks.
+Set looks for payload beside its own kit, even when called from a different working directory. An explicit alternate payload path still takes precedence.
+An invalid or partial payload fails clearly. Only a custom or historical kit with no payload shows preparation guidance instead.
+
+Inspect the installation before deciding to change it
+
+Run Get to inspect the observed installation. Get does not need the rule payload and does not apply the workaround.
+The tool requires its exact supported Exchange build and DLL identity, with both rule files absent.
+A server called a client-access or relay server is not excluded just by that label. Check the actual installed components and supported build.
+Modern Exchange client-access services are part of the Mailbox role. Dedicated Edge and older CAS-only installations are not validated by this walkthrough.
+Eligible means the file checks passed. It is not proof of a deadlock, a completed restart, or recovered search.
+
+Expected skips are yellow, with readable reasons
+
+An incompatible target shows the found and required build and DLL version on separate lines.
+The console no longer prints the long size and hash explanation here, but those verification checks still run and the detailed reports retain the information.
+If only size or hash differs, the console directs you to the detailed report.
+Existing rules and incompatible installations are yellow skips. Set leaves them unchanged and continues the list.
+Investigate a partial rule pair rather than overwriting it. Routine skips do not automatically require Support; real operation failures still halt rollout.
+
+Remote Set copies the two BINs, not SQL media
+
+Remote Set uses the verified payload on the computer where you launch the command.
+It transfers the small runtime, inspects the remote server, and sends the two rule files only when that target is eligible.
+The remote operation verifies them again before copying them into Exchange's Native directory.
+The two files total about seven hundred fifty-six kibibytes. The large SQL package is neither copied nor extracted on each remote server.
+Use existing authorized PowerShell remoting. Do not weaken authentication or trust configuration to make a connection work.
+
+Use positional names or native Exchange CSV columns
+
+Computer names can be the first positional argument. A CSV still uses the explicit CSV Path parameter.
+From an Exchange management shell, export the native Name and FQDN properties without inventing a Computer Name property.
+The importer selects Computer Name, otherwise FQDN, otherwise Name, once for the whole file.
+A blank or invalid selected value stops the run instead of silently choosing another column. Duplicate targets are rejected.
+Get validates the list before contact. Its remote inspection can create code staging and reports, but does not copy rule files into Exchange.
+
+Compact output keeps every server in $report
+
+One to three targets show detailed state, action, and next steps. Four or more use compact status totals and report paths.
+That display change does not discard any target. Dollar report contains typed rows, and dollar report Files contains the export locations.
+Use Pass Through when you want explicit pipeline assignment, or JSON for a separate automation process.
+The script's own UAC handoff returns its results, but an unrelated PowerShell process cannot set variables in its parent shell.
+Errors and required recovery prompts remain visible even when the list is large.
+
+Use final JSON Lines for event collection
+
+Normal runs write CSV, detailed JSON, and final JSON Lines into a unique report directory on the caller.
+The existing report-root name is retained for compatibility.
+For Splunk file monitoring, collect the final JSON Lines file rather than the repeatedly rewritten rollout checkpoint.
+Use the documented extraction model. Do not combine search-time and indexed JSON extraction for the same source type.
+The customer's administrator still needs to verify event counts, timestamps, and duplicates. The tool does not configure or validate their Splunk pipeline.
+
+Preview before modification, without false confidence
+
+Set defaults to Apply, so start with What If before making a change.
+The adjacent payload is automatic, and the maintenance-window switch is no longer required.
+Local preview can inspect local state. Remote preview makes no remote connections, so it is not a connectivity or eligibility test.
+Use remote Get for actual inspection before the modifying run.
+At the normal confirmation preference, Confirm is optional. What If, UAC consent, and per-server recovery attestation are different controls.
+
+Change one pilot; request a restart deliberately
+
+After the health checks and operational approval, start with one pilot server.
+Restart Search is still an explicit request. The old maintenance-window switch is accepted for compatibility but no longer gates the operation.
+Without Restart Search, Set stages the files and reports that a restart is still required.
+The requested restart affects Host Controller and content processing. It does not automatically restart Transport or Store.
+Plan for impact on search and affected processing; do not promise zero mail-delivery impact. A stable process does not prove that the workload recovered.
+
+Validate delivery, search and the affected workflow
+
+For mailbox search checks, use a mailbox whose active database is on the changed server.
+Verify ordinary and Korean messages deliver and become searchable, using unique terms and a negative control.
+For an Exchange relay workload, also validate the actual relay route and affected processing. Do not invent a mailbox-search result for a server that cannot provide one.
+Review fresh errors and queues, and treat historical indexing backlog as a separate observation.
+If a check fails, stop rollout and preserve evidence. Investigate the actual caller before any separately approved recovery action.
+
+Expand serially after the pilot passes
+
+After the pilot passes, expand with a reviewed list and an explicit restart request.
+Restarted remote rollout is serial. Validate the current server before entering the exact recovered statement requested.
+Do not enter that statement merely because the files are present or the service is running.
+Expected skips continue without modification, but a true operation or recovery failure stops the run and leaves later targets Not Run.
+Four or more targets may have compact output, but the recovery gate is still visible and required.
+
+Download is a fallback, not the normal first step
+
+For preparation, use elevated sixty-four-bit Windows PowerShell five point one. Download is an explicit fallback for fresh media extraction or a kit that needs its payload prepared.
+You can instead supply an existing SQL executable, or a folder containing the two verified rule files.
+SQL Server is not installed. The fallback only extracts media locally and verifies the required files.
+The large media download is not repeated by Get or Set, and it is never needed on every remote target.
+A partial download or identity conflict is an error, not permission to bypass checks or overwrite an invalid existing payload.
+
+A second portable kit is now explicitly optional
+
+Normal preparation now fills only the current kit's adjacent payload. It does not generate another working copy or zip.
+From an elevated preparation session, request a new Output Directory only when you want a separate portable package.
+Without that request, the package and zip-hash return values are empty because no zip was created. The payload path points to the current kit.
+Using verified BINs does not create an empty extraction directory.
+Actual SQL-media extraction still uses a unique work folder for safe extraction and diagnostics. Existing user folders are not automatically deleted.
+
+Read status, exit code and receipts together
+
+Zero may mean eligible detection, a preview, or a completed operation; it is not proof that the workload recovered.
+One is an error. Ten means a Search restart is still required, not a Windows reboot.
+Twenty indicates an incompatible installation or existing rules that need review. A mixed file-only run that actually stages rules can still return ten.
+Preserve the reports and operation receipts. Partial changes are not automatically rolled back.
+Use Support for uncertain partial recovery or exceptional rollback, not every routine skip. Rollback remains local, receipt-bound, and dependent on actual Microsoft Support approval.
+
+Keep the workflow small and predictable
+
+The two rule files are now in GitHub and in the public zip, so the normal workflow starts with the complete kit.
+No per-server SQL preparation, manual payload handoff, or mandatory maintenance-window switch is needed.
+Restarts remain explicit, and operational planning still matters.
+Unblocking a trusted package is not permission to bypass UAC or organizational policy.
+Use the current guide and reviewed target list, then base rollout decisions on actual workload evidence.
+
+Current files, current guidance, bounded evidence
+
+The two point three point one release passed three hundred forty-four runtime tests, the same number against the extracted kit, and five repository layout tests.
+The published files were downloaded back from GitHub and checked, including native verification of the bundled payload.
+Those checks do not certify customer workload recovery, production load, or historical indexing backlog.
+This walkthrough updates the commands and explanation; it is not a recording of a fresh remediation.
+Use the current guide, inspect your targets, preview the change, and expand only after a deliberately chosen pilot passes the workload checks.

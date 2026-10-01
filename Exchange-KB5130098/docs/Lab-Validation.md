@@ -1,5 +1,65 @@
 # Exchange Korean Rules: validation and operational limits
 
+## 2.3.1 English, Hindi and Tamil media refresh
+
+The [current walkthroughs](Walkthroughs.md) replace the older English/Hindi
+recordings and add Tamil narration with Tamil-script captions. They cover the
+bundled payload, optional Install, same-folder defaults, two-file remote
+transfer, scoped Internet-zone handling, explicit download/export fallback,
+version-only console differences and the removal of the mandatory maintenance
+switch. They preserve explicit restart and workload-recovery boundaries.
+
+| Media check | English | Hindi | Tamil |
+|---|---|---|---|
+| Duration | 13:18 (798.17 seconds) | 16:28 (988.21 seconds) | 16:32 (991.67 seconds) |
+| Video | 1920 x 1080, H.264, 24 fps | 1920 x 1080, H.264, 24 fps | 1920 x 1080, H.264, 24 fps |
+| Audio | AAC, 48 kHz, stereo | AAC, 48 kHz, stereo | AAC, 48 kHz, stereo |
+| Chapters / caption cues | 20 / 105 | 20 / 111 | 20 / 136 |
+| Integrated loudness | -16.51 LUFS | -16.18 LUFS | -16.25 LUFS |
+| True peak | -4.30 dBTP | -4.36 dBTP | -4.46 dBTP |
+
+Each edition uses the same command cards and 100 narration elements. Translations
+preserve the scenario IDs, numeric meanings and safeguards; the runtime interface
+is not translated. Every narration element is represented in the transcript and
+captions. Caption cues are bounded and non-overlapping, with two-line layouts;
+the language-specific chapter index is derived from the actual timelines.
+All three video streams passed full decoding and encoding/loudness checks.
+The three standalone audio files also passed full decoding and match their
+respective video audio streams. All 18 published media assets match their
+verified production copies; chapter times and subtitle/transcript coverage
+were checked against the narration source.
+
+All 20 command cards received visual inspection. Three single-column alignment
+issues were corrected and rechecked in encoded frames. Selected encoded English,
+Hindi and Tamil caption frames were inspected for readable two-line layouts,
+unclipped glyphs and clear separation from the footer and instructional panels.
+Revised Hindi clauses were rechecked after rendering. The **five repository
+archive-layout tests passed** for three current languages and archived prior
+media. All twelve historical 2.1.0 media Git blobs are unchanged.
+
+The English/Hindi editions reuse the established local Kokoro workflow.
+Hindi uses the native-language pronunciation frontend. Three dense Hindi
+clauses were simplified without changing their meaning, then regenerated.
+Local recognition checked 100 English and 60 Hindi utterances, with targeted
+rechecks of uncertain terms and negative statements. A larger recognizer resolved
+small-model artifacts rather than treating its transcript as authoritative.
+
+Tamil uses a fixed generic neural voice from the publisher-declared Unlicense
+model identified in the [speech credits](Walkthroughs.md#narration-and-evidence-boundaries),
+with the declared IndicVoices dataset attribution retained. No reference audio
+or voice cloning was used. All 100 Tamil clips passed finite-signal, non-empty,
+identity and clipping checks; local recognition screened them for missing or
+obviously repeated speech. Five ambiguous recognition cases were rechecked
+with a larger local model. Recognition is a quality aid, not a claim of exact
+transcription, native-human listening review or a human-recorded voice.
+No narration text or audio was sent to an online speech service.
+
+The older 2.1.0 media is archived unchanged. The published 2.3.1 kit ZIP and
+checksum are also unchanged: its text documents are a release-time snapshot,
+while the current GitHub guide and media index link the refreshed recordings.
+This is a documentation/media refresh, not another Exchange Apply, service
+restart, mail-flow pilot, historical-backlog validation or customer Splunk test.
+
 ## 2.3.1 public bundle and verification results
 
 The [2.3.1 operator guide](../README.md) describes the current approved public
@@ -29,8 +89,8 @@ bundle, not a new workload-recovery result:
 - Exact identity, no-overwrite, receipt, recovery and explicit `-RestartSearch`
   behavior remain as in 2.3.0. `-MaintenanceWindowApproved` remains an optional
   compatibility no-op, not a required gate or approval record.
-  The retained English/Hindi 2.1.0 media was not regenerated; use the
-  [written corrections](Walkthroughs.md).
+  At initial runtime publication, the English/Hindi 2.1.0 media was retained.
+  The later [2.3.1 media refresh](Walkthroughs.md) is separate evidence.
 
 ### Worktree and final bundled-archive verification
 
@@ -137,9 +197,9 @@ current 2.3.1 bundle; it is not the current publication boundary.
   No self-unblock or policy bypass is added. UAC, publisher trust, AllSigned,
   GPO and WDAC are distinct; no guarantee of removing every prompt is made.
   `Get-ExecutionPolicy -List` is a read-only diagnostic, not a policy change.
-- The English/Hindi 2.1.0 videos and companions were not regenerated.
+- At the 2.3.0 release, the English/Hindi 2.1.0 videos were not regenerated.
   Their mandatory maintenance flag, default portable output and payload guidance
-  are superseded by the [current written corrections](Walkthroughs.md).
+  are superseded by the [current walkthroughs and guide](Walkthroughs.md).
 
 ### Runtime/native results reported by the parent release task
 
@@ -347,7 +407,7 @@ bounded live checks.
 
 ## Historical 2.1.0 English and Hindi media
 
-The [bilingual walkthroughs](Walkthroughs.md) were regenerated for then-current 2.1.0
+The [archived bilingual walkthroughs](../archive/media/2.1.0) were regenerated for then-current 2.1.0
 behavior: positional and quoted installer inputs, no-argument guidance, incomplete
 media diagnostics, expected yellow skips, continued inspection and practical
 operator next steps. The Hindi edition has Hindi narration and Devanagari
@@ -804,7 +864,7 @@ instructions are also superseded. Use the [current written guide](../README.md)
 and [reporting contract](Reporting-and-Splunk.md). The historical
 [2.0.0 walkthrough](../archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4) covers the
 three-command interface as it existed in 2.0.0. The retained bilingual
-[2.1.0 walkthroughs](Walkthroughs.md) additionally cover installer usability and expected skips.
+[2.1.0 walkthroughs](../archive/media/2.1.0) additionally cover installer usability and expected skips.
 The [1.0.1 recording](../archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4) remains historical too.
 
 Historical media decoding, caption/transcript and illustrative-command checks

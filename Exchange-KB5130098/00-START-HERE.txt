@@ -9,15 +9,14 @@ No SQL media preparation or Install run is needed. Get needs no payload;
 Set automatically uses adjacent payload and still performs its own checks.
 A separate portable expanded kit + ZIP requires explicit NEW OutputDirectory.
 No implicit download, Exchange Apply by Install, or restart.
-VIDEO CORRECTION: English/Hindi 2.1.0 media was not regenerated for 2.3.1.
-Its mandatory maintenance flag, default portable output and manual payload
-handoff are outdated. MaintenanceWindowApproved is an optional compatibility
-no-op; RestartSearch remains explicit. Keep operational window/recovery checks.
+CURRENT VIDEOS: English, Hindi and Tamil 2.3.1 walkthroughs cover these defaults.
+MaintenanceWindowApproved is an optional compatibility no-op; RestartSearch
+remains explicit. Keep operational planning and recovery checks.
 
 Set now skips existing-rule or wrong-build/DLL targets with a yellow explanation
 and continues inspecting the list. True failures still stop the modifying run.
-The retained 2.1.0 videos cover these skips and installer improvements in English
-and Hindi. The older recordings are archived; see docs\Walkthroughs.md.
+The current videos cover these skips, bundled files and scoped unblocking.
+The older recordings are archived; see docs\Walkthroughs.md.
 
 Keep this complete folder together, including KoreanRules.psm1,
 KoreanRules.psd1 and the private subfolder.
@@ -175,14 +174,17 @@ DOCUMENTATION
   docs\Reporting-and-Splunk.md       Report formats and collection guidance
   docs\Lab-Validation.md             Release-specific evidence and limitations
 
-  Retained narrated walkthrough and its companions (see correction above):
-    docs\en\Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4
-    docs\hi\Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4
+  Current narrated walkthroughs and their companions:
+    docs\en\Exchange-KoreanRules-2.3.1-English-Walkthrough.mp4
+    docs\hi\Exchange-KoreanRules-2.3.1-Hindi-Walkthrough.mp4
+    docs\ta\Exchange-KoreanRules-2.3.1-Tamil-Walkthrough.mp4
     docs\Walkthroughs.md
-  Each language has audio, captions and a transcript. Hindi narration/captions
-  use Devanagari; on-screen commands remain English and are not translated.
+  Each language has audio, captions, transcript and 20 chapters. Hindi captions
+  use Devanagari; Tamil captions use Tamil script. Command cards remain English.
   README.md links the videos and chapter index. Media is separate from
-  the public kit ZIP. The older KB-named recordings are historical, not current usage.
+  the public kit ZIP. The published ZIP remains unchanged; its text is a
+  release-time snapshot. The current GitHub media index links these new videos.
+  Older recordings are historical, not current usage.
 
   On GitHub, check the branch selector and the guide's version. A topic-branch
   push does not update the default main page until its pull request is merged.

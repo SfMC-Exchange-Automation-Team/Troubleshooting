@@ -15,11 +15,12 @@ admin requirement, writes, directories or prompts. Only explicit OutputDirectory
 requests a separate portable expanded kit and ZIP; it must name a NEW directory.
 There are no implicit downloads.
 
-VIDEO CORRECTION: retained English/Hindi 2.1.0 media was not regenerated for
-2.3.1. Its mandatory maintenance flag, default portable outputs and manual
-payload handoff are superseded. MaintenanceWindowApproved is now an optional
-compatibility no-op, not required anywhere. RestartSearch remains explicit;
-operational window planning, Support-approved rollback and recovery checks remain.
+CURRENT VIDEOS: 2.3.1 walkthroughs are available in English, Hindi and Tamil.
+They cover the bundled payload, optional Install, adjacent-only preparation,
+explicit portable export, remote two-file transfer and scoped Internet-zone
+handling. MaintenanceWindowApproved is an optional compatibility no-op.
+RestartSearch remains explicit; operational planning, Support-approved rollback
+and recovery checks remain.
 
 2.0.1: Existing rules and incompatible identities are yellow skips, not fatal
 Apply errors. Fleet Set records them and continues to inspect the remaining
@@ -559,16 +560,19 @@ it propagates the installer
 exit code. Legacy Invoke wrappers accept positional ComputerName; CSV remains
 explicit -CsvPath.
 
-Retained 2.1.0 walkthroughs cover the installer and skip behavior:
-  docs\en\Exchange-KoreanRules-2.1.0-English-Walkthrough.mp4
-  docs\hi\Exchange-KoreanRules-2.1.0-Hindi-Walkthrough.mp4
+Current 2.3.1 narrated walkthroughs:
+  docs\en\Exchange-KoreanRules-2.3.1-English-Walkthrough.mp4
+  docs\hi\Exchange-KoreanRules-2.3.1-Hindi-Walkthrough.mp4
+  docs\ta\Exchange-KoreanRules-2.3.1-Tamil-Walkthrough.mp4
   docs\Walkthroughs.md
-Each language has matching audio, captions and a transcript. The Hindi version
-has Hindi narration/Devanagari captions with unchanged English command cards.
+Each language has matching audio, captions, transcript and 20 chapters. Hindi
+uses Devanagari captions; Tamil uses Tamil-script captions. Exact English
+command cards remain consistent across languages.
 The PowerShell scripts and their error messages are not localized.
-Media is a separate download from the public kit ZIP and was not regenerated for
-2.3.1. Its mandatory maintenance flag, default portable output and manual
-payload handoff are superseded by the current written contract.
+Media is separate from the small public kit ZIP. That published ZIP and its
+checksum remain immutable; its text documents are a release-time snapshot.
+Use the live GitHub guide and media index for these refreshed recordings.
+The old English/Hindi 2.1.0 media is preserved under archive\media\2.1.0.
 The older 2.0.0 walkthrough is at archive\media\2.0.0; use the current written
 guide for operating instructions.
 
