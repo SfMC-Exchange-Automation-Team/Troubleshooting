@@ -434,10 +434,17 @@ function Get-KBIdentity {
         $v = $file.VersionInfo
         $version = '{0}.{1}.{2}.{3}' -f $v.FileMajorPart, $v.FileMinorPart, $v.FileBuildPart, $v.FilePrivatePart
     }
+    # Avoid Get-FileHash's module-scoped WhatIf path projection without changing any preferences.
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($file.FullName)
+        try { $hash = [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '') }
+        finally { $stream.Dispose() }
+    } finally { $algorithm.Dispose() }
     [pscustomobject]@{
         Path = $file.FullName
         Bytes = $file.Length
-        SHA256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        SHA256 = $hash
         Version = $version
     }
 }
@@ -521,18 +528,47 @@ Detection does not require the payload; use Get-KoreanRulesState to inventory ta
 
 Prepare the files in elevated PowerShell:
   `$build = .\Install-KoreanRules.ps1 -Download
-  .\Set-KoreanRulesState.ps1 -PayloadDirectory `$build.PayloadDirectory -WhatIf
+  .\Set-KoreanRulesState.ps1 -WhatIf
 
 Or supply existing Microsoft media/rules using -SqlPackagePath / -RuleSourceDirectory.
-Install returns the actual PayloadDirectory and ExpandedPackage; it does NOT
-populate the original source folder. Use the returned PayloadDirectory, run from
-the generated ExpandedPackage, or select verified files already on this calling
-computer with -PayloadDirectory. Do not copy SQL's DLL into Exchange.
+A successful Install prepares the default payload folder beside these scripts,
+so Set from the same kit needs no path argument. Install also returns the portable
+PayloadDirectory and ExpandedPackage. If using another kit or computer, copy the
+complete generated package or use the returned PayloadDirectory explicitly with
+-PayloadDirectory. Do not copy SQL's DLL into Exchange.
 "@
     }
     foreach ($rule in $script:Spec.Rules) {
         Assert-KBIdentity -Path (Join-Path $Directory $rule.Name) -Expected $rule
     }
+}
+
+function Initialize-KBDefaultPayload {
+    param(
+        [Parameter(Mandatory)][string]$SourceDirectory,
+        [Parameter(Mandatory)][string]$PackageDirectory
+    )
+    Assert-KBPayload -Directory $SourceDirectory
+    $destination = Assert-KBLocalWritePath (Join-Path $PackageDirectory 'payload')
+    # Verify every existing file before adding anything; never replace user data.
+    foreach ($rule in $script:Spec.Rules) {
+        $path = Join-Path $destination $rule.Name
+        if (Test-Path -LiteralPath $path) { Assert-KBIdentity -Path $path -Expected $rule }
+    }
+    try {
+        $null = New-Item -Path $destination -ItemType Directory -Force -ErrorAction Stop
+        foreach ($rule in $script:Spec.Rules) {
+            $path = Join-Path $destination $rule.Name
+            if (-not (Test-Path -LiteralPath $path)) {
+                Copy-KBRuleNew -Source (Join-Path $SourceDirectory $rule.Name) -Destination $path
+            }
+            Assert-KBIdentity -Path $path -Expected $rule
+        }
+        Assert-KBPayload -Directory $destination
+    } catch {
+        throw "Default payload preparation failed at '$destination': $($_.Exception.Message) Use a writable complete kit folder or the verified generated package. Existing files were not overwritten; inspect any partially copied files before retrying."
+    }
+    $destination
 }
 
 function Get-KBDetection {
@@ -1324,4 +1360,4 @@ function Invoke-KBFleet {
     }
 }
 
-Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet, New-KBReportContext, ConvertTo-KBReportRows, Save-KBReportExports, Write-KBReportSummary, ConvertTo-KBInputPath, Resolve-KBPreparationInput
+Export-ModuleMember -Function Get-KBSpecification, Assert-KBAdministrator, Assert-KBLocalWritePath, Assert-KBIdentity, Assert-KBPayload, Invoke-KBLocal, Invoke-KBAutoElevation, Write-KBConsoleResult, Invoke-KBFleet, New-KBReportContext, ConvertTo-KBReportRows, Save-KBReportExports, Write-KBReportSummary, ConvertTo-KBInputPath, Resolve-KBPreparationInput, Initialize-KBDefaultPayload

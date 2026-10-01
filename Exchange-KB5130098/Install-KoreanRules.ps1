@@ -10,6 +10,9 @@ Download requires explicit -Download. Paired pasted path quotes are accepted.
 Default failures print one concise message and return exit 1; -ErrorAction Stop
 rethrows the error for callers that need a catchable PowerShell error record.
 ManagementWorkstationConfirmed is an optional compatibility switch, not a gate.
+A successful build also prepares the verified payload beside this script, which
+Set-KoreanRulesState uses by default. Existing matching files are reused, never
+overwritten. The generated portable package remains available separately.
 #>
 [CmdletBinding(DefaultParameterSetName='ExistingMedia', PositionalBinding=$false)]
 param(
@@ -40,6 +43,7 @@ Optional second positional argument: a NEW output directory.
 Download is explicit (about 749 MB). An existing folder is an INPUT, not a
 download destination. To choose a destination use -OutputDirectory with -Download.
 Output defaults to a unique folder under C:\Temp\KoreanRules-Ready.
+Successful preparation also fills this kit's default payload folder for Set.
 Use elevated 64-bit Windows PowerShell 5.1 to prepare files.
 Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
 '@ -ForegroundColor Cyan
@@ -144,10 +148,12 @@ Get-KoreanRulesState inspects servers. Set-KoreanRulesState applies the rules.
     Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal
     $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
     "$zipHash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath "$zip.sha256" -Encoding ASCII
+    $defaultPayload = Initialize-KBDefaultPayload -SourceDirectory $payload -PackageDirectory $PSScriptRoot
     Write-Host "Korean Rules installation files prepared: $payload" -ForegroundColor Green
+    Write-Host "Default payload ready for this kit: $defaultPayload" -ForegroundColor Green
     Write-Host 'No Exchange installation files were changed and no services were restarted.'
-    Write-Host 'Use the returned PayloadDirectory with Set-KoreanRulesState, or run from ExpandedPackage.'
-    [pscustomobject]@{Package=$zip;SHA256=$zipHash;ExpandedPackage=$package;PayloadDirectory=$payload;ExtractionArtifacts=$runDirectory;Note='Preparation only; retain extraction diagnostics as needed.'}
+    Write-Host 'Next, from this same folder: .\Set-KoreanRulesState.ps1 -WhatIf'
+    [pscustomobject]@{Package=$zip;SHA256=$zipHash;ExpandedPackage=$package;PayloadDirectory=$payload;DefaultPayloadDirectory=$defaultPayload;ExtractionArtifacts=$runDirectory;Note='Preparation only; default payload is ready for Set from this kit.'}
     exit 0
 } catch {
     if ($PSBoundParameters.ContainsKey('ErrorAction') -and [string]$PSBoundParameters.ErrorAction -eq 'Stop') { throw }

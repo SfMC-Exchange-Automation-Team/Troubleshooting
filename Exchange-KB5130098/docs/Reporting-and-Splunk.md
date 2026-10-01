@@ -2,9 +2,20 @@
 
 This guide applies to `Get-KoreanRulesState.ps1` (Detect only) and
 `Set-KoreanRulesState.ps1` (Apply by default; `-Rollback` for local, receipt-bound
-rollback). See the [2.1.0 operator guide](../README.md) for prerequisites and
+rollback). See the [2.2.0 operator guide](../README.md) for prerequisites and
 approval/recovery gates. `Install-KoreanRules.ps1` prepares the verified payload
 and runtime; its build-result object is not a server-state report.
+
+After a successful portable build, Install prepares/verifies `payload` beside
+itself. From the same complete writable kit on the same computer, the normal flow
+is `.\Install-KoreanRules.ps1 -Download` (or existing media/rules), then
+`.\Get-KoreanRulesState.ps1`, then `.\Set-KoreanRulesState.ps1 -WhatIf`.
+No `$build` capture or payload handoff is required. Optional build-result capture
+still returns the portable `PayloadDirectory`; `DefaultPayloadDirectory` names
+the adjacent copy. An explicit Set `-PayloadDirectory` takes precedence, with
+errors reported rather than hidden. None of this authorizes Apply or restart.
+The retained 2.1.0 videos' manual payload handoff is superseded; see the
+[walkthrough correction](Walkthroughs.md).
 
 ## Why keep JSON if CSV is easier to read?
 
