@@ -13,8 +13,8 @@ caption, transcript or poster was deleted or changed during this move.
 - [Install-KoreanRules.ps1](../Install-KoreanRules.ps1) — verify/prepare adjacent payload; portable runtime/ZIP only with explicit output.
 - [Get-KoreanRulesState.ps1](../Get-KoreanRulesState.ps1) — inspect servers.
 - [Set-KoreanRulesState.ps1](../Set-KoreanRulesState.ps1) — change eligible servers.
-- [Latest 2.3.1 complete public kit](../downloads/Exchange-KoreanRules-2.3.1.zip)
-  and [checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256).
+- [Direct download: latest 2.3.1 complete public kit](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip)
+  and [checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip.sha256).
 - [Current 2.3.1 English, Hindi and Tamil walkthroughs](../docs/Walkthroughs.md).
 
 The current release is **2.3.1**. Public inclusion of both exact, pinned Microsoft
@@ -75,10 +75,10 @@ Archives are immutable snapshots: their internal layouts and instructions
 reflect those versions. They are not instructions for the current release.
 The 2.1.0 source ZIP and sidecar are also preserved unchanged here; its historical
 compatibility wrappers still occupy their original locations inside that ZIP.
-The superseded [2.2.1 source kit](downloads/Exchange-KoreanRules-2.2.1-source.zip)
+The superseded [2.2.1 source kit](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.2.1-source.zip)
 and its checksum are archived here. The superseded
-[2.3.0 source kit](downloads/Exchange-KoreanRules-2.3.0-source.zip) and
-[checksum](downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are also
+[2.3.0 source kit](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
+[checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are also
 preserved unchanged. Its source-only contents reflect the distribution before
 explicit public approval for the two BINs, not a restriction on the current
 2.3.1 bundle. The latest complete public kit and checksum belong in the active

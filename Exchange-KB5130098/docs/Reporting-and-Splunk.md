@@ -8,12 +8,12 @@ payload or prepares it from an explicit source; portable output requires
 explicit `-OutputDirectory`. Its preparation-result object is not a
 server-state report.
 
-The public repository and [2.3.1 complete kit ZIP](../downloads/Exchange-KoreanRules-2.3.1.zip)
+The public repository and [direct 2.3.1 complete kit ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip)
 include both exact, pinned Microsoft BINs with explicitly approved public
 inclusion: token **56,132 bytes**, complex **717,792 bytes**. The ZIP and its
-[checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256) replace the
-[archived 2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
-and [unchanged checksum](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256).
+[checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip.sha256) replace the
+[archived 2.3.0 source ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+and [unchanged checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256).
 The current ZIP includes the complete runtime, docs, tests, archived compatibility
 wrappers and payload; no SQL EXE, MSI or DLL is included.
 No SQL media preparation or Install run is needed. Get needs no payload; Set

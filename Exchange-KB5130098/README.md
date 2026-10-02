@@ -7,11 +7,14 @@ This is custom PowerShell automation of the workaround in the
 That article is source guidance, not the tool's identity. Re-read it before use.
 This tool is not a Microsoft-signed hotfix, security update, or permanent product fix.
 
-[Complete kit with bundled rules](downloads/Exchange-KoreanRules-2.3.1.zip) ·
-[Kit SHA256](downloads/Exchange-KoreanRules-2.3.1.zip.sha256) ·
+[Direct ZIP download: complete kit with bundled rules](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip) ·
+[Kit SHA256](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip.sha256) ·
 [English / Hindi / Tamil walkthroughs](docs/Walkthroughs.md) ·
 [Packaged instructions](README.txt) · [Reporting/Splunk](docs/Reporting-and-Splunk.md) ·
 [Sanitized lab evidence and limits](docs/Lab-Validation.md)
+
+The ZIP link downloads the binary directly. Do not use the GitHub `/blob/`
+file-view URL for this ZIP, as GitHub's page viewer may fail to load binary files.
 
 [Start-here checklist](00-START-HERE.txt)
 
@@ -81,8 +84,8 @@ Media is downloaded separately from the small public kit ZIP. The already
 published 2.3.1 ZIP and its checksum remain unchanged; its bundled text documents
 are a release-time snapshot. Use this guide and the current media index for
 the refreshed recordings. The superseded
-[2.3.0 source ZIP](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
-[checksum](archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are archived unchanged.
+[2.3.0 source ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip) and
+[checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256) are archived unchanged.
 The superseded [2.1.0 English/Hindi recordings](archive/media/2.1.0) and
 [2.0.0 recording](archive/media/2.0.0/Exchange-KoreanRules-2.0.0-Walkthrough.mp4)
 are preserved unchanged in the archive, not mixed into active language folders.
@@ -686,8 +689,8 @@ They show older command names and detailed output, not the new three-command int
 instructions are superseded by this [current written guide](README.md) and the
 [current English, Hindi and Tamil walkthroughs](docs/Walkthroughs.md).
 The [1.0.1 recording](archive/media/1.0.1/Exchange-KB5130098-1.0.1-Walkthrough.mp4),
-[1.0.1 source](archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
-[1.2.3 source](archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.
+[1.0.1 source](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KB5130098-1.0.1-source.zip) and
+[1.2.3 source](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KB5130098-1.2.3-source.zip) remain historical references.
 
 Source tests use isolated fixtures/native Windows PowerShell processes; they do not prove
 production recovery. The recorded pilot established tested **EWS new-message** results, not
