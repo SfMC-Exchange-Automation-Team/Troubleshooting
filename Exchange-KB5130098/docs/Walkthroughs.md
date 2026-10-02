@@ -131,7 +131,7 @@ overwritten. A running service, green Present value or zero exit code is not a
 workload-recovery sign-off.
 
 The media is distributed separately. The published
-[2.3.1 kit ZIP](../downloads/Exchange-KoreanRules-2.3.1.zip) and checksum remain
+[2.3.1 kit ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip) and checksum remain
 unchanged; its text documentation is a release-time snapshot. This current
 GitHub guide and media index supersede its older recording references.
 See [validation and limitations](Lab-Validation.md) and the

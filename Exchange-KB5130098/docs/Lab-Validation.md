@@ -69,12 +69,12 @@ bundle, not a new workload-recovery result:
   to the public repository: `payload\ko.token.rule.bin` (**56,132 bytes**) and
   `payload\ko.complex.rule.bin` (**717,792 bytes**). The payload allowlist tracks
   these two files; unrelated payload files remain ignored.
-- The public [Exchange-KoreanRules-2.3.1.zip](../downloads/Exchange-KoreanRules-2.3.1.zip)
-  and [checksum](../downloads/Exchange-KoreanRules-2.3.1.zip.sha256) are the
+- The public [Exchange-KoreanRules-2.3.1.zip](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip)
+  and [checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/downloads/Exchange-KoreanRules-2.3.1.zip.sha256) are the
   validated release artifacts. The ZIP contains the complete runtime, docs, tests, archived
   compatibility wrappers and payload, with no SQL EXE, MSI or DLL.
-  The [2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
-  and [checksum](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256)
+  The [2.3.0 source ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  and [checksum](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip.sha256)
   are archived unchanged as historical source-only artifacts.
 - No SQL media preparation or Install run is needed. Get needs no payload;
   Set automatically uses adjacent `payload` and retains its own checks.
@@ -158,7 +158,7 @@ current 2.3.1 bundle; it is not the current publication boundary.
 - The private/local customer-ready deploy ZIP contains the complete runtime plus
   verified `ko.token.rule.bin` (**56,132 bytes**) and `ko.complex.rule.bin`
   (**717,792 bytes**), with the pinned SHA256 identities in the operator guide.
-  The public [2.3.0 source ZIP](../archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
+  The public [2.3.0 source ZIP](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.3.0-source.zip)
   was produced without vendor payload before public inclusion was explicitly
   approved. That source-only archive and its checksum remain unchanged.
 - Bare Install verifies existing bundled adjacent payload read-only: no
@@ -360,7 +360,7 @@ cover the corrected code after the fixture correction.
 
 On October 1, 2026, the final repository suite passed **334 tests**.
 An independent run from the freshly extracted
-[`Exchange-KoreanRules-2.2.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.2.0-source.zip)
+[`Exchange-KoreanRules-2.2.0-source.zip`](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.2.0-source.zip)
 passed **329 tests**. The difference is the five repository-only archive/media
 layout cases in `ArchiveLayout.Tests.ps1`, intentionally not bundled because
 they depend on historical repository assets.
@@ -567,7 +567,7 @@ validation.
 ## 2.1.0 independent archive and native lab verification
 
 On September 30, 2026, the final
-[`Exchange-KoreanRules-2.1.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.1.0-source.zip)
+[`Exchange-KoreanRules-2.1.0-source.zip`](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.1.0-source.zip)
 independently passed **321 of 321 tests**. All **22 manifest-covered files**
 were verified across **23 archive entries**. The source archive contains
 **no vendor binaries**.
@@ -666,7 +666,7 @@ or additional workload evidence beyond the historical pilot below.
 ## 2.0.0 archive and generated-runtime checks
 
 After the incomplete-package guards were added,
-[`Exchange-KoreanRules-2.0.0-source.zip`](../archive/downloads/Exchange-KoreanRules-2.0.0-source.zip)
+[`Exchange-KoreanRules-2.0.0-source.zip`](https://raw.githubusercontent.com/SfMC-Exchange-Automation-Team/Troubleshooting/refs/heads/main/Exchange-KB5130098/archive/downloads/Exchange-KoreanRules-2.0.0-source.zip)
 independently passed **281 of 281 tests** when tested from the final archive.
 All **21 manifest-covered files** were hash-verified, and the source archive
 contains **no vendor binaries**. No payload-bearing 2.0.0 deployment archive was
