@@ -5984,6 +5984,7 @@ function Show-TlcWizard {
     # not exist before that and the caption is already painted after it.
     $window.Add_SourceInitialized({
             $null = Set-TlcWindowDarkChrome -Window $window -Dark $isDark
+            Set-TlcWindowLauncherIdentity -Window $window -ToolboxRoot $ToolboxRoot
         }.GetNewClosure())
 
     $null = $window.ShowDialog()

@@ -4,20 +4,10 @@ Set-StrictMode -Version Latest
     The Start menu entry: TLC Toolbox under its own name and icon, made on request from the
     Settings window.
 
-    WHY THE PACKAGE SHIPS NEITHER AN EXE NOR A SHORTCUT
-
-    Something has to carry the icon, and a .cmd file cannot. The two usual carriers both fail
-    for a toolbox handed over as a zip:
-
-    - A launcher .exe would be unsigned, and an unsigned executable with no reputation inside a
-      zip of PowerShell scripts is the pattern antivirus heuristics are written to catch. The
-      first thing a customer saw would be a quarantine notice.
-    - A .lnk stores absolute paths. One made here would point at this machine's folder rather
-      than wherever the zip is extracted, and Windows resolves neither a shortcut's arguments
-      nor its icon relative to the shortcut itself.
-
-    So the copy that will be opened makes the entry, on the machine, when the operator asks:
-    the one moment every path in it is known to be right.
+    The native launcher installs the manifest-only payload into a stable per-user folder and
+    creates the shortcut on that machine. The EXE embeds the toolbox icon; shortcuts are not
+    prebuilt with somebody else's absolute paths. The unsigned beta still requires approved
+    application policy. No Start or taskbar pin is changed automatically.
 
     WHY ONLY THE START MENU
 
@@ -127,6 +117,8 @@ namespace Tlc
 
         [DllImport("ole32.dll", PreserveSig = true)]
         private static extern int PropVariantClear(ref PropVariant value);
+        [DllImport("shell32.dll", PreserveSig = true)]
+        private static extern int SHGetPropertyStoreForWindow(IntPtr window, ref Guid iid, out IPropertyStore store);
 
         private const ushort VarTypeWideString = 31;
 
@@ -137,6 +129,50 @@ namespace Tlc
             key.FormatId = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
             key.PropertyId = 5;
             return key;
+        }
+
+        private static void SetString(IPropertyStore store, uint id, string text)
+        {
+            PropertyKey key = AppUserModelIdKey();
+            key.PropertyId = id;
+            PropVariant value = new PropVariant();
+            value.VarType = VarTypeWideString;
+            value.Value = Marshal.StringToCoTaskMemUni(text);
+            try { store.SetValue(ref key, ref value); }
+            finally { PropVariantClear(ref value); }
+        }
+
+        public static void SetWindowLauncher(IntPtr window, string launcher, string appId)
+        {
+            Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+            IPropertyStore store;
+            Marshal.ThrowExceptionForHR(SHGetPropertyStoreForWindow(window, ref iid, out store));
+            try
+            {
+                SetString(store, 2, "\"" + launcher + "\"");
+                SetString(store, 3, launcher + ",0");
+                SetString(store, 4, "TLC Toolbox");
+                SetString(store, 5, appId);
+                store.Commit();
+            }
+            finally { Marshal.FinalReleaseComObject(store); }
+        }
+
+        public static string ReadWindowProperty(IntPtr window, uint id)
+        {
+            Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+            IPropertyStore store;
+            Marshal.ThrowExceptionForHR(SHGetPropertyStoreForWindow(window, ref iid, out store));
+            try
+            {
+                PropertyKey key = AppUserModelIdKey();
+                key.PropertyId = id;
+                PropVariant value;
+                store.GetValue(ref key, out value);
+                try { return value.VarType == VarTypeWideString ? Marshal.PtrToStringUni(value.Value) : null; }
+                finally { PropVariantClear(ref value); }
+            }
+            finally { Marshal.FinalReleaseComObject(store); }
         }
 
         public static void Save(string path, string target, string arguments, string workingDirectory,
@@ -281,6 +317,14 @@ function Get-TlcShortcutCommand {
     )
 
     $root = ConvertTo-TlcShortcutRoot -Path $ToolboxRoot
+    $native = Join-Path $root 'TLC-Toolbox.exe'
+    if (Test-Path -LiteralPath $native -PathType Leaf) {
+        return [pscustomobject]@{
+            TargetPath = $native; Arguments = ''; WorkingDirectory = $root
+            IconPath = $native; IconIndex = 0; Description = 'Teams Log Collection Toolbox'
+            ShowCommand = 1; AppUserModelId = Get-TlcAppUserModelId
+        }
+    }
     return [pscustomobject]@{
         TargetPath       = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
         Arguments        = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -NoRelaunch' -f (Join-Path $root 'Start-TlcToolbox.ps1')
@@ -324,6 +368,7 @@ function Read-TlcShortcutRoot {
         $opens = ''
         if ($file -match '(?i)(^|\\)Start-TlcToolbox\.ps1$') { $opens = $file }
         elseif ($target -match '(?i)(^|\\)Start-TlcToolbox\.cmd$') { $opens = $target }
+        elseif ($target -match '(?i)(^|\\)TLC-Toolbox\.exe$') { $opens = $target }
         if (-not $opens) { return [pscustomobject]@{ Ours = $false; Root = '' } }
 
         $parent = Split-Path -Parent $opens
@@ -446,6 +491,108 @@ function Install-TlcShortcut {
     return Get-TlcShortcutState -ToolboxRoot $ToolboxRoot
 }
 
+function Set-TlcWindowLauncherIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Windows.Window] $Window,
+        [Parameter(Mandatory)] [string] $ToolboxRoot
+    )
+    $launcher = Join-Path $ToolboxRoot 'TLC-Toolbox.exe'
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { return }
+    $handle = [System.Windows.Interop.WindowInteropHelper]::new($Window).Handle
+    if ($handle -eq [IntPtr]::Zero) { throw 'The taskbar launcher identity needs an initialized window handle.' }
+    Initialize-TlcShellLink
+    [Tlc.ShellLink]::SetWindowLauncher($handle, $launcher, (Get-TlcAppUserModelId))
+}
+
+function Install-TlcApplication {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ToolboxRoot,
+        [string] $InstallRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\TLC-Toolbox')
+    )
+
+    $source = ConvertTo-TlcShortcutRoot -Path $ToolboxRoot
+    $destination = ConvertTo-TlcShortcutRoot -Path $InstallRoot
+    if ($destination.StartsWith($source + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The installation folder cannot be inside the source payload.'
+    }
+    $manifestPath = Join-Path $source 'Tlc.psd1'
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($manifestPath, [ref]$null, [ref]$errors)
+    if ($errors.Count) { throw 'The source toolbox manifest could not be parsed.' }
+    $manifest = $ast.Find({ param($node) $node -is [Management.Automation.Language.HashtableAst] }, $false).SafeGetValue()
+    if ([string]$manifest.GUID -ne 'c4e9a17b-5d2f-4a86-9f31-7b0c8e5d24af') { throw 'The source is not the TLC Toolbox application.' }
+    $files = @($manifest.FileList)
+    foreach ($required in 'TLC-Toolbox.exe', 'Start-TlcToolbox.ps1', 'Tlc.psd1') {
+        if ($files -notcontains $required) { throw "The payload does not declare $required." }
+    }
+    foreach ($relative in $files) {
+        if ([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative) -or
+            $relative -match '(^|[\\/])\.{1,2}([\\/]|$)|:|\.local\.psd1$') { throw "Unsafe installation payload path: $relative" }
+        if (-not (Test-Path -LiteralPath (Join-Path $source $relative) -PathType Leaf)) { throw "The source payload is incomplete: $relative" }
+    }
+    $shortcutBefore = Get-TlcShortcutState -ToolboxRoot $destination
+    if ($shortcutBefore.State -eq 'Foreign') {
+        throw 'A different application owns the TLC Toolbox Start menu name; it has not been overwritten.'
+    }
+    if ([string]::Equals($source, $destination, [StringComparison]::OrdinalIgnoreCase)) {
+        $shortcut = Install-TlcShortcut -ToolboxRoot $destination
+        return [pscustomobject]@{ InstallRoot = $destination; Version = $manifest.ModuleVersion; Shortcut = $shortcut.Path; BackupPath = '' }
+    }
+    if (Test-Path -LiteralPath $destination) {
+        $installedManifest = Join-Path $destination 'Tlc.psd1'
+        if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) { throw 'The installation folder contains something other than TLC Toolbox.' }
+        $installedAst = [Management.Automation.Language.Parser]::ParseFile($installedManifest, [ref]$null, [ref]$errors)
+        if ($errors.Count) { throw 'The existing installation manifest is unreadable.' }
+        $existing = $installedAst.Find({ param($node) $node -is [Management.Automation.Language.HashtableAst] }, $false).SafeGetValue()
+        if ([string]$existing.GUID -ne [string]$manifest.GUID) { throw 'The installation folder belongs to a different application.' }
+        if ([version]$existing.ModuleVersion -gt [version]$manifest.ModuleVersion) { throw 'A newer TLC Toolbox is already installed; it has not been downgraded.' }
+        $active = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='TLC-Toolbox.exe'" `
+            -Property ProcessId, CommandLine, ExecutablePath -ErrorAction Stop |
+            Where-Object { $_.ProcessId -ne $PID -and (
+                ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($destination + '\', [StringComparison]::OrdinalIgnoreCase)) -or
+                ($_.CommandLine -and $_.CommandLine.IndexOf($destination + '\', [StringComparison]::OrdinalIgnoreCase) -ge 0)
+            ) })
+        if ($active.Count) { throw 'Close the installed toolbox after its current run finishes, then install the update. No running process was stopped.' }
+    }
+    $parent = Split-Path -Parent $destination
+    $staging = Join-Path $parent ('TLC-Toolbox.installing-' + [guid]::NewGuid().ToString('N'))
+    $backup = ''
+    $replaced = $false
+    $shortcutBytes = if (Test-Path -LiteralPath $shortcutBefore.Path -PathType Leaf) { [IO.File]::ReadAllBytes($shortcutBefore.Path) } else { $null }
+    $null = New-Item -ItemType Directory -Path $staging -Force -ErrorAction Stop
+    try {
+        foreach ($relative in $files) {
+            $target = Join-Path $staging $relative
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force -ErrorAction Stop
+            Copy-Item -LiteralPath (Join-Path $source $relative) -Destination $target -ErrorAction Stop
+            if ((Get-TlcFileHash -Path $target) -ne (Get-TlcFileHash -Path (Join-Path $source $relative))) {
+                throw "The installed payload failed verification: $relative"
+            }
+        }
+        if (Test-Path -LiteralPath $destination) {
+            $backup = Join-Path $parent ('TLC-Toolbox.previous-' + [guid]::NewGuid().ToString('N'))
+            Move-Item -LiteralPath $destination -Destination $backup -ErrorAction Stop
+        }
+        Move-Item -LiteralPath $staging -Destination $destination -ErrorAction Stop
+        $replaced = $true
+        $shortcut = Install-TlcShortcut -ToolboxRoot $destination
+        return [pscustomobject]@{ InstallRoot = $destination; Version = $manifest.ModuleVersion; Shortcut = $shortcut.Path; BackupPath = $backup }
+    } catch {
+        if ($replaced) { Move-Item -LiteralPath $destination -Destination $staging -ErrorAction Stop }
+        if ($backup -and (Test-Path -LiteralPath $backup)) { Move-Item -LiteralPath $backup -Destination $destination -ErrorAction Stop }
+        if ($null -ne $shortcutBytes) {
+            [IO.File]::WriteAllBytes($shortcutBefore.Path, $shortcutBytes)
+        } elseif ((Get-TlcShortcutState -ToolboxRoot $destination).State -in @('Here', 'Elsewhere')) {
+            Remove-Item -LiteralPath $shortcutBefore.Path -Force -ErrorAction Stop
+        }
+        throw
+    } finally {
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction Stop }
+    }
+}
+
 function Uninstall-TlcShortcut {
     <#
     .SYNOPSIS
@@ -553,4 +700,5 @@ function Update-TlcShortcutSetting {
 }
 
 Export-ModuleMember -Function Get-TlcAppUserModelId, Get-TlcShortcutPath, Get-TlcShortcutCommand, Get-TlcShortcutState,
+    Install-TlcApplication, Set-TlcWindowLauncherIdentity,
     Get-TlcShortcutAppId, Install-TlcShortcut, Uninstall-TlcShortcut, Update-TlcShortcutSetting

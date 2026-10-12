@@ -6,5 +6,8 @@
 *.png binary
 *.ico binary
 *.zip binary
+*.exe binary
+*.cs text eol=lf
+*.manifest text eol=lf
 *.md text eol=lf
 *.sha256 text eol=lf

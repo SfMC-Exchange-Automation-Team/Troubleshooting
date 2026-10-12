@@ -1,6 +1,6 @@
 @{
     RootModule        = ''
-    ModuleVersion = '0.1.58'
+    ModuleVersion = '0.1.59'
     GUID              = 'c4e9a17b-5d2f-4a86-9f31-7b0c8e5d24af'
     Author            = 'Cullen Haafke'
     Description       = 'TLC Toolbox: Microsoft Teams log collection. Scenario-scoped evidence capture, retrospective client log harvest, privacy gating and verified handover bundles.'
@@ -262,6 +262,8 @@
         'Get-TlcAppUserModelId'
         'Get-TlcShortcutState'
         'Install-TlcShortcut'
+        'Install-TlcApplication'
+        'Set-TlcWindowLauncherIdentity'
         'Uninstall-TlcShortcut'
         'Update-TlcShortcutSetting'
 
@@ -316,6 +318,7 @@
         'Tlc.psd1'
         'TLC-Toolbox.ps1'
         'Start-TlcToolbox.ps1'
+        'TLC-Toolbox.exe'
         'Start-TlcToolbox.cmd'
         'Collect-TeamsLogs.cmd'
         'Invoke-TlcQuickCollect.ps1'

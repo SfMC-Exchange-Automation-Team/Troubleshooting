@@ -3,10 +3,9 @@
 Builds a distributable zip of the TLC Toolbox from the manifest's FileList.
 
 .DESCRIPTION
-The toolbox needs no installer. It has no external module dependencies, requires only the Windows
-PowerShell 5.1 that ships with Windows, and writes nothing to its own folder - case history and the
-dark theme go to %LOCALAPPDATA% - so it runs from a read-only share as happily as from a local copy.
-Sharing it is therefore a copy, not an install.
+The toolbox has no external module dependencies and requires Windows PowerShell 5.1.
+The native EXE installs a verified per-user program copy and Start menu entry without elevation.
+Case history and settings remain outside the program folder under %LOCALAPPDATA%\TLC-Toolbox.
 
 What that still needs getting right is which files, and Tlc.psd1's FileList already answers that.
 This reads it rather than restating it, so the package cannot drift from the manifest the way a
@@ -83,7 +82,7 @@ function Test-TlcToolboxSigned {
     $signable = @(
         foreach ($folder in @($Root, (Join-Path $Root 'Modules'), (Join-Path $Root 'Config'), (Join-Path $Root 'Data'))) {
             Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue |
-                Where-Object { @('.ps1', '.psd1', '.psm1') -contains $_.Extension }
+                Where-Object { @('.ps1', '.psd1', '.psm1', '.exe') -contains $_.Extension }
         }
     )
     if ($signable.Count -eq 0) { return $false }
@@ -117,24 +116,31 @@ function New-TlcReadmeText {
         $lines.Add('    Windows marks anything that arrives by email, Teams or download. Unblocking')
         $lines.Add('    the .zip once clears every file inside it. Without it Windows blocks the')
         $lines.Add('    scripts, because this build is not code signed.')
+        $lines.Add('    The EXE is also unsigned: SmartScreen or corporate application control may')
+        $lines.Add('    refuse it. Use an IT-approved route; do not bypass organizational policy.')
         $lines.Add('')
     }
 
     $lines.Add('TO RUN')
     $lines.Add('    Extract the whole folder and keep it together, then double-click:')
     $lines.Add('')
-    $lines.Add('        Start-TlcToolbox.cmd     the guided window - start here')
+    $lines.Add('        TLC-Toolbox.exe          the icon-bearing application - start here')
+    $lines.Add('        Start-TlcToolbox.cmd     script-based fallback')
     $lines.Add('        Collect-TeamsLogs.cmd    collect straight away, no window')
     $lines.Add('')
-    $lines.Add('    To open it from the Start menu next time, with its own icon: Settings (the gear,')
-    $lines.Add('    bottom left), then Add to Start menu. The entry opens the folder it was added')
-    $lines.Add('    from, so add it once the toolbox is extracted where it will stay. It can be')
-    $lines.Add('    pinned to the taskbar from the Start menu.')
+    $lines.Add('    The EXE installs a clean per-user copy under %LOCALAPPDATA%\Programs\TLC-Toolbox')
+    $lines.Add('    and adds TLC Toolbox to the Start menu. No administrator rights are needed.')
+    $lines.Add('    Right-click that Start menu entry to Pin to Start or Pin to taskbar.')
+    $lines.Add('    The running toolbox taskbar button can also be pinned. Pins reopen the EXE,')
+    $lines.Add('    not a generic PowerShell console. Moving/deleting the extracted download')
+    $lines.Add('    afterwards does not remove the installed application or its icon.')
     $lines.Add('')
     $lines.Add('REQUIREMENTS')
-    $lines.Add('    Windows PowerShell 5.1, included with Windows 10 and 11. Nothing to install,')
-    $lines.Add('    no admin rights needed, and nothing is written into this folder - so it can be')
-    $lines.Add('    run from a read-only share.')
+    $lines.Add('    Windows PowerShell 5.1, included with Windows 10 and 11. No extra modules')
+    $lines.Add('    or administrator rights are needed. Installation writes to your per-user')
+    $lines.Add('    Programs folder; settings and evidence are stored separately.')
+    $lines.Add('    The extracted source can be on a read-only share; installation still needs')
+    $lines.Add('    write access to your own per-user Programs folder.')
     $lines.Add('')
     $lines.Add('WHERE THINGS GO')
     $lines.Add('    Collected evidence   %SystemDrive%\TLC-Toolbox\Runs   (the window can change this)')

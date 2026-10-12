@@ -39,7 +39,7 @@ param()
 function Get-TlcSignableFile {
     param([Parameter(Mandatory)] [string] $Root)
 
-    $wanted = @('.ps1', '.psd1', '.psm1')
+    $wanted = @('.ps1', '.psd1', '.psm1', '.exe')
     $manifestPath = Join-Path $Root 'Tlc.psd1'
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw "No manifest at $manifestPath, so there is nothing that states what ships. The signable set cannot be determined without it."

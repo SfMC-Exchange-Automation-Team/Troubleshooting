@@ -38,6 +38,10 @@ Internal. Set on the relaunched process so it cannot loop, and by Start-TlcToolb
 menu entry. It marks the process as the toolbox's own, which is when the launcher gives it the
 toolbox's taskbar identity.
 
+.PARAMETER Install
+Internal setup path used by TLC-Toolbox.exe. Installs the declared payload into the stable
+per-user program folder and creates its Start menu shortcut without starting a collection.
+
 .EXAMPLE
 .\Start-TlcToolbox.ps1
 
@@ -57,6 +61,7 @@ param(
     [string] $OutputRoot,
     [string] $CorrelationId,
     [string] $ConsentGrantedBy,
+    [switch] $Install,
     [switch] $NoRelaunch
 )
 
@@ -120,6 +125,11 @@ function Show-TlcStartupError {
 }
 
 try {
+    if ($Install) {
+        Import-Module $manifest -Force -ErrorAction Stop
+        Install-TlcApplication -ToolboxRoot $toolboxRoot
+        return
+    }
     if ($Stage) {
         $arguments = @{ Stage = $Stage }
         if ($Scenario) { $arguments['Scenario'] = $Scenario }
@@ -186,6 +196,6 @@ try {
         Write-Verbose "Could not write a startup failure log: $($_.Exception.Message)"
     }
 
-    Show-TlcStartupError -ErrorRecord $failure -LogPath $logPath -NoDialog:([bool]$Stage -or [bool]$Console)
+    Show-TlcStartupError -ErrorRecord $failure -LogPath $logPath -NoDialog:([bool]$Stage -or [bool]$Console -or $Install)
     exit 1
 }
