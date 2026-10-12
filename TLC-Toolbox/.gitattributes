@@ -1,0 +1,10 @@
+*.ps1 -text
+*.psm1 -text
+*.psd1 -text
+*.xaml -text
+*.cmd -text
+*.png binary
+*.ico binary
+*.zip binary
+*.md text eol=lf
+*.sha256 text eol=lf

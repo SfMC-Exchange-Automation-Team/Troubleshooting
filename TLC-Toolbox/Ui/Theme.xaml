@@ -1,0 +1,742 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        EPO Toolbox design system.
+
+        Every colour is defined here, so a paint decision is made once and the windows cannot drift
+        apart. Deliberate choices: no 3D chrome, no system gray, flat surfaces separated by a single
+        hairline border and generous padding, and a real typographic scale.
+
+        The boundary is colour, not all styling. The layout files still set FontSize and FontWeight
+        directly - a metric cannot silently disagree with a theme the way a brush can, and pulling
+        every one of them in here would trade a real problem for a naming exercise. Colour is
+        fenced: Tests\Epo.Ui.Binding.Tests.ps1 fails if a layout file paints anything itself.
+        Ui\Splash.xaml is exempt and holds its own colours, because it is built on its own runspace
+        before this dictionary is loaded and has nothing to resolve against.
+
+        Layout is Grid rather than absolute coordinates, so the windows resize, and WPF takes system
+        DPI awareness itself when the first Window is constructed - so they are crisp above 100%
+        without the application manifest a hosted script cannot supply. System-aware, not
+        per-monitor: a window dragged to a monitor at a different scale is bitmap-stretched until it
+        is reopened. See docs\user-interface.md.
+    -->
+
+    <!-- ============================== Colour tokens ============================== -->
+    <Color x:Key="CanvasColor">#F4F5F7</Color>
+    <Color x:Key="SurfaceColor">#FFFFFF</Color>
+    <Color x:Key="HeaderColor">#151B2B</Color>
+    <Color x:Key="HeaderTextColor">#FFFFFF</Color>
+    <Color x:Key="HeaderMutedColor">#8A93A6</Color>
+    <Color x:Key="BorderColor">#E2E5EB</Color>
+    <Color x:Key="BorderStrongColor">#CBD1DA</Color>
+    <Color x:Key="TextPrimaryColor">#1A1D23</Color>
+    <Color x:Key="TextSecondaryColor">#5A6472</Color>
+    <Color x:Key="AccentColor">#2563EB</Color>
+    <Color x:Key="AccentHoverColor">#1D4FD7</Color>
+    <Color x:Key="AccentPressedColor">#1A45BC</Color>
+    <Color x:Key="HoverColor">#EEF2FB</Color>
+
+    <!--
+        The busy overlay's scrim. Nearly opaque white rather than fully opaque, so the page under a
+        long wait stays faintly readable and the operator can see the window did not close. The alpha
+        is the whole point of the token, which is why it is a Color and not SurfaceColor reused.
+    -->
+    <Color x:Key="OverlayScrimColor">#F7FFFFFF</Color>
+
+    <Color x:Key="PassColor">#0F7B3D</Color>
+    <Color x:Key="PassSurfaceColor">#E4F5EA</Color>
+    <Color x:Key="WarningColor">#8A5A00</Color>
+    <Color x:Key="WarningSurfaceColor">#FEF3DC</Color>
+    <Color x:Key="BlockedColor">#B42318</Color>
+    <Color x:Key="BlockedSurfaceColor">#FDE6E4</Color>
+    <Color x:Key="NeutralColor">#5A6472</Color>
+    <Color x:Key="NeutralSurfaceColor">#EDEFF3</Color>
+    <Color x:Key="UnknownColor">#6941C6</Color>
+    <Color x:Key="UnknownSurfaceColor">#F3EDFE</Color>
+
+    <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="HeaderBrush" Color="{StaticResource HeaderColor}" />
+    <SolidColorBrush x:Key="HeaderTextBrush" Color="{StaticResource HeaderTextColor}" />
+    <SolidColorBrush x:Key="HeaderMutedBrush" Color="{StaticResource HeaderMutedColor}" />
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}" />
+    <SolidColorBrush x:Key="HoverBrush" Color="{StaticResource HoverColor}" />
+    <SolidColorBrush x:Key="OverlayScrimBrush" Color="{StaticResource OverlayScrimColor}" />
+
+    <SolidColorBrush x:Key="PassBrush" Color="{StaticResource PassColor}" />
+    <SolidColorBrush x:Key="PassSurfaceBrush" Color="{StaticResource PassSurfaceColor}" />
+    <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="{StaticResource WarningSurfaceColor}" />
+    <SolidColorBrush x:Key="BlockedBrush" Color="{StaticResource BlockedColor}" />
+    <SolidColorBrush x:Key="BlockedSurfaceBrush" Color="{StaticResource BlockedSurfaceColor}" />
+    <SolidColorBrush x:Key="NeutralBrush" Color="{StaticResource NeutralColor}" />
+    <SolidColorBrush x:Key="NeutralSurfaceBrush" Color="{StaticResource NeutralSurfaceColor}" />
+    <SolidColorBrush x:Key="UnknownBrush" Color="{StaticResource UnknownColor}" />
+    <SolidColorBrush x:Key="UnknownSurfaceBrush" Color="{StaticResource UnknownSurfaceColor}" />
+
+    <!-- ============================== Typography ============================== -->
+    <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas</FontFamily>
+
+    <Style x:Key="DisplayText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+    </Style>
+
+    <Style x:Key="SectionText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="BodyText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="CaptionText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+    </Style>
+
+    <Style x:Key="MetricValueText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize" Value="30" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="MetricLabelText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- ============================== Surfaces ============================== -->
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="18" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+
+    <Style x:Key="MetricCard" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="Padding" Value="18,14,18,16" />
+        <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+
+    <!-- ============================== Buttons ============================== -->
+    <Style x:Key="PrimaryButton" TargetType="Button">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chrome"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource AccentHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource AccentPressedBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="SecondaryButton" TargetType="Button">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chrome"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{StaticResource BorderStrongBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- A square button carrying a glyph instead of a label. Segoe MDL2 Assets ships with every
+         Windows the toolbox supports, so the glyph is a font character rather than an image asset
+         that would have to be found on disk and could be missing.
+
+         Anything using this needs a ToolTip: an icon with no label is only obvious to whoever chose
+         it. -->
+    <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+        <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Width" Value="34" />
+        <Setter Property="MinHeight" Value="34" />
+    </Style>
+
+    <!-- A button sized to sit inside a grid row rather than a footer. SecondaryButton's 34px
+         minimum height and 16,8 padding set the height of every row in the run grid, which made
+         the window taller than the space available and clipped the label at the same time. -->
+    <Style x:Key="GridActionButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Padding" Value="8,1" />
+        <Setter Property="MinHeight" Value="22" />
+        <Setter Property="MinWidth" Value="84" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- The maintenance button in the server grid, which carried no colour at all: "Start
+         maintenance" and what was then "Stop maintenance" were the same shape, the same size and
+         the same grey, so which of the two was showing - the whole state of the server - had to be
+         read rather than seen. Down a column of eight servers that is eight labels to read to find
+         the one that is out of service. (The out-of-service verb now reads "Release components",
+         which is what the button does; the accent below is what makes the state visible, and it
+         does not depend on either word.)
+
+         Out of service takes the same amber surface the Warning pill and the "Maintenance" label
+         under the server name already use, so the row reads as one thing rather than as an amber
+         word next to a grey button. In service stays neutral: a server doing its job is the
+         ordinary case and does not need to compete for the eye.
+
+         The accent is on Background and Foreground because those are the two the template exposes
+         - Chrome binds Background through TemplateBinding and the content inherits Foreground. Its
+         BorderBrush is fixed in the template, so a border accent would need a second template for
+         no gain. Hover and disabled are template triggers and beat these, deliberately: pointing at
+         the button still lights it the way every other button lights, and the disabled Unknown
+         state stays grey rather than claiming a colour for a state nobody has read. -->
+    <Style x:Key="MaintenanceActionButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding MaintenanceActionState}" Value="OutOfService">
+                <Setter Property="Background" Value="{StaticResource WarningSurfaceBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ============================== Inputs ============================== -->
+    <Style x:Key="FlatComboBoxItem" TargetType="ComboBoxItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="4" Margin="4,1">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HoverBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!--
+        Fully templated so the control loses the default Windows chrome. A ComboBox left with
+        only property setters keeps its dated bevelled drop-down button, which is exactly the
+        look this UI exists to get away from.
+    -->
+    <Style x:Key="FlatComboBox" TargetType="ComboBox">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource FlatComboBoxItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton x:Name="ToggleButton" Focusable="False" ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Chrome"
+                                            Background="{StaticResource SurfaceBrush}"
+                                            BorderBrush="{StaticResource BorderStrongBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6">
+                                        <Path x:Name="Chevron"
+                                              HorizontalAlignment="Right" VerticalAlignment="Center"
+                                              Margin="0,0,12,0"
+                                              Data="M 0 0 L 5 5 L 10 0"
+                                              Stroke="{StaticResource TextSecondaryBrush}"
+                                              StrokeThickness="1.6"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HoverBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+
+                        <ContentPresenter x:Name="ContentSite"
+                                          IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          Margin="12,0,34,0"
+                                          VerticalAlignment="Center"
+                                          HorizontalAlignment="Left" />
+
+                        <Popup x:Name="PART_Popup"
+                               AllowsTransparency="True"
+                               Placement="Bottom"
+                               PopupAnimation="Fade"
+                               Focusable="False"
+                               IsOpen="{TemplateBinding IsDropDownOpen}">
+                            <Border Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderStrongBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Margin="0,4,0,0"
+                                    MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                    Padding="0,4">
+                                <ScrollViewer>
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="FlatTextBox" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="CaretBrush" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Chrome"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderStrongBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsReadOnly" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource CanvasBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- A finding that opens. The default Expander puts a small triangle in a fixed-width column and
+         left-aligns the header beside it, which would indent every finding and waste the width the
+         detail text needs. This template gives the whole header row to the content and marks the
+         state with a chevron on the right, where a card's affordance belongs. -->
+    <Style x:Key="FindingExpander" TargetType="Expander">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <ToggleButton x:Name="Toggle" Cursor="Hand" Background="Transparent"
+                                      IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="Transparent">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ContentPresenter Grid.Column="0" />
+                                            <!-- E70D and E70E are ChevronDown and ChevronUp in
+                                                 Segoe MDL2 Assets. -->
+                                            <TextBlock x:Name="Chevron" Grid.Column="1" Text="&#xE70D;"
+                                                       FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                       VerticalAlignment="Top" Margin="8,3,0,0"
+                                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Chevron" Property="Text" Value="&#xE70E;" />
+                                            <Setter TargetName="Chevron" Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                            <ContentPresenter ContentSource="Header" />
+                        </ToggleButton>
+                        <ContentPresenter x:Name="Body" Visibility="Collapsed" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="Body" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================== Status pill ============================== -->
+    <!--
+        Applied to a Border whose DataContext carries a Status property. Every trigger below binds
+        {Binding Status}; nothing in the tree sets Tag on a pill, and the eight .Tag reads there are
+        all on Buttons, routing clicks in the dashboard and the wizard. DataTriggers keep the colour
+        mapping declarative, so no converter code is needed.
+
+        EVERY status word that can reach this style is triggered here and in StatusPillText, even
+        where the answer is the default. A word with no trigger is not an error and does not fail
+        anything: it falls through to the Background setter above, which is the brush the Pending
+        trigger sets on purpose. So an untriggered word says "this has not started yet" in the one
+        channel an operator reads at a glance.
+
+        That is what Skipped did, on the fix window's step list, where it is the default outcome for
+        any repair that found nothing to change - the opposite statement, in identical pixels.
+        Tests\Epo.Ui.Binding.Tests.ps1 fences the rule rather than leaving it to whoever adds the
+        next word.
+    -->
+    <Style x:Key="StatusPill" TargetType="Border">
+        <Setter Property="CornerRadius" Value="11" />
+        <Setter Property="Padding" Value="10,3" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Status}" Value="Pass">
+                <Setter Property="Background" Value="{StaticResource PassSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Warning">
+                <Setter Property="Background" Value="{StaticResource WarningSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Blocked">
+                <Setter Property="Background" Value="{StaticResource BlockedSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Unknown">
+                <Setter Property="Background" Value="{StaticResource UnknownSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Checking">
+                <Setter Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+            </DataTrigger>
+            <!-- Fix-run steps. A step outcome is the same kind of statement as a check outcome,
+                 so it reuses the same pill and the same colours rather than inventing a second
+                 vocabulary that would drift from this one. -->
+            <DataTrigger Binding="{Binding Status}" Value="Done">
+                <Setter Property="Background" Value="{StaticResource PassSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Failed">
+                <Setter Property="Background" Value="{StaticResource BlockedSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Running">
+                <Setter Property="Background" Value="{StaticResource WarningSurfaceBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Pending">
+                <Setter Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+            </DataTrigger>
+            <!-- Skipped is a step the run reached, looked at and left alone, which is the default
+                 outcome for any repair reporting Changed = $false. It takes the Unknown pair
+                 because that is the only one in this palette that is neither green, amber, red nor
+                 the not-started grey, and because a step with no verdict is what Unknown already
+                 means one grid over. -->
+            <DataTrigger Binding="{Binding Status}" Value="Skipped">
+                <Setter Property="Background" Value="{StaticResource UnknownSurfaceBrush}" />
+            </DataTrigger>
+            <!-- Neutral on purpose, and stated rather than reached by falling through: this is the
+                 media grid's "Already applied", and Set-EpoUiStatusPill's own map assigns it the
+                 same pair. Two tables, one answer. -->
+            <DataTrigger Binding="{Binding Status}" Value="NotApplicable">
+                <Setter Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="StatusPillText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource NeutralBrush}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Status}" Value="Pass">
+                <Setter Property="Foreground" Value="{StaticResource PassBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Warning">
+                <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Blocked">
+                <Setter Property="Foreground" Value="{StaticResource BlockedBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Unknown">
+                <Setter Property="Foreground" Value="{StaticResource UnknownBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Done">
+                <Setter Property="Foreground" Value="{StaticResource PassBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Failed">
+                <Setter Property="Foreground" Value="{StaticResource BlockedBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Running">
+                <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Skipped">
+                <Setter Property="Foreground" Value="{StaticResource UnknownBrush}" />
+            </DataTrigger>
+            <!-- The three whose answer is the default, said out loud. The Border style has always
+                 named Checking and Pending this way; this list had not, so a reader comparing the
+                 two could not tell a deliberate grey from a word nobody had considered. -->
+            <DataTrigger Binding="{Binding Status}" Value="Checking">
+                <Setter Property="Foreground" Value="{StaticResource NeutralBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="Pending">
+                <Setter Property="Foreground" Value="{StaticResource NeutralBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="NotApplicable">
+                <Setter Property="Foreground" Value="{StaticResource NeutralBrush}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ============================== Data grid ============================== -->
+    <Style x:Key="GridColumnHeader" TargetType="DataGridColumnHeader">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="7,0" />
+        <Setter Property="Height" Value="38" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <!-- A DataGridTextColumn builds a TextBlock whose TextTrimming defaults to None, so a column
+         narrower than its content hard-clips it: no ellipsis, no tooltip, and a sentence that stops
+         mid-word reads as a sentence that stopped. Measured offscreen at the wizard's own declared
+         default size, the plan grid's What it does column showed 45% of the install caption and the
+         run grid's Result column showed 28% of a setup failure, while the short captions lost three
+         characters each and still looked finished. Every text column in the tree now trims through
+         one of the three styles below. A cell style targets the TextBlock inside the cell, so it
+         goes on a column's ElementStyle, not its CellStyle. -->
+    <Style x:Key="GridCellTrimmed" TargetType="TextBlock">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!-- For the columns carrying prose. An ellipsis says text was cut; it does not say what was cut,
+         and the two grids where that matters most are the one an irreversible window is authorised
+         from and the one a failure is diagnosed from. The tooltip binds to the TextBlock's own Text,
+         so one style serves every column without repeating that column's binding.
+
+         It hangs on every cell, not only the trimmed ones, because the property that would tell them
+         apart - TextBlock.IsTextTrimmed - does not exist on the WPF that ships with Windows
+         PowerShell 5.1 (measured: .NET Framework 4.0.30319, no CLR property and no
+         DependencyProperty). A tooltip repeating text already on screen is noise; a missing tooltip
+         on text that was cut is the defect. The trigger covers the one case worth excluding: a
+         ToolTip bound to an empty string still pops an empty box on hover, and every Pending row in
+         the run grid has an empty Result. -->
+    <Style x:Key="GridCellText" TargetType="TextBlock" BasedOn="{StaticResource GridCellTrimmed}">
+        <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+        <Style.Triggers>
+            <Trigger Property="Text" Value="">
+                <Setter Property="ToolTip" Value="{x:Null}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- For columns holding short fixed-width values - a status word, an elapsed time - rather than
+         prose. Left-aligned beside a wide text column they read as a ragged edge. -->
+    <Style x:Key="GridCellCentred" TargetType="TextBlock" BasedOn="{StaticResource GridCellTrimmed}">
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="GridColumnHeaderCentred" TargetType="DataGridColumnHeader"
+           BasedOn="{StaticResource GridColumnHeader}">
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="GridRow" TargetType="DataGridRow">
+        <Setter Property="Background" Value="Transparent" />
+        <!-- The floor, not the height. 40 was set when every cell held one line of text and no
+             controls; it left a patch window of nine steps taller than the space available. Rows
+             that need more - the dashboard's two-line build cell - still grow to fit. -->
+        <Setter Property="MinHeight" Value="30" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GridCell" TargetType="DataGridCell">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="7,0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="DataGridCell">
+                    <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="DataGridSurface" TargetType="DataGrid">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="RowBackground" Value="Transparent" />
+        <Setter Property="GridLinesVisibility" Value="None" />
+        <Setter Property="HeadersVisibility" Value="Column" />
+        <Setter Property="AutoGenerateColumns" Value="False" />
+        <Setter Property="CanUserAddRows" Value="False" />
+        <Setter Property="CanUserDeleteRows" Value="False" />
+        <Setter Property="IsReadOnly" Value="True" />
+        <Setter Property="SelectionMode" Value="Single" />
+        <Setter Property="SelectionUnit" Value="FullRow" />
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+        <Setter Property="ColumnHeaderStyle" Value="{StaticResource GridColumnHeader}" />
+        <Setter Property="RowStyle" Value="{StaticResource GridRow}" />
+        <Setter Property="CellStyle" Value="{StaticResource GridCell}" />
+    </Style>
+
+    <!-- ============================== Scrollbar ============================== -->
+    <!-- Implicit so every scroll area in the app loses the default chunky scrollbar. -->
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Width" Value="10" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="Transparent">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border Background="{StaticResource BorderStrongBrush}"
+                                                    CornerRadius="4"
+                                                    Margin="3,0" />
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False" />
+                            </Track.IncreaseRepeatButton>
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" />
+                            </Track.DecreaseRepeatButton>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Orientation" Value="Horizontal">
+                            <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto" />
+                <Setter Property="Height" Value="10" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+</ResourceDictionary>

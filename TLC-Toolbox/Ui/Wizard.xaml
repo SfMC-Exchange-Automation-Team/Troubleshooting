@@ -1,0 +1,2287 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TLC Toolbox - Teams Log Collection"
+        Height="820" Width="960" MinHeight="700" MinWidth="820"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource CanvasBrush}">
+
+    <!--
+        Loaded by Import-TlcXaml via XamlReader, so this markup carries no x:Class
+        and no event handler attributes. Every control the code touches is named
+        here and resolved through Get-TlcUiElement, which fails loudly if a name
+        goes missing.
+
+        The styles come from the EPO Toolbox theme, copied rather than reimplemented,
+        so the two windows stay siblings when either is restyled.
+    -->
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="__THEME_URI__" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!--
+                Form-layout resources, local to this window rather than added to Theme.xaml,
+                which is EPO's file copied verbatim so the two toolboxes stay siblings.
+
+                One label column and one field width shared by every section is what fixes
+                alignment and inconsistent sizing together: each section used to declare its
+                own, so fields in different sections were different widths and their labels
+                did not line up with each other.
+
+                124 was measured against the English labels and was exactly wide enough for
+                them, which made it exactly too narrow for anything else: in Spanish
+                "Consentimiento otorgado por" rendered as "Consentimiento otc" - clipped
+                mid-word, with no ellipsis to say so. A fixed column sized to one language is
+                a column that silently truncates every other one.
+
+                200 fits the longest label in all three shipped tables with room to spare, and
+                the field column loses nothing because it is not what constrains the window
+                width. A shared fixed width is still the right shape - Auto would let each
+                section size independently and reintroduce the misalignment this replaced -
+                but it has to be sized for the widest language, not the first one.
+            -->
+            <GridLength x:Key="LabelColumnWidth">200</GridLength>
+            <GridLength x:Key="FieldColumnWidth">460</GridLength>
+            <SolidColorBrush x:Key="TeamsGraphBrush" Color="#6264A7" />
+            <Style x:Key="ScenarioGroupHeader" TargetType="ComboBoxItem" BasedOn="{StaticResource FlatComboBoxItem}">
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="Padding" Value="12,7" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBoxItem">
+                            <Border Background="{DynamicResource NeutralSurfaceBrush}" Padding="{TemplateBinding Padding}"
+                                    BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="0,1,0,0">
+                                <TextBlock Text="{TemplateBinding Content}" TextWrapping="Wrap"
+                                           Foreground="{TemplateBinding Foreground}" FontWeight="{TemplateBinding FontWeight}"
+                                           FontSize="{TemplateBinding FontSize}" FontFamily="{TemplateBinding FontFamily}" />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="LoadingSpinner" TargetType="Path">
+                <Setter Property="Data" Value="M7,1 A6,6 0 1 1 1,7" />
+                <Setter Property="Stroke" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="StrokeThickness" Value="2" />
+                <Setter Property="Width" Value="14" />
+                <Setter Property="Height" Value="14" />
+                <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+                <Setter Property="RenderTransform"><Setter.Value><RotateTransform /></Setter.Value></Setter>
+            </Style>
+            <Style x:Key="GraphMetricTip" TargetType="ToolTip">
+                <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+                <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Padding" Value="12" />
+                <Setter Property="MaxWidth" Value="380" />
+            </Style>
+
+            <!--
+                The settings gear.
+
+                A LOCAL style with its own ControlTemplate, for a reason worth stating: the gear
+                was a bare <Button> carrying Background="Transparent" and BorderThickness="0",
+                and in dark mode it rendered a white square. Those two properties do nothing on
+                their own - with no Style set, WPF falls back to its own default Button template,
+                which paints its own chrome from the OS theme and ignores both. Theme.xaml
+                defines PrimaryButton, SecondaryButton and IconButton by key but no implicit
+                TargetType="Button" style, so a keyless button gets the system default. The only
+                way to have no chrome is to supply a template that draws none.
+
+                IconButton was the obvious candidate and is wrong here: it is BasedOn
+                SecondaryButton, so it carries a surface fill and a 1px border - correct for a
+                button in a row of buttons, and a box around a lone gear in the corner.
+
+                Hover does two things, and both are deliberate. The circle appears because a
+                control with no chrome at rest gives no feedback that it is a control at all;
+                HoverBrush is the same fill every other button uses, so it reads as part of the
+                same family. The 30-degree turn is the affordance - a gear that turns says
+                "settings" faster than a tooltip does, and 30 degrees on a six-tooth gear is one
+                half-tooth, which reads as movement rather than as a spin.
+
+                Theme.xaml is EPO's file, copied verbatim and never edited, so this lives here.
+            -->
+            <Style x:Key="GearButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Width" Value="36" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="SnapsToDevicePixels" Value="True" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <!-- CornerRadius 18 on a 36px box is a circle. A rounded square
+                                 around a round glyph reads as a mis-sized button. -->
+                            <Border x:Name="GearChrome"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="18">
+                                <ContentPresenter x:Name="GearContent"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform>
+                                        <RotateTransform x:Name="GearSpin" Angle="0" />
+                                    </ContentPresenter.RenderTransform>
+                                </ContentPresenter>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <EventTrigger RoutedEvent="MouseEnter">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <!-- Named through the transform rather than the
+                                                 element, because a RenderTransform set in a
+                                                 template cannot be reached by TargetName on
+                                                 the ContentPresenter. -->
+                                            <DoubleAnimation
+                                                Storyboard.TargetName="GearContent"
+                                                Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                To="30" Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <EventTrigger RoutedEvent="MouseLeave">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation
+                                                Storyboard.TargetName="GearContent"
+                                                Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                To="0" Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="GearChrome" Property="Background"
+                                            Value="{StaticResource HoverBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,0,12,0" />
+                <!--
+                    Wrap rather than clip. The column is sized for the languages that ship
+                    today; a longer one added later should push its label onto a second line
+                    instead of losing the end of it, because a clipped label is wrong silently
+                    and a wrapped one is merely taller.
+                -->
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+
+            <Style x:Key="InlineLabel" TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="8,0,8,0" />
+            </Style>
+
+            <Style x:Key="SectionHeading" TargetType="TextBlock" BasedOn="{StaticResource SectionText}">
+                <Setter Property="Margin" Value="0,0,0,10" />
+            </Style>
+
+            <!--
+                A section heading that is also a disclosure control.
+
+                Local, with its own ControlTemplate, for the reason the gear button has one:
+                a Button carrying Background="Transparent" and BorderThickness="0" but NO
+                Style still gets WPF's default template, which draws chrome from the OS
+                theme and ignores both properties - which is how the gear used to render a
+                white square in dark mode.
+
+                Theme.xaml is EPO's file and is never edited here, and SecondaryButton
+                hardcodes its border rather than binding it, so a BasedOn override cannot
+                remove it. Hence a template.
+
+                The hover fill is the affordance. A heading that is silently clickable is a
+                heading nobody clicks, and this one has to be found again by an operator who
+                wants the section back.
+            -->
+            <Style x:Key="SectionHeaderButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="4,2,4,2" />
+                <Setter Property="Margin" Value="-4,0,0,0" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="HeaderHost" Background="{TemplateBinding Background}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="HeaderHost" Property="Background"
+                                            Value="{StaticResource HoverBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Sections are separated by a rule rather than boxed in cards. -->
+            <Style x:Key="SectionRule" TargetType="Border">
+                <Setter Property="Height" Value="1" />
+                <Setter Property="Background" Value="{StaticResource BorderBrush}" />
+                <Setter Property="Margin" Value="0,20,0,20" />
+            </Style>
+
+            <!--
+                The dismiss affordance on the recommendation banner.
+
+                Not the theme's IconButton, which is a 34px bordered square sized for a
+                toolbar. In a banner 68px tall with 12,9 padding that reads as a second
+                action competing with the advice, and its border draws a box around a
+                control whose whole job is to get out of the way.
+
+                Theme.xaml is EPO's file and is never edited here, and SecondaryButton's
+                template hardcodes BorderBrush and BorderThickness rather than binding
+                them, so a BasedOn override cannot remove the border. Hence a local
+                template. Background stays transparent until hover so the control is
+                present without being loud, and Segoe MDL2 Assets ships with every Windows
+                the toolbox supports, so the glyph is a font character rather than an image
+                that could be missing from disk.
+            -->
+            <Style x:Key="BannerDismissButton" TargetType="Button">
+                <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+                <Setter Property="FontSize" Value="10" />
+                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                <Setter Property="Width" Value="22" />
+                <Setter Property="Height" Value="22" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="SnapsToDevicePixels" Value="True" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Chrome" Background="Transparent" CornerRadius="4">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HoverBrush}" />
+                                    <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!--
+                WPF's stock CheckBox template hardcodes its own near-white fill and a
+                black glyph, ignoring the theme entirely. In light mode that passes
+                unnoticed; on the dark theme it renders as two glaring white squares
+                with a label that inherits the system foreground and nearly disappears.
+
+                Deliberately implicit rather than keyed like the styles above: every
+                checkbox in this window should look the same, there is no second
+                variety, and a keyed style would let the next checkbox someone adds
+                regress silently back to the system chrome.
+            -->
+            <Style TargetType="CheckBox">
+                <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CheckBox">
+                            <StackPanel Orientation="Horizontal" Background="Transparent">
+                                <Border x:Name="Box"
+                                        Width="16" Height="16"
+                                        CornerRadius="3"
+                                        Background="{StaticResource SurfaceBrush}"
+                                        BorderBrush="{StaticResource BorderStrongBrush}"
+                                        BorderThickness="1"
+                                        VerticalAlignment="Center">
+                                    <!--
+                                        The tick is drawn in the box's own coordinates, so it
+                                        has to be scaled with it. Left at the 18px geometry it
+                                        overhangs a 16px border and reads as a smudge rather
+                                        than a tick.
+                                    -->
+                                    <Path x:Name="Tick"
+                                          Data="M 3.6,8 L 6.7,11.1 L 12.4,4.4"
+                                          Stroke="White"
+                                          StrokeThickness="1.8"
+                                          StrokeEndLineCap="Round"
+                                          StrokeStartLineCap="Round"
+                                          Visibility="Collapsed" />
+                                </Border>
+                                <ContentPresenter Margin="8,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  RecognizesAccessKey="True" />
+                            </StackPanel>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="Box" Property="Background" Value="{StaticResource ButtonAccentBrush}" />
+                                    <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                    <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!--
+                In-field example text. WPF has no placeholder property, so the example is
+                carried in Tag and drawn by the template underneath the content host,
+                revealed by a trigger when Text is empty.
+
+                Tag is a blunt instrument, but the alternative is an attached property, and
+                an attached property needs a CLR type this window cannot have: the markup is
+                parsed by XamlReader at runtime with no x:Class and no compiled code behind
+                it. Tag is the only carrier available here.
+
+                Padding is 10,4 against the theme's 10,7 and the height 30 against 34. The
+                theme values are tuned for EPO's denser tables; at this form's scale they
+                left every box looking half empty.
+            -->
+            <Style x:Key="TranscriptBox" TargetType="TextBox" BasedOn="{StaticResource FlatTextBox}">
+                <!--
+                    The hidden plain-text transcript buffer. LogView presents its text
+                    separately with Aptos and keyword formatting; this retains the original
+                    TextBox contract used by the runner and failure handlers.
+
+                    What is NOT kept is the rest of FlatTextBox's input-box behaviour. It
+                    centres content vertically, which is right for a 34px field and wrong
+                    for a transcript that should start at the top and grow downward.
+
+                    Wrapping rather than a horizontal scrollbar: a run prints long paths,
+                    and reading one by dragging a scrollbar sideways is worse than seeing
+                    it break onto a second line. The tables are narrow enough not to wrap.
+                -->
+                <Setter Property="VerticalContentAlignment" Value="Top" />
+                <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="HintTextBox" TargetType="TextBox" BasedOn="{StaticResource FlatTextBox}">
+                <Setter Property="MinHeight" Value="30" />
+                <Setter Property="Padding" Value="10,4" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <Border x:Name="Chrome"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderStrongBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6">
+                                <Grid>
+                                    <!--
+                                        The placeholder carries the Padding as a Margin so it
+                                        starts exactly where the typed text does. The content
+                                        host must NOT: TextBoxBase already applies Padding to
+                                        the text view internally, so binding it here as well
+                                        indented the text twice and cost 20px of the field's
+                                        usable width - enough to clip "12:57 PM" in an 82px box
+                                        that had been sized with room to spare.
+                                    -->
+                                    <TextBlock x:Name="Placeholder"
+                                               Text="{TemplateBinding Tag}"
+                                               Margin="{TemplateBinding Padding}"
+                                               FontFamily="{TemplateBinding FontFamily}"
+                                               FontSize="{TemplateBinding FontSize}"
+                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               Opacity="0.55"
+                                               VerticalAlignment="Center"
+                                               IsHitTestVisible="False"
+                                               Visibility="Collapsed" />
+                                    <ScrollViewer x:Name="PART_ContentHost"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalScrollBarVisibility="Hidden"
+                                                  VerticalScrollBarVisibility="Hidden" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="Text" Value="">
+                                    <Setter TargetName="Placeholder" Property="Visibility" Value="Visible" />
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Chrome" Property="Background" Value="{StaticResource CanvasBrush}" />
+                                    <Setter TargetName="Placeholder" Property="Opacity" Value="0.4" />
+                                </Trigger>
+                                <Trigger Property="IsReadOnly" Value="True">
+                                    <Setter TargetName="Chrome" Property="Background" Value="{StaticResource CanvasBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!--
+                Dashboard tiles. Colour is set from code using the theme's existing status
+                brushes - the same Pass/Warning/Blocked/Neutral pairs EPO uses for findings -
+                so a red tile here means what a red row means there.
+
+                Caption and value share one line. Stacked, six tiles cost two tall rows at
+                the top of a form that is already scrolling; inline they cost two short ones
+                and read as a status strip rather than as six little panels.
+            -->
+            <!--
+                Tiles are Buttons, not Borders with a mouse handler. A Border that responds
+                to clicks is invisible to the keyboard and to a screen reader: no tab stop,
+                no Invoke pattern, no announcement that it does anything. Templating a
+                Button to look like the tile keeps all of that for free.
+
+                Background and BorderBrush are TemplateBound because the dashboard code sets
+                them per status - the same brushes as an EPO finding - so the status colour
+                has to survive the template rather than be baked into it.
+
+                The chevron is always visible rather than appearing on hover. An affordance
+                that only shows once you are already hovering does not tell anyone the tile
+                can be clicked; it confirms it after they guessed.
+            -->
+            <!--
+                The theme has no ProgressBar, so an unstyled one falls back to the system
+                look - a different height, a different green and square corners beside the
+                rounded flat chrome everything else uses. Same problem the DatePicker had.
+
+                Deliberately a thin indeterminate bar rather than a percentage. The wizard
+                runs the collection as a child process and cannot know how far through it
+                is; a bar that invented a percentage would be a confident wrong answer of
+                exactly the kind this tool exists to avoid. What it honestly says is
+                "something is still happening", and the status text beside it says what.
+            -->
+            <Style x:Key="RunProgressBar" TargetType="ProgressBar">
+                <Setter Property="Height" Value="3" />
+                <Setter Property="IsIndeterminate" Value="True" />
+                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                <Setter Property="Background" Value="{StaticResource BorderBrush}" />
+                <Setter Property="BorderThickness" Value="0" />
+            </Style>
+
+            <Style x:Key="MetricTile" TargetType="Button">
+                <!--
+                    Padding is 8,4 rather than 12,7. The tiles are a status strip that is
+                    glanced at, not a set of cards to be dwelt on, and at four rows the
+                    original padding gave them a fifth of the window before the form the
+                    operator has actually come to fill in got any of it.
+                -->
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="Padding" Value="8,4" />
+                <Setter Property="Margin" Value="0,0,6,0" />
+                <Setter Property="MinWidth" Value="150" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Chrome"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <!--
+                                        A wash over the status fill rather than a replacement
+                                        for it, so hover reads on green, amber and red alike
+                                        without the code needing a hover brush per status.
+
+                                        The negative margin cancels the tile's Padding so the
+                                        wash reaches the border. It has to be kept in step
+                                        with that Padding by hand - a mismatch leaves an
+                                        unwashed band inside the edge on hover.
+                                    -->
+                                    <Border x:Name="Wash" Grid.Column="0" Grid.ColumnSpan="2"
+                                            Margin="-8,-4,-8,-4" CornerRadius="5"
+                                            Background="{StaticResource TextPrimaryBrush}"
+                                            Opacity="0" IsHitTestVisible="False" />
+
+                                    <ContentPresenter Grid.Column="0" VerticalAlignment="Center"
+                                                      HorizontalAlignment="Left" />
+
+                                    <Path x:Name="Chevron" Grid.Column="1"
+                                          Data="M 0,0 L 4,4 L 0,8"
+                                          Stroke="{StaticResource TextSecondaryBrush}"
+                                          StrokeThickness="1.5"
+                                          StrokeEndLineCap="Round" StrokeStartLineCap="Round"
+                                          VerticalAlignment="Center" Margin="8,0,0,0"
+                                          Opacity="0.5" />
+
+                                    <!--
+                                        Focus is shown with an inset ring rather than a thicker
+                                        border: changing BorderThickness moves the content by a
+                                        pixel and the whole strip twitches as focus passes along it.
+                                    -->
+                                    <Border x:Name="FocusRing" Grid.Column="0" Grid.ColumnSpan="2"
+                                            Margin="-9,-4,-9,-4" CornerRadius="4"
+                                            BorderBrush="{StaticResource AccentBrush}"
+                                            BorderThickness="1"
+                                            Visibility="Collapsed" IsHitTestVisible="False" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Wash" Property="Opacity" Value="0.06" />
+                                    <Setter TargetName="Chevron" Property="Opacity" Value="1" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Wash" Property="Opacity" Value="0.12" />
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="Chevron" Property="Opacity" Value="1" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="MetricCaption" TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,0,8,0" />
+            </Style>
+
+            <Style x:Key="MetricValue" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            </Style>
+
+            <!--
+                The theme has no DatePicker style, so the date box was falling back to the
+                system look: a different height, a different border and square corners
+                sitting directly beside the rounded flat boxes it shares a row with. That
+                mismatch was the most visible of the alignment complaints.
+
+                This retemplates the DatePicker onto exactly the chrome FlatTextBox uses -
+                same brushes, same 1px border, same 6px radius, same 34 minimum height and
+                10,7 padding - so the row reads as one set of fields. PART_Root, PART_TextBox,
+                PART_Button and PART_Popup are the names DatePicker.OnApplyTemplate looks up;
+                renaming any of them silently costs the calendar.
+            -->
+            <!--
+                An editable combo box, because the theme's FlatComboBox cannot be one.
+
+                Theme.xaml is EPO's file and is never edited here. Its FlatComboBox template
+                has a PART_Popup but no PART_EditableTextBox, and WPF needs a TextBox by that
+                exact name to have anywhere to put typed characters. Its ContentSite is also
+                IsHitTestVisible="False" behind a ToggleButton that covers the whole control,
+                so a click opened the dropdown instead of placing a caret.
+
+                The effect was that IsEditable="True" did nothing: the case number could be
+                picked from history but never typed. Setting .Text in code still worked, which
+                is why the model read it correctly and the gap went unnoticed - the control was
+                only broken for the person using it.
+
+                Same approach as FlatDatePickerTextBox above: supply locally the template part
+                the theme does not provide, and keep the theme's visual language - Surface
+                background, BorderStrong edge, 6px corner, accent border when open or focused.
+
+                The ToggleButton is confined to the chevron column. That is the whole point:
+                the text column has to be left free for the caret, or this reintroduces the bug.
+            -->
+            <Style x:Key="EditableComboBox" TargetType="ComboBox" BasedOn="{StaticResource FlatComboBox}">
+                <Setter Property="IsEditable" Value="True" />
+                <Setter Property="Cursor" Value="IBeam" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border x:Name="Chrome" Grid.ColumnSpan="2"
+                                        Background="{StaticResource SurfaceBrush}"
+                                        BorderBrush="{StaticResource BorderStrongBrush}"
+                                        BorderThickness="1" CornerRadius="6" />
+
+                                <TextBox x:Name="PART_EditableTextBox"
+                                         Grid.Column="0"
+                                         Margin="11,0,4,0"
+                                         VerticalContentAlignment="Center"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Foreground="{StaticResource TextPrimaryBrush}"
+                                         CaretBrush="{StaticResource TextPrimaryBrush}"
+                                         SelectionBrush="{StaticResource AccentBrush}"
+                                         FontFamily="{StaticResource UiFont}"
+                                         FontSize="13"
+                                         Cursor="IBeam"
+                                         IsReadOnly="{TemplateBinding IsReadOnly}" />
+
+                                <ToggleButton x:Name="ToggleButton" Grid.Column="1"
+                                              Focusable="False" ClickMode="Press"
+                                              Width="30" Cursor="Hand"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="Transparent">
+                                                <Path HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                      Data="M 0 0 L 5 5 L 10 0"
+                                                      Stroke="{StaticResource TextSecondaryBrush}"
+                                                      StrokeThickness="1.6"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                            </Border>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+
+                                <Popup x:Name="PART_Popup"
+                                       AllowsTransparency="True"
+                                       Placement="Bottom"
+                                       PopupAnimation="Fade"
+                                       Focusable="False"
+                                       IsOpen="{TemplateBinding IsDropDownOpen}">
+                                    <Border Background="{StaticResource SurfaceBrush}"
+                                            BorderBrush="{StaticResource BorderStrongBrush}"
+                                            BorderThickness="1" CornerRadius="6"
+                                            Margin="0,4,0,0"
+                                            MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                            Padding="0,4">
+                                        <ScrollViewer>
+                                            <ItemsPresenter />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsDropDownOpen" Value="True">
+                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                    <Setter TargetName="Chrome" Property="Background" Value="{StaticResource NeutralSurfaceBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="FlatDatePickerTextBox" TargetType="DatePickerTextBox">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="DatePickerTextBox">
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="FlatDatePicker" TargetType="DatePicker">
+                <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="MinHeight" Value="34" />
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="DatePicker">
+                            <Border x:Name="Chrome"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderStrongBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6">
+                                <Grid x:Name="PART_Root">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0"
+                                                       Style="{StaticResource FlatDatePickerTextBox}"
+                                                       Margin="10,7"
+                                                       Background="Transparent"
+                                                       BorderThickness="0"
+                                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                                       CaretBrush="{StaticResource TextPrimaryBrush}"
+                                                       VerticalContentAlignment="Center"
+                                                       Focusable="{TemplateBinding Focusable}" />
+
+                                    <Button x:Name="PART_Button" Grid.Column="1"
+                                            Width="30" Margin="0,1,3,1"
+                                            Background="Transparent" BorderThickness="0"
+                                            Foreground="{StaticResource TextSecondaryBrush}"
+                                            Focusable="False" Cursor="Hand">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="ButtonChrome" Background="{TemplateBinding Background}"
+                                                        CornerRadius="4">
+                                                    <Path Data="M2,0 L2,2 M8,0 L8,2 M0,4 L10,4 M0,2 L10,2 L10,11 L0,11 Z"
+                                                          Stroke="{StaticResource TextSecondaryBrush}"
+                                                          StrokeThickness="1.2"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ButtonChrome" Property="Background"
+                                                                Value="{StaticResource HoverBrush}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+
+                                    <Popup x:Name="PART_Popup" AllowsTransparency="True"
+                                           Placement="Bottom"
+                                           PlacementTarget="{Binding ElementName=PART_Root}"
+                                           StaysOpen="False" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter TargetName="Chrome" Property="BorderBrush"
+                                            Value="{StaticResource AccentBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Chrome" Property="Background"
+                                            Value="{StaticResource CanvasBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Banner. Sources are set from code: XamlReader-parsed markup has no BaseUri,
+             so a relative Source here resolves against the process directory and
+             silently comes back empty.
+
+             Two images, not one. The header is far wider than the artwork, so a single
+             left-aligned banner left the chevrons stranded mid-bar with empty white to
+             their right. The wordmark holds the left, the chevrons bleed off the right
+             edge as they do in the master artwork, and the space between them grows
+             with the window instead of collapsing the design into one corner. -->
+        <Border Grid.Row="0" x:Name="HeaderBanner" Height="93.6"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
+            <!--
+                Chevrons docked right, everything else in the space that is left.
+
+                A DockPanel rather than overlapping children in one cell, because the links
+                below need to sit immediately to the LEFT of the chevrons and the chevrons'
+                width is not a constant: the asset is 178x241 and Stretch=Uniform sizes it from
+                the header's height, so it renders 77 units wide at 104 high and would change
+                if either the artwork or the bar height changed. Docking measures it instead of
+                hardcoding it, and the links right-align inside whatever remains.
+            -->
+            <DockPanel ClipToBounds="True" LastChildFill="True">
+                <Image DockPanel.Dock="Right" x:Name="ChevronImage" Stretch="Uniform"
+                       VerticalAlignment="Stretch" Margin="0" />
+
+                <Grid>
+                    <!-- Header, artwork and vertical offsets shrink together by 10%.
+                         The asymmetric offsets keep the padded wordmark visually centered. -->
+                    <Image x:Name="BannerImage" Height="75.6" Stretch="Uniform"
+                           HorizontalAlignment="Left" VerticalAlignment="Center"
+                           Margin="20,3.6,20,14.4" />
+
+                    <!--
+                        The two "somewhere else to read" links, in the header's bottom-right
+                        corner, immediately left of the chevrons.
+
+                        They lived in the recommendation banner before this, on the argument
+                        that a link belongs where the reader decides to act on the advice. Tried
+                        three ways there - stacked beneath the sentence, inline at the end of
+                        it, and in a second Grid column - and every one of them either left a
+                        gap that read as a carriage return or surrendered the right edge. The
+                        header has the space the card does not.
+
+                        The cost, stated plainly because it was the reason they moved out of
+                        here originally: the admin center link is advice about the CURRENT
+                        scenario, and in a header that otherwise never changes it will appear
+                        and disappear as the scenario does. It is still collapsed on every other
+                        verdict rather than made permanent, because a standing "collect from the
+                        admin center" next to a scenario that has no remote route would be
+                        wrong rather than merely noisy.
+
+                        Bottom margin 12 against the bar's 104: the links sit on the same
+                        baseline band as the wordmark's lower edge rather than floating.
+                    -->
+                    <StackPanel x:Name="HeaderLinks" Orientation="Horizontal"
+                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                Margin="0,0,16,10.8">
+                        <TextBlock x:Name="AdminCenterLinkHost"
+                                   Foreground="{StaticResource TextSecondaryBrush}"><Hyperlink x:Name="AdminCenterLink"
+                                       NavigateUri="https://learn.microsoft.com/en-us/microsoftteams/teams-client-diagnostic-logging"
+                                       Foreground="{StaticResource LinkBrush}"
+                                       TextDecorations="Underline">How to collect logs from the admin center</Hyperlink></TextBlock>
+                        <TextBlock x:Name="LinkSeparator" Text="|" Margin="12,0,12,0"
+                                   Foreground="{StaticResource BorderStrongBrush}" />
+                        <TextBlock Foreground="{StaticResource TextSecondaryBrush}"><Hyperlink x:Name="ComparisonLink"
+                                       Foreground="{StaticResource LinkBrush}"
+                                       TextDecorations="Underline"
+                                       ToolTip="What this toolbox collects that remote collection does not, and the reverse">Feature comparison</Hyperlink></TextBlock>
+                    </StackPanel>
+                </Grid>
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,16,20,0">
+            <StackPanel>
+                <StackPanel x:Name="LiveStaticPanel">
+
+                <!--
+                    Which console the engineer should be at. This sits above the readiness
+                    tiles rather than among them because it is the only element here that
+                    reports a conclusion instead of a measurement, and because the question
+                    it answers comes first: a machine can be perfectly collectable and still
+                    be the wrong place to collect from.
+
+                    Collapsed unless the signals are clear. See Get-TlcToolChoice.
+                -->
+                <Border x:Name="ToolChoiceBanner" Visibility="Collapsed"
+                        BorderThickness="1" CornerRadius="4" Padding="12,9" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="ToolChoiceValue" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   VerticalAlignment="Top" Margin="0,0,10,0" />
+                        <StackPanel Grid.Column="1">
+                            <!--
+                                The link is an inline of the detail text, not a line under it.
+                                A separate block costs a whole row of the banner for one short
+                                sentence, and the banner sits above the dashboard where every
+                                row pushes the rest of the window down.
+
+                                Shown only for the admin center verdict, by adding and removing
+                                it from Inlines - an Inline has no Visibility, so there is no
+                                collapsing it in place. Beside a "collect here" verdict a route
+                                to the alternative argues against the sentence it is part of.
+
+                                The target is the Learn article, not admin.teams.microsoft.com.
+                                The portal does not explain the four admin roles the feature
+                                needs, that it is unavailable on mixed government and
+                                commercial tenants, or that it can take eight hours - each of
+                                which decides whether the recommendation applies at all.
+                            -->
+                            <TextBlock x:Name="ToolChoiceDetail" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSecondaryBrush}"><Run x:Name="ToolChoiceDetailRun" /></TextBlock>
+                        </StackPanel>
+
+                        <!--
+                            Dismissing hides the recommendation for as long as it stays the
+                            same recommendation. It is not a permanent opt-out: the banner is
+                            advice about a specific scenario and machine state, so when that
+                            changes the advice is new and earns the space again. Suppressing
+                            it forever would mean a reader who dismissed "collect here" once
+                            never sees "the admin center can do this".
+
+                            E711 rather than a literal x - the multiplication sign and the
+                            letter both sit badly against Segoe MDL2's metrics.
+                        -->
+                        <Button Grid.Column="2" x:Name="ToolChoiceDismiss"
+                                Style="{StaticResource BannerDismissButton}"
+                                Content="&#xE711;" VerticalAlignment="Top"
+                                Margin="8,-2,-4,0"
+                                ToolTip="Dismiss this recommendation" />
+                    </Grid>
+                </Border>
+
+                <!--
+                    A precondition that bears on the SELECTED scenario, shown only when it
+                    does. A broken Outlook add-in has nothing to do with whether a network
+                    trace is worth collecting, which is why this is scenario-gated rather
+                    than a tenth tile - and why the dashboard above stays a fixed set of
+                    facts about the machine.
+                -->
+                <Border x:Name="ScenarioAdvisoryBanner" Visibility="Collapsed"
+                        BorderThickness="1" CornerRadius="4" Padding="12,9" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="ScenarioAdvisoryValue" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   VerticalAlignment="Top" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" x:Name="ScenarioAdvisoryDetail" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                        <Button Grid.Column="0" Grid.ColumnSpan="2" x:Name="AudioAdvisoryButton"
+                                Visibility="Collapsed" HorizontalContentAlignment="Stretch"
+                                Style="{StaticResource SectionHeaderButton}">
+                            <TextBlock x:Name="AudioAdvisoryText" TextWrapping="Wrap"
+                                       TextDecorations="Underline"
+                                       Foreground="{DynamicResource WarningBrush}" />
+                        </Button>
+
+                        <!--
+                            Dismissable on the same terms as the recommendation above, and
+                            through the same rule rather than a second copy of it: keyed on
+                            what the advisory says, so putting one away does not hide the
+                            next, different one.
+                        -->
+                        <Button Grid.Column="2" x:Name="ScenarioAdvisoryDismiss"
+                                Style="{StaticResource BannerDismissButton}"
+                                Content="&#xE711;" VerticalAlignment="Top"
+                                Margin="8,-2,-4,0"
+                                ToolTip="Dismiss this advisory" />
+                    </Grid>
+                </Border>
+
+                <!--
+                    Readiness and health, answered before the run rather than after it.
+                    Every tile is a fact about this machine right now; the colour is set from
+                    code using the theme's status brushes, so red here means what red means
+                    in an EPO finding.
+                -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!--
+                        Caption and value share one line wherever they fit, which in English is
+                        every tile at every width, and the value drops beneath its caption where
+                        they do not. A StackPanel here never wraps: once the tiles were translated
+                        (finding 334) a long value ran under the chevron and was cut, at the 820px
+                        minimum in eight of the eleven languages - a verdict with its end missing.
+                    -->
+                    <Button Grid.Row="0" Grid.Column="0" x:Name="ClientTile" Style="{StaticResource MetricTile}">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="ClientCaption" Style="{StaticResource MetricCaption}" Text="Client" />
+                            <TextBlock x:Name="ClientValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <Button Grid.Row="0" Grid.Column="1" x:Name="LogsTile" Style="{StaticResource MetricTile}">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="LogsCaption" Style="{StaticResource MetricCaption}" Text="Logs on disk" />
+                            <TextBlock x:Name="LogsValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <Button Grid.Row="0" Grid.Column="2" x:Name="RetentionTile" Style="{StaticResource MetricTile}"
+                            Margin="0,0,0,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="RetentionCaption" Style="{StaticResource MetricCaption}" Text="Logs go back" />
+                            <TextBlock x:Name="RetentionValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <Button Grid.Row="1" Grid.Column="0" x:Name="ActivityTile" Style="{StaticResource MetricTile}"
+                            Margin="0,5,6,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="ActivityCaption" Style="{StaticResource MetricCaption}" Text="Last log write" />
+                            <TextBlock x:Name="ActivityValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <Button Grid.Row="1" Grid.Column="1" x:Name="CrashTile" Style="{StaticResource MetricTile}"
+                            Margin="0,5,6,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="CrashCaption" Style="{StaticResource MetricCaption}" Text="Crashes (24 h)" />
+                            <TextBlock x:Name="CrashValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <Button Grid.Row="1" Grid.Column="2" x:Name="CoverageTile" Style="{StaticResource MetricTile}"
+                            Margin="0,5,0,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="CoverageCaption" Style="{StaticResource MetricCaption}" Text="Window" />
+                            <TextBlock x:Name="CoverageValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <!--
+                        Three across, three down, one cell each. The network and sign-in
+                        tiles used to span columns because their values are phrases rather
+                        than numbers - "Entra Global Secure Access", "1 person, 2 tenants" -
+                        and at the old 14px value font they genuinely did not fit in a third
+                        of the row.
+
+                        Re-measured at the tightened sizes: a third-width tile is 290px and
+                        the longest of those needs 256px, so the spans were buying nothing
+                        except a fourth row. The comment they carried was true when it was
+                        written and had simply outlived the font it described.
+                    -->
+                    <Button Grid.Row="2" Grid.Column="0" x:Name="NetworkTile"
+                            Style="{StaticResource MetricTile}" Margin="0,5,6,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="NetworkCaption" Style="{StaticResource MetricCaption}" Text="Network path" />
+                            <TextBlock x:Name="NetworkValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <!--
+                        "Did this break after an update?" is the first question asked about a
+                        regression, and nothing on the dashboard could answer it. It sits on
+                        the bottom row with the network path and the sign-in state because
+                        all three describe the client's situation rather than its logs.
+                    -->
+                    <Button Grid.Row="2" Grid.Column="1" x:Name="UpdateTile"
+                            Style="{StaticResource MetricTile}" Margin="0,5,6,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="UpdateCaption" Style="{StaticResource MetricCaption}" Text="Client updated" />
+                            <TextBlock x:Name="UpdateValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+
+                    <!--
+                        Last, because it is the only tile that predicts what will happen at
+                        the END of the run rather than describing the machine now. The
+                        privacy gate refuses to package a bundle containing an account it
+                        does not recognise, and until this existed an operator found that
+                        out only after collecting.
+                    -->
+                    <Button Grid.Row="2" Grid.Column="2" x:Name="SignInTile"
+                            Style="{StaticResource MetricTile}" Margin="0,5,0,0">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock x:Name="SignInCaption" Style="{StaticResource MetricCaption}" Text="Signed in" />
+                            <TextBlock x:Name="SignInValue" Style="{StaticResource MetricValue}" Text="Checking..." />
+                        </WrapPanel>
+                    </Button>
+                </Grid>
+
+                <!--
+                    When the tiles above were measured. The window re-measures on
+                    reactivation, so the figures are not necessarily from when it opened,
+                    and an operator has to be able to tell current from stale.
+                -->
+                <TextBlock x:Name="MetricAgeText" Style="{StaticResource CaptionText}"
+                           HorizontalAlignment="Right" Margin="0,6,2,0" />
+
+                <Border Style="{StaticResource SectionRule}" />
+                </StackPanel>
+
+                <!--
+                    Sections are grouped by a heading and separated by a rule, not boxed in
+                    cards. Every row is label / field on one shared column pair, and the field
+                    column is a single fixed width for the whole form, so a case number, a UPN
+                    and a path are all the same size instead of three arbitrary ones.
+
+                    The examples live inside the boxes as placeholder text rather than on a
+                    caption line underneath. That removes one line of vertical space per field
+                    and puts the example where the user is already looking.
+                -->
+                <!--
+                    All three input sections in one container, so a run can put the whole
+                    form away at once. They are separate StackPanels because each has its own
+                    rule beneath it; collapsing only the first saved 41 px of the 159 px
+                    needed, which measurement caught and inspection would not have.
+                -->
+                <StackPanel x:Name="FormPanel">
+                <StackPanel>
+                    <!--
+                        The heading is a BUTTON, not a label. Once a job is chosen, scenario,
+                        case and user are settled - they had to be, because the job could not
+                        be picked without them - and the section collapses to a one-line
+                        summary to give the form below it the room.
+
+                        It stays reachable rather than being hidden: "what happened" is
+                        exactly what an operator re-reads when a run does not look right, so
+                        clicking the header brings it back. Styled as a bare header rather
+                        than a control, because it is a disclosure twist, not an action.
+                    -->
+                    <Button x:Name="WhatHappenedToggle" Style="{StaticResource SectionHeaderButton}"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                        <!--
+                            A DockPanel, so the summary gets the width left beside the heading and
+                            wraps under its own start when the line is long. It was a horizontal
+                            StackPanel, which measures its children at infinite width: the summary
+                            could never trim or wrap, and the scenario, case and user simply ran
+                            off the right edge, unseen. A translated scenario name made that the
+                            common case. Finding 335.
+                        -->
+                        <DockPanel LastChildFill="True">
+                            <TextBlock x:Name="WhatHappenedHeading" DockPanel.Dock="Left" Style="{StaticResource SectionHeading}" Margin="0" Text="What happened" />
+                            <TextBlock x:Name="WhatHappenedSummary" Style="{StaticResource CaptionText}"
+                                       VerticalAlignment="Center" Margin="10,0,0,0"
+                                       TextWrapping="Wrap" Visibility="Collapsed" />
+                        </DockPanel>
+                    </Button>
+
+                    <StackPanel x:Name="WhatHappenedBody">
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource LabelColumnWidth}" />
+                            <ColumnDefinition Width="{StaticResource FieldColumnWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock x:Name="ScenarioLabel" Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Scenario" />
+                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ScenarioBox"
+                                  Style="{StaticResource FlatComboBox}"
+                                  ItemContainerStyle="{StaticResource FlatComboBoxItem}" />
+                        <!--
+                            The three hints in this column wrap rather than trim, the way the consent
+                            hint below does. They were English and short until finding 334; translated,
+                            the lane counts and the remembered-cases note lost their ends in Tamil at the
+                            default width, and the output-folder hint carries a path of any length.
+                        -->
+                        <TextBlock Grid.Row="0" Grid.Column="2" x:Name="LaneText"
+                                   Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="12,0,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="Choose a scenario. Your selection determines which logs and diagnostics are collected." />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   x:Name="CaseNumberLabel" Text="Case number" Margin="0,8,12,0" />
+                        <!--
+                            Editable rather than a plain box: previously used cases drop down
+                            for reuse, and anything can still be typed. The toolbox stores
+                            these in the user's own profile, never beside the scripts and
+                            never in a bundle - see Tlc.History.psm1 - and Forget is beside
+                            the field because history the user cannot delete is history they
+                            did not agree to keep.
+                        -->
+                        <Grid Grid.Row="1" Grid.Column="1" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0" x:Name="CaseBox"
+                                      Style="{StaticResource EditableComboBox}"
+                                      ItemContainerStyle="{StaticResource FlatComboBoxItem}"
+                                      IsEditable="True" />
+                            <Button Grid.Column="1" x:Name="ForgetCaseButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Content="Forget" Margin="8,0,0,0"
+                                    ToolTip="Remove the selected case from this machine's history." />
+                        </Grid>
+                        <TextBlock Grid.Row="1" Grid.Column="2" x:Name="CaseHintText"
+                                   Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="12,8,0,0"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   x:Name="AffectedUserLabel" Text="Affected user" Margin="0,8,12,0" />
+                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="UserBox"
+                                 Style="{StaticResource HintTextBox}" Margin="0,8,0,0"
+                                 Tag="adele.vance@contoso.com" />
+
+                        <!--
+                            Consent is per engagement, so it is given each time and never saved.
+                            The shipped config leaves Privacy.ConsentGrantedBy empty on purpose:
+                            a standing value in an operator file would assert consent nobody
+                            gave, silently, on every run afterwards. Packaging is refused while
+                            this is blank, which is the designed behaviour and not a fault.
+
+                            Ticked rather than typed in the common case, the person at the
+                            keyboard authorising collection from their own machine: the checkbox
+                            carries the signed-in account, so the record names an account rather
+                            than whatever was typed. It is NEVER ticked for the operator. Consent
+                            is an act, and a box that arrives ticked records nobody's.
+
+                            The text box is the fallback. It takes the whole row when no account
+                            can be read, and sits beside the checkbox otherwise, for consent given
+                            by somebody else. It is hidden while the box is ticked, so only one
+                            answer is on screen. The account is shown in a TextBlock rather than
+                            as the checkbox's Content: the template recognises access keys, and a
+                            string Content would swallow the underscore in first_last@contoso.com.
+                        -->
+                        <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   x:Name="ConsentLabel" Text="Consent granted by" Margin="0,8,12,0" />
+                        <Grid Grid.Row="3" Grid.Column="1" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0" x:Name="ConsentMeBox"
+                                      VerticalAlignment="Center" Margin="0,0,12,0"
+                                      Visibility="Collapsed"
+                                      ToolTip="Tick if you, the signed-in account, authorised this collection. Required before a bundle can be packaged. Never ticked for you, and never saved between sessions.">
+                                <TextBlock x:Name="ConsentMeText" Foreground="{StaticResource TextPrimaryBrush}" MaxWidth="260" TextTrimming="CharacterEllipsis" />
+                            </CheckBox>
+                            <TextBox Grid.Column="1" x:Name="ConsentBox"
+                                     Style="{StaticResource HintTextBox}"
+                                     Tag="Name and role of whoever authorised this collection"
+                                     ToolTip="Who authorised collection from this machine, for this engagement, when it was not the signed-in account. Required before a bundle can be packaged. Never saved between sessions." />
+                        </Grid>
+                        <!--
+                            Wrapped, not trimmed. This is the sentence that says packaging will be
+                            refused, so losing its end loses its meaning: measured 2026-10-01 in the
+                            234px this column gives at the default width, German, French, Italian,
+                            Russian and Tamil were cut off mid-sentence, and at the 820px minimum
+                            every language was, English included. Finding 333.
+                        -->
+                        <TextBlock Grid.Row="3" Grid.Column="2" x:Name="ConsentHintText"
+                                   Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="12,8,0,0"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                    </StackPanel>
+                </StackPanel>
+
+                <!--
+                    The fork, chosen explicitly, before anything below it exists.
+
+                    The toolbox does two unrelated jobs and used to show the controls for both
+                    at once. That is not just clutter. "When it happened" is a filter over logs
+                    already on disk, and a live trace has no use for it - the session IS the
+                    window. Shown during a live run it invites an operator to set a window that
+                    is silently discarded, and the run then RECORDS one: a capture bundle
+                    carries ImpactTime, WindowStart and WindowEnd in Scope.json describing half
+                    an hour either side of the button press, which nothing in that path reads.
+                    A reader would take that for the period the capture covered.
+
+                    So the paths separate at the point the operator decides, and each reveals
+                    only its own controls. A form that shows every control for every path
+                    teaches people to ignore the ones that do not apply - and one of those was
+                    actively lying.
+                -->
+                <Border Style="{StaticResource SectionRule}" />
+
+                <StackPanel x:Name="PathChooser">
+
+                    <!--
+                        Heading, caption and buttons share one responsive row. Stacked, this section cost three rows -
+                        heading, a line of prose, then the buttons - for one decision, and pushed
+                        the panel it reveals below the fold. The caption is short enough to sit
+                        beside them, and the eye reads the instruction and its two answers in one
+                        movement rather than three.
+
+                        The buttons are last in the row rather than first: the sentence has to be
+                        read before the choice means anything.
+
+                        A WrapPanel, not a horizontal StackPanel: one row wherever it fits, and the
+                        two answers drop beneath the caption, together, where it does not. A
+                        StackPanel never wraps, it clips. Measured 2026-10-01 at the default 960px
+                        window: in Tamil the first button was cut off mid-word and "Run a live
+                        trace" was not on screen at all, and in German, French and Russian "Run a
+                        live trace" was already cut off. At the 820px minimum, seven of the ten
+                        shipped languages lost part of it. The caption's symmetric 3px keeps it
+                        centred on the single row and puts a gap above the buttons once they
+                        wrap; it is shorter than the buttons, so the single row is no taller.
+                        Finding 333.
+                    -->
+                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,2">
+                        <TextBlock x:Name="PathChooserHeading" Style="{StaticResource SectionHeading}"
+                                   VerticalAlignment="Center" Margin="0,3,16,3" Text="What to do" />
+                        <TextBlock x:Name="PathChooserCaption" Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="0,3,20,3"
+                                   TextWrapping="Wrap"
+                                   Text="Choose a job." />
+                        <StackPanel Orientation="Horizontal">
+                            <StackPanel>
+                                <TextBlock x:Name="GatherPathSelected" Style="{StaticResource CaptionText}"
+                                           Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"
+                                           Visibility="Collapsed" Margin="0,0,0,4" Text="Selected" />
+                                <Border x:Name="GatherPathOutline" BorderBrush="Transparent"
+                                        BorderThickness="2" CornerRadius="8" Padding="2">
+                                    <Button x:Name="GatherPathButton" Style="{StaticResource SecondaryButton}"
+                                            Content="Package existing logs" MinWidth="200"
+                                            ToolTip="Takes the logs Teams has already written, for a problem that has already happened. Seconds to a few minutes. Click again to clear." />
+                                </Border>
+                            </StackPanel>
+                            <StackPanel Margin="12,0,0,0">
+                                <TextBlock x:Name="LivePathSelected" Style="{StaticResource CaptionText}"
+                                           Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"
+                                           Visibility="Collapsed" Margin="0,0,0,4" Text="Selected" />
+                                <Border x:Name="LivePathOutline" BorderBrush="Transparent"
+                                        BorderThickness="2" CornerRadius="8" Padding="2">
+                                    <Button x:Name="LivePathButton" Style="{StaticResource SecondaryButton}"
+                                            Content="Run a live trace" MinWidth="200"
+                                            ToolTip="Samples this machine while you reproduce the problem. Use when you can make it happen on demand. Click again to clear." />
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                        <TextBlock x:Name="PathUnavailableHint" Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="16,0,0,0"
+                                   TextWrapping="Wrap" Visibility="Collapsed" />
+                    </WrapPanel>
+                </StackPanel>
+
+                <!--
+                    The retrospective path. Collapsed until "Package existing logs" is chosen,
+                    because the window it carries means nothing to the other one.
+                -->
+                <StackPanel x:Name="GatherPanel" Visibility="Collapsed">
+                <Border Style="{StaticResource SectionRule}" />
+
+                <StackPanel>
+                    <TextBlock x:Name="GatherHeading" Style="{StaticResource SectionHeading}" Text="When it happened" />
+
+                    <!--
+                        One row, not two.
+
+                        This was a label column and two stacked rows, which cost 106px and read
+                        badly in three ways: the caption floated at the far right, a long way from
+                        the field it describes; the window numbers sat under a date field far
+                        wider than they are, leaving a band of dead space; and the unit dropdown
+                        came last, so "30 before 30 after Minutes" made the reader reach the end
+                        of the line before learning what the numbers meant.
+
+                        Both ideas now sit on one line separated by a rule, because they are two
+                        halves of one question - when, and how much either side of it. Measured
+                        against four other layouts: 82.6px against 106.6px, a 23% saving.
+
+                        A tighter variant put the caption inline at the right and reached 62.6px,
+                        and was rejected. The caption is not decoration: it is where a bad time is
+                        reported, and inline it truncated that message to "AM/PM is acce...".
+                        A variant that hid the caption until it had something to say reached the
+                        same 62.6px, and was rejected because the resting text says AM/PM is
+                        accepted - which the 14:30 placeholder does not convey, and which the
+                        reader would then only discover by getting it wrong.
+                    -->
+                    <Grid>
+                        <!--
+                            The field column is bounded (*), not sized to its content (Auto), so
+                            the row below can wrap and the hint can break onto a second line
+                            instead of both running past the right edge. Sized to content, the
+                            column grew to whatever the row asked for and the scroll viewer cut
+                            it off. Measured 2026-10-01 at the default 960px window, the unit box
+                            and the hint were cut off in German, Spanish, Italian, Portuguese and
+                            Tamil; at the 820px minimum, in every shipped language including
+                            English. Finding 333.
+                        -->
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource LabelColumnWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!--
+                            Field widths are measured content plus measured chrome, with
+                            headroom. Text is measured at 13px in Segoe UI, the wider of the
+                            two faces the theme asks for and the one a machine without the
+                            Variable font actually renders: "12/28/2026" is 66px, "12:57 PM"
+                            53px, a four-digit window figure 28px.
+
+                            Chrome is 26px for a flat text box (20px padding, 2px border, 4px
+                            text-view inset) and 59px for the date picker, which adds a 33px
+                            calendar button. Those numbers are measured from a shown window's
+                            scroll extents, not estimated - an earlier estimate of 22px was
+                            wrong by 24px and produced fields that clipped their own contents.
+
+                            The window boxes are 60px rather than 68px, which still clears a
+                            four-digit figure plus chrome with headroom, and buys the space the
+                            second half of the line needs.
+                        -->
+                        <TextBlock x:Name="ImpactTimeLabel" Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Impact time" />
+                        <!--
+                            Two groups in a WrapPanel: one line wherever both halves fit, which in
+                            English is the default window width, and the window half dropping
+                            beneath the time where they do not. Each half stays whole, so a wrap
+                            never strands a number away from the word that says what it is.
+                        -->
+                        <WrapPanel Grid.Row="0" Grid.Column="1" x:Name="ImpactWindowRow" Orientation="Horizontal"
+                                   ToolTip="Collection reads logs that are already on disk. This selects which of them to take - it does not wait for anything to happen, so a window reaching past now gathers nothing extra. To capture a fault you can still reproduce, reproduce it first and then collect.">
+                            <StackPanel Orientation="Horizontal">
+                                <DatePicker x:Name="ImpactDate" Style="{StaticResource FlatDatePicker}"
+                                            Width="138" VerticalAlignment="Center" />
+                                <TextBlock x:Name="ImpactAtLabel" Style="{StaticResource InlineLabel}" Text="at" />
+                                <TextBox x:Name="ImpactTimeBox" Style="{StaticResource HintTextBox}"
+                                         Width="92" VerticalAlignment="Center" Tag="14:30" />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal">
+                                <!--
+                                    The two ideas are separated by a rule rather than by distance.
+
+                                    BorderStrongBrush, not BorderBrush. The first version used the
+                                    latter and was verified only against the dark theme, where it
+                                    reads. On the light theme the form sits on canvas #F4F5F7 and
+                                    BorderColor is #E2E5EB - measured on screen, the antialiased
+                                    1px line came out 4/255 from its background, which is to say
+                                    invisible. The element carrying the whole separation did nothing
+                                    in the default theme. BorderStrongColor is #CBD1DA against the
+                                    same canvas, and darker again on the dark theme, so it reads on
+                                    both. It is the same brush the checkbox borders use.
+                                -->
+                                <Border Width="1" Margin="18,4,18,4" Background="{StaticResource BorderStrongBrush}" />
+
+                                <!--
+                                    One unit for both numbers. Two dropdowns would allow "30 minutes
+                                    before, 2 hours after", which is expressible but not something
+                                    anyone means.
+
+                                    The toolbox itself only ever takes minutes: -WindowBeforeMinutes
+                                    and -WindowAfterMinutes are the entry point's parameters. This is
+                                    a convenience on top, converted in Get-TlcWizardModel, so the
+                                    equivalent command still shows the minutes that will actually run.
+                                -->
+                                <TextBlock x:Name="WindowLabel" Style="{StaticResource InlineLabel}" Text="window" Margin="0,0,10,0" />
+                                <TextBox x:Name="BeforeBox" Style="{StaticResource HintTextBox}"
+                                         Width="68" VerticalAlignment="Center" Tag="30" />
+                                <TextBlock x:Name="BeforeLabel" Style="{StaticResource InlineLabel}" Text="before" />
+                                <TextBox x:Name="AfterBox" Style="{StaticResource HintTextBox}"
+                                         Width="68" VerticalAlignment="Center" Tag="30" />
+                                <TextBlock x:Name="AfterLabel" Style="{StaticResource InlineLabel}" Text="after" />
+                                <ComboBox x:Name="WindowUnitBox"
+                                          Style="{StaticResource FlatComboBox}"
+                                          ItemContainerStyle="{StaticResource FlatComboBoxItem}"
+                                          Width="98" VerticalAlignment="Center" Margin="4,0,0,0" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <!--
+                            Under the fields it describes, in the field column rather than the
+                            label column, so it lines up with the box whose contents it is
+                            talking about. This is also where a time that could not be parsed is
+                            reported, so it has to be able to hold a full sentence without
+                            trimming - which is what ruled out putting it inline on the right.
+
+                            Wrapped, not trimmed with an ellipsis. In a bounded column a long
+                            sentence - any of the longer languages, or a parse failure - breaks
+                            onto a second line rather than losing the part that says AM/PM is
+                            accepted.
+                        -->
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TimeHintText"
+                                   Style="{StaticResource CaptionText}"
+                                   Margin="2,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="Selects which already-written logs to take. 24-hour clock; AM/PM accepted." />
+                    </Grid>
+                </StackPanel>
+
+                </StackPanel>
+                <!-- /GatherPanel -->
+
+                <!--
+                    The live path. Its own settings only - there is no window here, because the
+                    session is the window.
+                -->
+                <StackPanel x:Name="LivePanel" Visibility="Collapsed">
+                    <Border Style="{StaticResource SectionRule}" />
+
+                    <StackPanel>
+                        <TextBlock x:Name="LiveHeading" Style="{StaticResource SectionHeading}" Text="Live trace" />
+
+                        <TextBlock x:Name="LiveCaption" Style="{StaticResource CaptionText}" TextWrapping="Wrap"
+                                   Margin="0,0,0,10"
+                                   Text="The session is the window: recording starts when you press Start trace and ends when you press Stop run. Reproduce the problem in between." />
+
+                        <!--
+                            A WrapPanel, so the hint drops beneath the choice rather than running
+                            off the edge where the label is long: in Tamil it ended 16px past the
+                            form at the minimum width. Finding 334.
+                        -->
+                        <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="SampleEveryLabel" Text="Sample every" Style="{StaticResource InlineLabel}"
+                                           VerticalAlignment="Center" />
+                                <!--
+                                    126px: the template keeps 46px for its margin and chevron, and the
+                                    longest choice in any shipped language is German "30 Sekunden" at
+                                    74px. At 104px "30 seconds" was cut off in English. Finding 334.
+                                -->
+                                <ComboBox x:Name="CaptureIntervalBox" Width="126" Margin="8,0,0,0"
+                                          Style="{StaticResource FlatComboBox}"
+                                          ItemContainerStyle="{StaticResource FlatComboBoxItem}"
+                                          ToolTip="How often the machine is sampled while you reproduce the problem.">
+                                    <ComboBoxItem Content="2 seconds" Tag="2" />
+                                    <ComboBoxItem Content="5 seconds" Tag="5" IsSelected="True" />
+                                    <ComboBoxItem Content="10 seconds" Tag="10" />
+                                    <ComboBoxItem Content="30 seconds" Tag="30" />
+                                </ComboBox>
+                            </StackPanel>
+                            <TextBlock x:Name="CaptureIntervalHint" Style="{StaticResource CaptionText}"
+                                       VerticalAlignment="Center" Margin="12,4,0,4" TextWrapping="Wrap"
+                                       Text="Finer than 3 s cannot be honoured: a sample costs about 2.2 s." />
+                        </WrapPanel>
+
+                        <!--
+                            ONE REAL CONTROL, AND A REPORT THAT DOES NOT PRETEND TO BE ONE.
+
+                            Reported 2026-09-23: "cant uncheck the boxes. plus they dont look
+                            quite right". Both halves were true, and the second explains the
+                            first: the affordance was wrong because the SEMANTICS were wrong.
+
+                            Get-TlcDeepCaptureOption reports THREE capabilities, but the run
+                            automates exactly one of them - Start-TlcDeepCapture starts a
+                            pktmon packet capture and nothing else. The netsh trace and the
+                            ETW session are commands an operator runs BY HAND; the function's
+                            own Reason text for an available one says "run the command above
+                            alongside the capture session".
+
+                            So three ticked boxes under "3 of 3 available" promised three
+                            captures and delivered one, and offered a control over none of
+                            them. Rendering a report as checkboxes was the original mistake,
+                            and making them look enabled - the fix for them being greyed on a
+                            healthy machine - only made the false affordance convincing.
+
+                            Now: the packet capture is a REAL checkbox, because it is the one
+                            thing this toolbox starts and stops, and it can be turned off for
+                            a run that does not want a machine-wide trace. The other two are
+                            static rows that look like the information they are.
+                        -->
+                        <StackPanel x:Name="DeepCapabilityPanel" Margin="22,8,0,0">
+                            <!--
+                                THE REMEDY SITS ON THE SAME ROW AS THE DIAGNOSIS.
+
+                                Reported 2026-09-22, with a screenshot of the panel reading
+                                "0 of 3 available" and three rows saying "Not available
+                                because the toolbox is not running as administrator": there
+                                was nothing to act on. The rows correctly state a fact and
+                                leave the operator to work out, on their own, that the fix is
+                                to close the toolbox and open it again elevated.
+
+                                The first attempt put the button UNDER the list, which was
+                                reported as bad placement the next day - the count says "0 of
+                                3" at the top and the way to fix it was three rows further
+                                down, past everything it was the answer to. Here it is beside
+                                the count that states the problem.
+
+                                An earlier attempt made the launcher prompt for elevation at
+                                startup instead. That was worse: it put a UAC dialog in front
+                                of every launch, including the majority that never run a deep
+                                capture, and it still offered nothing to click once declined.
+                            -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock x:Name="DeepCapabilityHeading"
+                                           Style="{StaticResource CaptionText}"
+                                           VerticalAlignment="Center"
+                                           Text="Deeper captures on this machine" />
+
+                                <!--
+                                    "Reopen", and the product named, because "Restart as
+                                    administrator" was read as an offer to restart the
+                                    MACHINE - which in the middle of a customer's
+                                    reproduction is a genuinely alarming thing to be offered.
+
+                                    Collapsed when the captures already run, because a button
+                                    that reopens the toolbox to obtain rights it already has
+                                    is an invitation to lose the form for nothing.
+                                -->
+                                <Button x:Name="ElevateButton"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Content="Reopen TLC Toolbox as administrator"
+                                        VerticalAlignment="Center"
+                                        Padding="10,3"
+                                        Margin="12,0,0,0"
+                                        Visibility="Collapsed"
+                                        ToolTip="Closes this window and opens TLC Toolbox again with administrator rights, so the deeper captures can run. Your computer is not restarted. Windows will ask you to confirm, and anything already typed into the form is not carried over." />
+                            </StackPanel>
+
+                            <!--
+                                THE ONE THE TOOLBOX ACTUALLY RUNS, and therefore the one that
+                                gets a control. Start-TlcDeepCapture starts and stops this and
+                                nothing else, so it can be turned off for a run that does not
+                                want a machine-wide trace - and unlike the version removed on
+                                2026-09-22, it is only offered when it can be honoured.
+                            -->
+                            <CheckBox x:Name="DeepCaptureBox"
+                                      Content="Also run a packet capture"
+                                      Margin="0,2,0,0"
+                                      ToolTip="Headers only, size-capped, started with the trace and stopped with it. Uses pktmon, or netsh trace when pktmon's single session is already held - on a managed machine, by Defender. Machine-wide, so it is recorded and swept for afterwards." />
+                            <TextBlock x:Name="DeepCaptureReason"
+                                       Style="{StaticResource CaptionText}"
+                                       TextWrapping="Wrap"
+                                       Margin="24,0,0,0"
+                                       Visibility="Collapsed" />
+
+                            <!--
+                                NOT CONTROLS. These are commands an operator runs by hand, so
+                                they are rendered as the report they are rather than as tick
+                                boxes that refuse to be ticked. The command itself lives in
+                                the tooltip and in Capture.json.
+                            -->
+                            <StackPanel x:Name="DeepCapabilityList" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!--
+                    Options that belong to both paths, so neither has to duplicate them. Shown
+                    once a path is chosen, because before that there is nothing to configure.
+                -->
+                <StackPanel x:Name="SharedOptionsPanel" Visibility="Collapsed">
+                <Border Style="{StaticResource SectionRule}" />
+
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource LabelColumnWidth}" />
+                            <ColumnDefinition Width="{StaticResource FieldColumnWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <WrapPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                            <TextBlock x:Name="OptionsHeading" Style="{StaticResource SectionHeading}" Margin="0,0,12,0" Text="Options" />
+                            <TextBlock x:Name="OutputFolderLabel" Style="{StaticResource FieldLabel}" Margin="0" Text="Output folder" />
+                        </WrapPanel>
+                        <TextBox Grid.Column="1" x:Name="OutputBox" Style="{StaticResource HintTextBox}" />
+                        <TextBlock Grid.Column="2" x:Name="OutputHintText"
+                                   Style="{StaticResource CaptionText}" VerticalAlignment="Center"
+                                   Margin="12,0,0,0" TextWrapping="Wrap" />
+                    </Grid>
+
+                    <!--
+                        Gather-only. Both rows name a machine whose ALREADY-WRITTEN logs are to
+                        be copied: the Rooms device is a separate appliance, and the endpoint
+                        list drives the fleet lane, which only the Collect stage runs. A live
+                        trace samples the machine it is running on and reads neither - so left
+                        on screen they are two controls that accept input and then do nothing,
+                        which is the same defect as the window that used to be recorded for a
+                        capture run.
+                    -->
+                    <Grid x:Name="GatherOnlyOptions" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource LabelColumnWidth}" />
+                            <ColumnDefinition Width="{StaticResource FieldColumnWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!--
+                            TOP, not Center, in all three cells of both rows.
+
+                            Reported 2026-09-23: "it appears that the also collect field is
+                            stretching to match the text". It was. The rows are Height="Auto",
+                            so the tallest cell sets the row height - and the endpoint hint
+                            wraps to five lines on a default window. A TextBox defaults to
+                            VerticalAlignment="Stretch", so it grew to fill all of it: a
+                            single-line input rendered as a five-line box, which invites a
+                            paragraph into a field that takes a comma-separated list.
+
+                            Aligning the hint alone would not have fixed it. The stretch comes
+                            from the FIELD's own alignment, and the row stays tall either way,
+                            so the field has to be pinned as well.
+
+                            The label carries an extra 6px against the field's 8px, because the
+                            field's text sits inside a 1px border and 4px of padding within a
+                            30px minimum height. Top-aligning a bare TextBlock beside it would
+                            otherwise leave the label sitting visibly above the text it names.
+                        -->
+                        <TextBlock x:Name="RoomsDeviceLabel" Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Top" Margin="0,6,12,0" Text="Rooms device" />
+                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="DeviceBox"
+                                 Style="{StaticResource HintTextBox}" IsEnabled="False"
+                                 VerticalAlignment="Top"
+                                 Tag="ROOM-DEVICE-01.contoso.com" />
+                        <TextBlock Grid.Row="0" Grid.Column="2" x:Name="DeviceHintText"
+                                   Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Top" Margin="12,7,0,0"
+                                   TextWrapping="Wrap"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   x:Name="EndpointsLabel" Text="Also collect from"
+                                   VerticalAlignment="Top" Margin="0,14,12,0" />
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="EndpointBox"
+                                 Style="{StaticResource HintTextBox}" Margin="0,8,0,0"
+                                 IsEnabled="False"
+                                 VerticalAlignment="Top"
+                                 Tag="DESK-01, DESK-02" />
+                        <!-- TextWrapping, added 2026-09-17. These two hints exist to name the
+                             reason a disabled field is disabled - "WinRM has no listener" sends
+                             someone to Enable-PSRemoting where "unavailable" sends them to guess.
+                             With trimming alone that intent was defeated every time on a default
+                             window: measured, the fleet hint needs 334px of Segoe UI at 12px and
+                             this column gets roughly 207px, so it always cut to "WinRM ha..." -
+                             losing the half that names the cause. The rows are Height="Auto", so
+                             wrapping costs a line only when there is something long to say.
+                             Trimming is kept as the backstop for a message longer than two lines. -->
+                        <TextBlock Grid.Row="1" Grid.Column="2" x:Name="EndpointHintText"
+                                   Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Top" Margin="12,15,0,0"
+                                   TextWrapping="Wrap"
+                                   TextTrimming="CharacterEllipsis" />
+                    </Grid>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource LabelColumnWidth}" />
+                            <ColumnDefinition Width="{StaticResource FieldColumnWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,14,0,0">
+                            <CheckBox x:Name="SkipPromptedBox" Margin="0,0,0,8"
+                                      Content="Skip steps that need the user (do not wait for support files)" />
+                            <CheckBox x:Name="ValidationOnlyBox"
+                                      Content="Validation only (plan the run, collect nothing)" />
+
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+                </StackPanel>
+                <!-- /SharedOptionsPanel -->
+                </StackPanel>
+                <!-- /FormPanel: everything above collapses together when a run starts -->
+
+                <!--
+                    What the form said, once the run has started and the form itself is out
+                    of the way. Two rows of read-only pairs rather than three sections of
+                    inputs, so the progress bar is reachable without scrolling.
+
+                    It is a summary and not a second source of truth: every value is set from
+                    the same model that built the command, so it cannot describe a different
+                    run from the one that is executing.
+                -->
+                <Border x:Name="RunSummaryPanel" Visibility="Collapsed"
+                        BorderBrush="{StaticResource NeutralBrush}" BorderThickness="1"
+                        CornerRadius="4" Padding="12,9" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!--
+                            The scenario and the window wrap rather than trim. Both were English and
+                            short until findings 334 and 335; translated, the live-capture line ran
+                            past its cell in eight languages and a long scenario name would have lost
+                            its end. The case and the user are data and keep their ellipsis.
+                        -->
+                        <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SummaryScenarioLabel" Style="{StaticResource CaptionText}"
+                                   Text="Scenario" Margin="0,0,10,0" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="SummaryScenario"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,20,0" />
+
+                        <TextBlock Grid.Row="0" Grid.Column="2" x:Name="SummaryCaseLabel" Style="{StaticResource CaptionText}"
+                                   Text="Case" Margin="0,0,10,0" />
+                        <TextBlock Grid.Row="0" Grid.Column="3" x:Name="SummaryCase"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SummaryUserLabel" Style="{StaticResource CaptionText}"
+                                   Text="User" Margin="0,6,10,0" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="SummaryUser"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   TextTrimming="CharacterEllipsis" Margin="0,6,20,0" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="2" x:Name="SummaryWindowLabel" Style="{StaticResource CaptionText}"
+                                   Text="Window" Margin="0,6,10,0" />
+                        <TextBlock Grid.Row="1" Grid.Column="3" x:Name="SummaryWindow"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   TextWrapping="Wrap" Margin="0,6,0,0" />
+
+                        <!--
+                            Shown only when the selected window is not fully covered by the
+                            retained logs. It warns rather than blocks: the operator may know
+                            something the inventory does not, and refusing a run on a
+                            heuristic is worse than letting one proceed with the caveat
+                            written down.
+
+                            Here rather than beside the form, because the form is put away
+                            the moment the run starts - a warning shown there would flash past
+                            as it collapsed. This panel is on screen for the whole run, next
+                            to a Cancel button that is live, so the warning arrives with the
+                            means to act on it.
+
+                            Collapsed by default, so a covered window costs no rows.
+                        -->
+                        <TextBlock Grid.Row="2" Grid.ColumnSpan="4" x:Name="SummaryWarning"
+                                   Visibility="Collapsed" TextWrapping="Wrap"
+                                   Foreground="{StaticResource WarningBrush}"
+                                   Margin="0,8,0,0" />
+
+                        <!--
+                            Consent, editable WHILE THE RUN IS GOING.
+
+                            The form is put away the moment a run starts, and consent is a
+                            form field - so an operator who started a live capture without it
+                            was told "packaging will be refused until Consent granted by is
+                            filled in" beside a form they could no longer reach. The only way
+                            out was to cancel a capture of a fault that had already happened.
+
+                            Collapsed unless consent is actually missing, so a run that has it
+                            costs no rows. It writes back to the same ConsentBox the form owns,
+                            which is what the run and the package stage both read - a second
+                            field with its own value would be two sources of truth for the one
+                            thing the privacy gate refuses on.
+                        -->
+                        <!--
+                            What the deeper captures are doing, DURING the run. The form is
+                            put away the moment a run starts, so the panel beside the
+                            checkbox goes with it - and this is exactly when an operator is
+                            deciding whether the recording they are making will answer the
+                            question. Shown only on the live path, where it means anything.
+                        -->
+                        <TextBlock Grid.Row="4" Grid.ColumnSpan="4" x:Name="SummaryDeepCapture"
+                                   Visibility="Collapsed" TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionText}"
+                                   Margin="0,8,0,0" />
+
+                        <Grid Grid.Row="3" Grid.ColumnSpan="4" x:Name="SummaryConsentRow"
+                              Visibility="Collapsed" Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" x:Name="SummaryConsentLabel"
+                                       Style="{StaticResource CaptionText}"
+                                       VerticalAlignment="Center"
+                                       Text="Consent granted by" Margin="0,0,10,0" />
+                            <!-- The same choice as the form: tick the signed-in account, or type a name. -->
+                            <CheckBox Grid.Column="1" x:Name="SummaryConsentMeBox"
+                                      VerticalAlignment="Center" Margin="0,0,10,0"
+                                      Visibility="Collapsed">
+                                <TextBlock x:Name="SummaryConsentMeText" Foreground="{StaticResource TextPrimaryBrush}" MaxWidth="220" TextTrimming="CharacterEllipsis" />
+                            </CheckBox>
+                            <TextBox Grid.Column="2" x:Name="SummaryConsentBox"
+                                     Style="{StaticResource HintTextBox}"
+                                     Tag="Name of the person who agreed to this collection" />
+                            <Button Grid.Column="3" x:Name="SummaryConsentSave"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Content="Record" Margin="10,0,0,0" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <StackPanel>
+                    <!--
+                        Heading and live status share a row: the heading says what the panel
+                        is, the status says what the run is doing right now. The status is
+                        the last meaningful line the child process printed, so it moves on
+                        its own and is the cheapest possible proof the run has not hung.
+
+                        Collapsed until a run starts. Before one there is no progress to
+                        report, and the row was a heading over an empty status line and a
+                        hidden bar - 35px labelling nothing. The box below says "Nothing has
+                        run yet" in its own first line, so it does not need this row to
+                        introduce it.
+
+                        It stays visible once a run has started, rather than following the
+                        bar. The bar collapses at the end of a run but the status line is
+                        still carrying the outcome - "Finished.", "Cancelled.", "Failed to
+                        start." - and that is precisely when it is worth reading.
+                    -->
+                    <Grid x:Name="RunProgressHeader" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="ProgressHeading" Style="{StaticResource SectionHeading}" Text="Progress" />
+                        <TextBlock Grid.Column="1" x:Name="RunStatusText"
+                                   Style="{StaticResource CaptionText}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="12,0,0,0" Text="" />
+                    </Grid>
+
+                    <ProgressBar x:Name="RunProgress" Style="{StaticResource RunProgressBar}"
+                                 Visibility="Collapsed" Margin="0,0,0,6" />
+
+                    <!--
+                        The three phases of a live capture, named on screen.
+
+                        A capture run looks identical to a gather run while it is happening -
+                        a progress bar and a log - but the operator's job is completely
+                        different. In a gather run they wait. In a capture run there is a
+                        window, opening after warm-up and closing when they press Stop, during
+                        which they have to make the problem actually happen. Miss it and the
+                        session records twenty minutes of a machine behaving perfectly.
+
+                        So the phase is stated rather than left to be inferred from log text,
+                        and the middle one - the only phase that asks anything of the operator
+                        - is the one that lights up.
+
+                        Collapsed for gather runs, which have no phases to speak of.
+                    -->
+                    <Border x:Name="CapturePhasePanel" Visibility="Collapsed"
+                            BorderThickness="1" CornerRadius="4" Padding="12,9" Margin="0,0,0,8"
+                            Background="{StaticResource NeutralSurfaceBrush}"
+                            BorderBrush="{StaticResource BorderStrongBrush}">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel>
+                            <WrapPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock x:Name="CapturePhaseArm" Text="1. Arm"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock Text="&#x203A;" Margin="10,0"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock x:Name="CapturePhaseReproduce" Text="2. Reproduce"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock Text="&#x203A;" Margin="10,0"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock x:Name="CapturePhaseCollect" Text="3. Collect"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                            </WrapPanel>
+                            <TextBlock x:Name="CapturePhaseDetail" TextWrapping="Wrap"
+                                       Style="{StaticResource CaptionText}"
+                                       Text="Getting ready. Nothing is being recorded yet." />
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" x:Name="ShowLiveGraphBox" Content="Show live graphs" IsChecked="True"
+                                      Visibility="Collapsed" Foreground="{DynamicResource TextPrimaryBrush}"
+                                      FontFamily="{StaticResource UiFont}" FontSize="13"
+                                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="16,0,0,0" />
+                        </Grid>
+                    </Border>
+                    <!--
+                        The transcript: the command line, then the tool's console output,
+                        which includes PowerShell tables that only line up in a fixed-width
+                        font. Monospace for that reason, but starting at the top and wrapping
+                        rather than pushing a horizontal scrollbar under the window.
+
+                        The card is COLLAPSED until a run starts. It used to hold an empty
+                        state - "Nothing has run yet", then two lines explaining what Validate
+                        and Collect do - which was a 120px bordered panel describing buttons
+                        that now say what they are ("Package existing logs", "Start trace") and
+                        carry tooltips. It explained the old vocabulary, and the vocabulary
+                        changed underneath it.
+
+                        The card itself goes rather than just its contents: an empty bordered
+                        box is worse than the prose it replaced, because it looks like
+                        something failed to load.
+                    -->
+                    <StackPanel x:Name="LiveChartPanel" Visibility="Collapsed" Margin="0,0,0,12" Grid.IsSharedSizeScope="True">
+                        <TextBlock x:Name="LiveChartCaption" Style="{StaticResource CaptionText}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="LiveChartAnimationHint" Style="{StaticResource CaptionText}" TextWrapping="Wrap" />
+                        <Grid Margin="0,8,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <Grid Margin="0,0,12,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" MinWidth="36" SharedSizeGroup="LiveAxisLabels" /><ColumnDefinition />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" SharedSizeGroup="LiveMetricHeading" />
+                                    <RowDefinition Height="Auto" SharedSizeGroup="LiveMetricContext" />
+                                    <RowDefinition Height="100" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <WrapPanel Grid.Column="1">
+                                    <Rectangle x:Name="LiveRttKey" Width="18" Height="3" Margin="0,0,6,0" Fill="{DynamicResource AccentBrush}" />
+                                    <TextBlock x:Name="LiveRttHeading" Text="STUN RTT" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="LiveRttValue" Style="{StaticResource CaptionText}" Margin="16,0,0,0" VerticalAlignment="Center" />
+                                </WrapPanel>
+                                <TextBlock Grid.Column="1" Grid.Row="1" x:Name="LiveRttContext" Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap" Margin="0,0,0,6" />
+                                    <Grid Grid.Row="2" Margin="0,0,6,0">
+                                        <TextBlock x:Name="LiveRttMaximum" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Top" />
+                                        <TextBlock x:Name="LiveRttMiddle" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="LiveRttMinimum" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                                    </Grid>
+                                    <Border Grid.Column="1" Grid.Row="2" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                        <Viewbox Stretch="Fill"><Canvas Width="300" Height="100" ClipToBounds="True">
+                                            <Path Data="M0,25 L300,25 M0,50 L300,50 M0,75 L300,75 M75,0 L75,100 M150,0 L150,100 M225,0 L225,100"
+                                                  Stroke="{DynamicResource BorderStrongBrush}" StrokeThickness="0.5" />
+                                            <Path x:Name="LiveRttPath" Stroke="{DynamicResource AccentBrush}" Fill="{DynamicResource AccentBrush}" StrokeThickness="2" />
+                                        </Canvas></Viewbox>
+                                    </Border>
+                                    <Grid Grid.Row="3" Grid.Column="1" Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="LiveRttTimeStart" Style="{StaticResource CaptionText}" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="LiveRttTimeMiddle" Grid.Column="1" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="LiveRttTimeEnd" Grid.Column="2" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                <WrapPanel Grid.Column="1" Grid.Row="4" Margin="0,4,0,0">
+                                    <TextBlock x:Name="LiveRttPassLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource PassBrush}" Margin="0,0,8,0" />
+                                    <TextBlock x:Name="LiveRttWarningLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,8,0" />
+                                    <TextBlock x:Name="LiveRttBlockedLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource BlockedBrush}" />
+                                </WrapPanel>
+                            </Grid>
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" MinWidth="36" SharedSizeGroup="LiveAxisLabels" /><ColumnDefinition />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" SharedSizeGroup="LiveMetricHeading" />
+                                    <RowDefinition Height="Auto" SharedSizeGroup="LiveMetricContext" />
+                                    <RowDefinition Height="100" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <WrapPanel Grid.Column="1">
+                                    <Rectangle x:Name="LiveMemoryKey" Width="18" Height="3" Margin="0,0,6,0" Fill="{DynamicResource TeamsGraphBrush}" />
+                                    <TextBlock x:Name="LiveMemoryHeading" Text="Teams / WebView2" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="LiveMemoryValue" Style="{StaticResource CaptionText}" Margin="16,0,0,0" VerticalAlignment="Center" />
+                                </WrapPanel>
+                                <TextBlock Grid.Column="1" Grid.Row="1" x:Name="LiveMemoryContext" Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap" Margin="0,0,0,6" />
+                                    <Grid Grid.Row="2" Margin="0,0,6,0">
+                                        <TextBlock x:Name="LiveMemoryMaximum" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Top" />
+                                        <TextBlock x:Name="LiveMemoryMiddle" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="LiveMemoryMinimum" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                                    </Grid>
+                                    <Border Grid.Column="1" Grid.Row="2" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                        <Viewbox Stretch="Fill"><Canvas Width="300" Height="100" ClipToBounds="True">
+                                            <Path Data="M0,25 L300,25 M0,50 L300,50 M0,75 L300,75 M75,0 L75,100 M150,0 L150,100 M225,0 L225,100"
+                                                  Stroke="{DynamicResource BorderStrongBrush}" StrokeThickness="0.5" />
+                                            <Path x:Name="LiveMemoryPath" Stroke="{DynamicResource TeamsGraphBrush}" Fill="{DynamicResource TeamsGraphBrush}" StrokeThickness="2" />
+                                        </Canvas></Viewbox>
+                                    </Border>
+                                    <Grid Grid.Row="3" Grid.Column="1" Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="LiveMemoryTimeStart" Style="{StaticResource CaptionText}" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="LiveMemoryTimeMiddle" Grid.Column="1" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="LiveMemoryTimeEnd" Grid.Column="2" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                <WrapPanel Grid.Column="1" Grid.Row="4" Margin="0,4,0,0">
+                                    <TextBlock x:Name="LiveMemoryPassLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource PassBrush}" Margin="0,0,8,0" />
+                                    <TextBlock x:Name="LiveMemoryWarningLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,8,0" />
+                                    <TextBlock x:Name="LiveMemoryBlockedLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource BlockedBrush}" Margin="0,0,8,0" />
+                                    <TextBlock x:Name="LiveMemoryNeutralLegend" Style="{StaticResource CaptionText}" Foreground="{DynamicResource TeamsGraphBrush}" />
+                                </WrapPanel>
+                            </Grid>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="36" SharedSizeGroup="LiveAxisLabels" /><ColumnDefinition />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="1" x:Name="LiveNetworkValues" Style="{StaticResource CaptionText}" TextWrapping="Wrap" />
+                        </Grid>
+                    </StackPanel>
+                    <Border x:Name="LogPanel" Visibility="Collapsed"
+                            Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource BorderStrongBrush}"
+                            BorderThickness="1" CornerRadius="6"
+                            MinHeight="120" Padding="14,12">
+                        <Grid>
+                            <TextBox x:Name="LogBox"
+                                     Style="{StaticResource TranscriptBox}"
+                                     IsReadOnly="True" Visibility="Collapsed"
+                                     MaxHeight="260" />
+                            <RichTextBox x:Name="LogView" IsReadOnly="True" IsDocumentEnabled="False"
+                                         FontFamily="Aptos, Segoe UI" FontSize="13"
+                                         Foreground="{DynamicResource TextPrimaryBrush}" Background="Transparent"
+                                         BorderThickness="0" Padding="0" MaxHeight="260"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <FlowDocument PagePadding="0" />
+                            </RichTextBox>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Actions -->
+        <Border Grid.Row="2" x:Name="ActionFooter" Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="20,8">
+            <StackPanel>
+                <Border x:Name="StopProgressPanel" Visibility="Collapsed" Padding="12,8" Margin="0,0,0,6"
+                        Background="{DynamicResource NeutralSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}"
+                        BorderThickness="1" CornerRadius="4">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="StopProgressTitle" Style="{StaticResource BodyText}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" x:Name="StopProgressActivity" Style="{StaticResource CaptionText}"
+                                       TextWrapping="Wrap" TextAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <Grid Margin="0,6,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="StopSamplingText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1" x:Name="StopLogsText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="2" x:Name="StopSupportText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="3" x:Name="StopFinalizeText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock x:Name="StopProgressDetail" Style="{StaticResource CaptionText}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Grid x:Name="RunLoadingPanel" Visibility="Collapsed" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <Path x:Name="RunLoadingSpinner" Style="{StaticResource LoadingSpinner}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" x:Name="RunLoadingText" Style="{StaticResource CaptionText}" TextWrapping="Wrap"
+                               VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                </Grid>
+                <Border x:Name="SupportActionPanel" Visibility="Collapsed" Padding="12,8" Margin="0,0,0,8"
+                        Background="{DynamicResource WarningSurfaceBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                        BorderThickness="1" CornerRadius="4">
+                    <StackPanel>
+                        <TextBlock x:Name="SupportActionText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SupportResultText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button x:Name="GenerateSupportButton" Style="{StaticResource PrimaryButton}" Content="Generate support files" Margin="0,0,8,0" />
+                            <Button x:Name="SkipSupportButton" Style="{StaticResource SecondaryButton}" Content="Skip support files" Visibility="Collapsed" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+            <!--
+                Settings, Package and Open run folder are on the left. Elapsed feedback
+                wraps in the right column. Stop takes the primary action's place during a run.
+
+                There is no Close button: the title bar already closes the window, and a
+                second control that does the same thing beside Collect is one the user has
+                to read before ruling it out.
+            -->
+            <Grid>
+                <!--
+                    The generated command stays available internally and in the run transcript.
+                -->
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="CommandBox" Visibility="Collapsed" IsReadOnly="True" />
+
+                <StackPanel Grid.Column="0" x:Name="FooterCommandGroup" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <!--
+                        Settings, as a gear rather than a labelled button.
+
+                        Deliberate, and the reason is the feature behind it: this is the control
+                        that changes the display language, so it is the one control that has to
+                        be recognisable to someone who cannot read the language currently on
+                        screen. A button reading "Settings" would itself be translated, and an
+                        operator who has landed in Hindi by accident would be hunting for an
+                        English word that is no longer there. A gear is the same shape in every
+                        language, and the tooltip supplies the word for anyone who wants it.
+
+                        Bottom-left rather than in the header: a preference is not part of the
+                        brand band, and this corner is the conventional home for one. It also
+                        keeps the header to the two links that point somewhere else.
+                    -->
+                    <Button x:Name="SettingsButton"
+                            Style="{StaticResource GearButton}"
+                            ToolTip="Settings">
+                        <!-- Geometry rather than a glyph: a font that lacks the character
+                             renders a box, and a control that cannot be read is exactly what
+                             this one must never be. Scales with the button, no asset to ship. -->
+                        <Path Width="18" Height="18" Stretch="Uniform"
+                              Fill="{DynamicResource TextSecondaryBrush}"
+                              Data="M19.14,12.94a7.07,7.07,0,0,0,0-1.88l2.03-1.58a0.49,0.49,0,0,0,0.12-0.61l-1.92-3.32a0.49,0.49,0,0,0-0.59-0.22l-2.39,0.96a7.31,7.31,0,0,0-1.62-0.94l-0.36-2.54A0.48,0.48,0,0,0,13.93,2H10.07a0.48,0.48,0,0,0-0.48,0.41L9.23,4.95a7.31,7.31,0,0,0-1.62,0.94L5.22,4.93a0.49,0.49,0,0,0-0.59,0.22L2.71,8.47a0.49,0.49,0,0,0,0.12,0.61l2.03,1.58a7.07,7.07,0,0,0,0,1.88L2.83,14.12a0.49,0.49,0,0,0-0.12,0.61l1.92,3.32a0.49,0.49,0,0,0,0.59,0.22l2.39-0.96a7.31,7.31,0,0,0,1.62,0.94l0.36,2.54a0.48,0.48,0,0,0,0.48,0.41h3.86a0.48,0.48,0,0,0,0.48-0.41l0.36-2.54a7.31,7.31,0,0,0,1.62-0.94l2.39,0.96a0.49,0.49,0,0,0,0.59-0.22l1.92-3.32a0.49,0.49,0,0,0-0.12-0.61ZM12,15.6A3.6,3.6,0,1,1,15.6,12,3.6,3.6,0,0,1,12,15.6Z" />
+                    </Button>
+                    <Button x:Name="PackageButton" Style="{StaticResource SecondaryButton}"
+                            Content="Package" Visibility="Collapsed" Margin="12,0,10,0"
+                            ToolTip="Run the privacy gate and zip the collected evidence into a single bundle to hand over. Refused until consent has been recorded." />
+                    <Button x:Name="OpenButton" Style="{StaticResource SecondaryButton}"
+                            Content="Open run folder" Visibility="Collapsed"
+                            ToolTip="Open this run's folder in File Explorer, where the collected files and the tool's own log are." />
+                </StackPanel>
+
+                    <!--
+                        Hidden until a path is chosen. Both run the job the operator picked, and
+                        before they have picked one there is no job - a Collect button on an
+                        empty form can only produce a default nobody asked for.
+                    -->
+                    <Grid Grid.Column="2" x:Name="LiveProgressRow" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="LiveProgressText" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Right" HorizontalAlignment="Right"
+                                   VerticalAlignment="Center" Margin="0,0,12,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+                                    <Style.Triggers>
+                                        <Trigger Property="Text" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Grid.Column="1" x:Name="ValidateButton" Style="{StaticResource SecondaryButton}"
+                                Content="Validate" Margin="0,0,10,0" Visibility="Collapsed"
+                                ToolTip="Plan the run and report anything that would block it. Changes nothing and collects nothing." />
+                    <Button x:Name="CollectButton" Style="{StaticResource PrimaryButton}"
+                            Grid.Column="2"
+                            Content="Collect" Visibility="Collapsed"
+                            ToolTip="Run the job chosen above." />
+                    <!--
+                        Only possible now the run does not block the UI thread. While the
+                        collection was started with -Wait there was no moment at which a
+                        click could be received, so a Cancel button would have been a
+                        control that looked available and could never be pressed.
+
+                        It TAKES THE PRIMARY BUTTON'S PLACE while a run is in flight: Collect
+                        or Start trace is hidden and this appears in the same spot, then the
+                        two swap back when the run ends (Set-TlcRunActionButton). It used to
+                        appear on the far left beside the settings gear while a greyed-out
+                        Start trace kept the primary place, so the one live action was where
+                        nobody looked. Finding 321.
+
+                        Primary styling, not secondary, because it is the only live action in
+                        the bar while a run is going.
+                    -->
+                    <!--
+                        "Stop run", not "Cancel run". Cancel implies undo - that the run is
+                        abandoned and what it gathered is thrown away. The behaviour is the
+                        opposite: a live trace stops sampling and finishes collecting, and a
+                        gather run is ended with everything already written to the run folder
+                        kept, which is why the log line says so explicitly. An operator who
+                        reads "Cancel" as "discard" will either avoid pressing it when they
+                        should, or press it and assume the evidence is gone.
+
+                        The tooltip states the non-destructive part rather than leaving it to
+                        be discovered, because the moment someone needs this button is the
+                        moment they have least appetite to experiment.
+                    -->
+                    <Button x:Name="CancelButton" Style="{StaticResource PrimaryButton}"
+                            Grid.Column="2"
+                            Content="Stop run" Visibility="Collapsed"
+                            ToolTip="Stop collecting now. Everything gathered so far is kept; the bundle will just be incomplete." />
+                    </Grid>
+            </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,177 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TLC Toolbox"
+        SizeToContent="Height"
+        Height="Auto" MinHeight="220"
+        Width="560" MinWidth="440"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Background="{DynamicResource CanvasBrush}">
+
+    <!--
+        Operator preferences: the display language, the appearance, and the Start menu entry.
+        The layout is a label/field grid rather than a single row, so another setting costs a
+        row instead of a redesign.
+
+        The theme is merged by Import-TlcXaml at parse time, the same way the wizard and the
+        detail window do it, so this follows dark mode without knowing anything about it.
+
+        Two notes that are easy to get wrong here:
+
+        1. Nothing in this window is translated by Set-TlcWizardString, because this window
+           is built fresh each time it opens and takes its strings from the table directly.
+           That matters for the case this feature exists for: an operator who has landed in
+           a language they cannot read opens this window, and it has to already be in that
+           language so the option they are looking for is the one they recognise.
+
+        2. The hint under the picker is not decoration. "Changes the window only" is the
+           single most important fact about this setting, because the alternative reading -
+           that it changes the language of the collected evidence - would be a reason not to
+           touch it, or worse, a reason to expect a bundle that never arrives.
+    -->
+
+    <!--
+        The theme, merged at parse time so StaticResource lookups resolve. Import-TlcXaml
+        substitutes the real file URI for the placeholder before the XAML is read.
+
+        Not optional decoration: without this block the window carries no styles at all and
+        the first StaticResource in the tree throws "Cannot find resource named 'SectionText'",
+        which surfaces as the whole settings window failing to open. Detail.xaml carries the
+        same block for the same reason.
+    -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="__THEME_URI__" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <!--
+        IsSharedSizeScope lets the Start menu row below line its label up with the two rows
+        above, although it sits in a grid of its own after their notes: the label column is
+        sized to the widest label in either grid, in whatever language is showing.
+    -->
+    <Grid Margin="24,20,24,18" Grid.IsSharedSizeScope="True">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" x:Name="SettingsHeading"
+                   Style="{StaticResource SectionText}"
+                   Text="Settings" Margin="0,0,0,14" />
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" MinWidth="110" SharedSizeGroup="SettingsLabel" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SettingsLanguageLabel"
+                       Style="{StaticResource BodyText}"
+                       VerticalAlignment="Center" Text="Language" Margin="0,0,12,0" />
+            <ComboBox Grid.Row="0" Grid.Column="1" x:Name="LanguageBox"
+                      Style="{StaticResource FlatComboBox}"
+                      ItemContainerStyle="{StaticResource FlatComboBoxItem}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SettingsThemeLabel"
+                       Style="{StaticResource BodyText}"
+                       VerticalAlignment="Center" Text="Appearance" Margin="0,12,12,0" />
+            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="ThemeBox"
+                      Style="{StaticResource FlatComboBox}"
+                      ItemContainerStyle="{StaticResource FlatComboBoxItem}"
+                      Margin="0,12,0,0" />
+        </Grid>
+
+        <TextBlock Grid.Row="2" x:Name="SettingsLanguageHint"
+                   Style="{StaticResource CaptionText}"
+                   TextWrapping="Wrap" Margin="0,10,0,0"
+                   Text="Changes the window only." />
+
+        <!--
+            The appearance hint is separate from the language one because the two settings
+            behave differently and saying so matters. Language applies immediately; appearance
+            applies on the next open, because the theme is merged into the window at parse
+            time and a live swap would repaint the eight elements that use DynamicResource and
+            leave the other 188 alone. A half-themed window is worse than one that waits.
+        -->
+        <TextBlock Grid.Row="3" x:Name="SettingsThemeHint"
+                   Style="{StaticResource CaptionText}"
+                   TextWrapping="Wrap" Margin="0,8,0,0"
+                   Text="" />
+
+        <TextBlock Grid.Row="4" x:Name="SettingsTranslationNote"
+                   Style="{StaticResource CaptionText}"
+                   TextWrapping="Wrap" Margin="0,8,0,0"
+                   Text="" />
+
+        <!--
+            The Start menu entry: TLC Toolbox with its own icon, which the package cannot ship
+            because a shortcut holds absolute paths (Modules\Tlc.Ui.Shortcut.psm1 says why).
+
+            Its own grid, after the notes, because its hint belongs under its button. In the
+            grid above it would have pushed the language and appearance notes away from the
+            rows they describe.
+
+            One button whose action follows the state on disk: Add when there is no entry or
+            the entry opens another copy, Remove when it opens this one. The label is a wrapping
+            TextBlock so a long translation wraps inside the button instead of widening it past
+            the window. Text is set by Update-TlcShortcutSetting, never here.
+        -->
+        <Grid Grid.Row="5" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" MinWidth="110" SharedSizeGroup="SettingsLabel" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SettingsShortcutLabel"
+                       Style="{StaticResource BodyText}"
+                       VerticalAlignment="Center" Text="Shortcut" Margin="0,0,12,0" />
+            <Button Grid.Row="0" Grid.Column="1" x:Name="ShortcutButton"
+                    Style="{StaticResource SecondaryButton}"
+                    HorizontalAlignment="Left">
+                <TextBlock x:Name="ShortcutButtonText" TextWrapping="Wrap" Text="" />
+            </Button>
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="ShortcutHint"
+                       Style="{StaticResource CaptionText}"
+                       TextWrapping="Wrap" Margin="0,6,0,0"
+                       Text="" />
+        </Grid>
+
+        <!--
+            Who built it and which build this is. An operator filing a defect against the
+            toolbox needs a version to quote, and until this existed the only way to get one
+            was to open Tlc.psd1 in a text editor - so bug reports arrived without it.
+
+            Read from the manifest at run time rather than typed here. Two places stating a
+            version number is one place to forget, and the manifest is the one the package
+            and the FileList tests already treat as authoritative.
+        -->
+        <TextBlock Grid.Row="6" x:Name="SettingsAbout"
+                   Style="{StaticResource CaptionText}"
+                   TextWrapping="Wrap" Margin="0,14,0,0"
+                   Text="" />
+
+        <StackPanel Grid.Row="7" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button x:Name="SettingsCloseButton" Style="{StaticResource PrimaryButton}"
+                    Content="Close" MinWidth="96" IsDefault="True" IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>
